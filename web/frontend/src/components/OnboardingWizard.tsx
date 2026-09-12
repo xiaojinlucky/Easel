@@ -1,3 +1,4 @@
+import AccountProfilePanel from './AccountProfilePanel';
 import { useState, useEffect } from 'react';
 import { buildProfile, profileBuildStatus } from '../lib/api';
 
@@ -5,6 +6,7 @@ const PLATFORMS = ['小红书', '抖音', 'B站', '视频号', '公众号', '微
 const TONES = ['专业严谨', '轻松幽默', '亲切日常', '犀利吐槽', '治愈温暖', '干货实用'];
 
 interface OnboardingWizardProps {
+  homepageMode?: boolean;
   onClose: () => void;
   onCreated: (name: string) => void;
 }
@@ -30,7 +32,8 @@ const EMPTY: FormState = {
 
 const STEPS = ['基础信息', '社媒链接', '运营意图', '偏好与红线'];
 
-export default function OnboardingWizard({ onClose, onCreated }: OnboardingWizardProps) {
+export default function OnboardingWizard({ onClose, onCreated, homepageMode = false }: OnboardingWizardProps) {
+  const [route, setRoute] = useState<'manual' | 'existing'>(homepageMode ? 'existing' : 'manual');
   const [step, setStep] = useState(0);
   const [form, setForm] = useState<FormState>(EMPTY);
   const [submitting, setSubmitting] = useState(false);
@@ -81,13 +84,12 @@ export default function OnboardingWizard({ onClose, onCreated }: OnboardingWizar
       try {
         const st = await profileBuildStatus(name);
         if (!alive) return;
-        if (st.state === 'done' || st.state === 'failed' || st.state === 'unknown') {
+        if (st.state === 'done') {
           onCreated(name);
           return;
         }
-      } catch {
-        /* 轮询失败忽略，继续 */
-      }
+        if (st.state === 'failed' || st.state === 'unknown') { setError(st.state === 'failed' ? '后台增强失败，手填基线仍已保存。' : '无法确认增强状态，未按完成处理。'); return; }
+      } catch (e) { if (alive) setError(e instanceof Error ? e.message : '状态读取失败'); return; }
       if (alive) setTimeout(tick, 5000);
     };
     const t = setTimeout(tick, 4000);
@@ -107,6 +109,8 @@ export default function OnboardingWizard({ onClose, onCreated }: OnboardingWizar
     background: active ? 'var(--accent-gradient)' : 'var(--bg-elev)',
     color: active ? '#fff' : 'var(--text)',
   });
+
+  if (route === 'existing') return <div className="overlay"><div className="modal" style={{width:760,maxWidth:'100%',maxHeight:'90vh',overflowY:'auto'}}><button className="btn" onClick={()=>setRoute('manual')}>返回手填路线</button><button className="btn" onClick={onClose}>关闭</button><AccountProfilePanel onCreated={onCreated} /></div></div>;
 
   return (
     <div className="overlay">
@@ -134,19 +138,22 @@ export default function OnboardingWizard({ onClose, onCreated }: OnboardingWizar
         ) : phase === 'enhancing' ? (
           <div style={{ padding: '40px 0', textAlign: 'center', color: 'var(--text-secondary)' }}>
             <div className="spinner" style={{ margin: '0 auto 16px' }} />
-            <div style={{ color: 'var(--text)', fontSize: 15, marginBottom: 6 }}>画像已创建 ✓　AI 正在后台增强…</div>
+            <div style={{ color: 'var(--text)', fontSize: 15, marginBottom: 6 }}>{error ? '手填基线已保存，增强未完成' : '手填基线已保存，正在后台增强…'}</div>
             <span style={{ fontSize: 12 }}>
               正在尝试抓取社媒链接并完善各维度，可能需要 1-2 分钟。<br />
               也可以现在就进去用，增强会在后台继续。
             </span>
+            {error && <p role="alert" style={{color:'var(--red)'}}>{error}</p>}
             <div style={{ marginTop: 20 }}>
-              <button className="btn btn-primary" onClick={() => onCreated(form.name.trim())}>先进去用</button>
+              <button className="btn btn-primary" onClick={() => onCreated(form.name.trim())}>查看已保存基线</button>
             </div>
           </div>
         ) : (
           <div style={{ minHeight: 240 }}>
             {step === 0 && (
               <>
+                <button className="btn btn-primary" onClick={()=>setRoute('existing')}>已有账号：从主页建立档案</button>
+                <p style={{fontSize:13,color:'var(--text-secondary)'}}>或继续手动填写定位与偏好。</p>
                 <label style={label}>画像名 *（一个人设 = 一个画像，可跨多平台）</label>
                 <input style={box} value={form.name} placeholder="如：科技数码达人"
                   onChange={(e) => set('name', e.target.value)} />

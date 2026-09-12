@@ -22,26 +22,26 @@ from pathlib import Path
 from easel.openclaw_cmd import openclaw_base_cmd
 from easel.persona import persona_prefix, profile_exists
 from easel.timeouts import TIMEOUT_PRODUCE
+from easel.runtime import PROFILE, openclaw_command, runtime_env, agent_options, run_agent_command
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SKILLS_DIR = PROJECT_ROOT / "skills" / "openclaw"
 PROFILES_DIR = PROJECT_ROOT / "profiles"
-OPENCLAW_PROFILE = "easel"
+OPENCLAW_PROFILE = PROFILE
 
 
 def _list_all_skills() -> list[str]:
     """列出所有可用 SKILL 名。"""
     if not SKILLS_DIR.is_dir():
         return []
-    return [d.name for d in sorted(SKILLS_DIR.iterdir())
-            if d.is_dir() and (d / "SKILL.md").is_file()]
+    return sorted(d.name for root in (SKILLS_DIR, PROJECT_ROOT / 'skills/extensions') if root.is_dir() for d in root.iterdir() if d.is_dir() and (d / 'SKILL.md').is_file())
 
 
 def _find_skill(name: str) -> str | None:
     """查找 SKILL 是否存在，返回完整名或 None。"""
     candidates = [name, f"skill-{name}"] if not name.startswith("skill-") else [name]
     for candidate in candidates:
-        if (SKILLS_DIR / candidate / "SKILL.md").is_file():
+        if re.fullmatch(r'[a-zA-Z0-9_-]+', candidate) and any((root / candidate / 'SKILL.md').is_file() for root in (SKILLS_DIR, PROJECT_ROOT / 'skills/extensions')):
             return candidate
     return None
 
@@ -81,7 +81,7 @@ def _check_profile_exists(name: str) -> bool:
 
 def _proxy_env() -> dict[str, str]:
     """返回带外网代理的环境变量（保护内网直连）。"""
-    env = os.environ.copy()
+    env = runtime_env()
     env.setdefault("EASEL_ROOT", str(PROJECT_ROOT))
     env.setdefault("http_proxy", os.environ.get("EASEL_PROXY", ""))
     env.setdefault("https_proxy", os.environ.get("EASEL_PROXY", ""))
@@ -93,18 +93,16 @@ def _run_via_openclaw(message: str, timeout: int = 300) -> int:
     """统一通过 OpenClaw agent 执行。"""
     session_key = f"skill-{int(time.time() * 1000)}"
 
-    cmd = openclaw_base_cmd() + [
+    cmd = openclaw_command() + [
         "--profile", OPENCLAW_PROFILE,
         "agent", "--agent", "main",
         "--session-key", f"agent:main:{session_key}",
         "--timeout", str(timeout),
         "--message", message,
-    ]
+    ] + agent_options()
 
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True,
-                                cwd=str(PROJECT_ROOT), timeout=timeout + 30,
-                                env=_proxy_env())
+        result = run_agent_command(cmd, timeout=timeout + 30)
     except subprocess.TimeoutExpired:
         print("⏱️ 请求超时", file=sys.stderr)
         return 124

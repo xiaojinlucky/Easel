@@ -1,0 +1,28 @@
+{
+  "repository": "https://github.com/rachelos/we-mp-rss",
+  "license": "MIT",
+  "image": "ghcr.io/rachelos/we-mp-rss@sha256:125472e8a58a05f02b930ba2b958575ffc87378743d9491383b13390f709215e",
+  "platform": "linux/amd64",
+  "source_review_commit": "d8feb6a42c6773d7374e03c487d3ae3426084af8",
+  "source_review_note": "Reviewed main source; image revision must be checked against imported artifact before asserting exact correspondence.",
+  "sources": [
+    "README.zh-CN.md",
+    "config.example.yaml",
+    "init_sys.py",
+    "main.py",
+    "driver/auth.py",
+    "jobs/mps.py",
+    "core/config.py"
+  ],
+  "adaptations": [
+    "SQLite /app/data/db.db in project-scoped werss-data volume",
+    "Shared postiz-network: FreshRSS can reach http://werss:8001",
+    "Generated WSL private-IP port 8090 and Windows loopback Caddy proxy",
+    "Random administrator password and secret retained only in .runtime/postiz.env",
+    "Native scheduler enabled; no subscriptions or tasks provisioned. After user QR authorization, create hourly native message tasks with cron 0 * * * *. SPAN_INTERVAL=60 is between articles, not the task schedule.",
+    "Automatic authorization, content repair and article statistics jobs disabled; no-task scheduler returns without collection.",
+    "Read-only main.py patch removes environment secret logging; exact imported-source and patched hashes in patches/WERSS_PATCH.json.",
+    "Read-only driver/success.py and apis/auth.py patches remove QR authorization token values from success logs and notification text, retaining expiry and success status; see patches/WERSS_PATCH.json."
+  ],
+  "local_image_id": "sha256:cb3eafd10f02c66fe3fe49557ab0538c6cd0da1bf27e9ee498c1dd8b0236b743"
+}

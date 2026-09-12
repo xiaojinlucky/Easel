@@ -1,3 +1,5 @@
+> **本机已部署**：双击桌面“Easel 自媒体工作台”，或运行 `启动桌面工作台.ps1`。参见 [桌面版说明](docs/DESKTOP.md)、[本机部署说明](docs/LOCAL_DEPLOYMENT.md) 与 [验收记录](docs/ACCEPTANCE.md)。以下保留上游项目说明。
+
 <p align="left">
   <img src="assets/readme/logos/zhejiang_university_horizontal_readme.png#gh-light-mode-only" width="106" align="middle" alt="Zhejiang University">
   <img src="assets/readme/logos/zhejiang_university_horizontal_dark.png#gh-dark-mode-only" width="106" align="middle" alt="Zhejiang University">

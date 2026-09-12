@@ -91,7 +91,7 @@ export default function SkillDrawer({ skillName, persona, onClose, onConfigured 
                 {detail?.layer && <span className="badge badge-accent">{detail.layer}</span>}
                 {detail?.needsApi && (
                   detail.apiConfigured
-                    ? <span className="badge badge-ok">✓ 已配置</span>
+                    ? <span className="badge badge-ok">{detail.nativeImage?'✓ 原生图片可用':'✓ 已配置'}</span>
                     : <span className="badge badge-warn">❗ 需配置 API</span>
                 )}
               </div>
@@ -104,6 +104,7 @@ export default function SkillDrawer({ skillName, persona, onClose, onConfigured 
           {loadErr && <div style={{ color: 'var(--red)', fontSize: 14 }}>{loadErr}</div>}
 
           {/* API 配置 */}
+          {detail?.nativeImage && <div className="model-alert">当前 Codex 原生图片工具已实测可用，可直接描述画面，无需填写外部密钥。下方为可选的外部 API 配置。</div>}
           {detail?.needsApi && detail.apiSpec && (
             <div className="panel">
               <div className="panel-title">🔑 {detail.apiSpec.label} · API 配置

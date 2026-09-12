@@ -1,12 +1,18 @@
 ---
 name: ai-image-gen
-description: "通用 AI 生图：文生图 / 图生图 / 图像变体。当用户说 AI 生图、AI 画图、文生图、图生图、生成图片、生成配图、图像生成、AI 出图、AI 作图、换图、改图、图像编辑、给我画一张、生成一张图 时使用。支持 OpenAI 兼容 API 与 apimart 异步 API，用户自备 API key。"
+description: "通用 AI 生图：文生图、图生图、编辑与变体。Easel 本地订阅部署优先使用当前 Codex 提供的 image_gen.imagegen 原生工具；也保留用户自备密钥的 OpenAI 兼容与 apimart API。"
 layer: produce
 ---
 
 # ai-image-gen Skill
 
-> 通用 AI 文生图 / 图生图 / 图像变体。用户自备图像生成 API key（OpenAI 兼容 或 apimart 异步），产物写入 `outputs/`。
+## 本机 Codex 原生图片工具
+
+本机默认使用模型设置页已经连接的 ChatGPT / Codex 运行时。先检查当前真实工具清单；若提供 `image_gen.imagegen`，直接使用它完成用户授权的图片生成或编辑，不要求另填 IMG_API_KEY。编辑前查看原图，按工具文档提供参考图片。生成后将真实文件保存至 `outputs/<主题>/`，检查文件可解码、尺寸和画面。原生工具不支持的参数不要编造，工具未返回的计费明细不要推测。
+
+只有用户明确选择外部图片服务时才使用下方 API 脚本分支。原生工具缺失或调用失败时如实报告，不静默切换到按量计费 API。原生工具调用同样受工作台周额度停止锁保护。
+
+> 下方为外部 API 分支：用户自备图像生成 API key（OpenAI 兼容 或 apimart 异步），产物写入 `outputs/`。
 
 调用共享脚本 `skills/shared/scripts/ai_image.py`（纯标准库，无第三方依赖）。
 本 SKILL 不索要、不回显、不写入、不提交任何真实 API key —— key 只存在于用户自己的 `.env`。

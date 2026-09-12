@@ -138,7 +138,7 @@ export default function SkillPage({ persona }: SkillPageProps) {
                     <div className="skill-card-desc">{s.description?.trim() || LAYER_DESC[layer.key]}</div>
                     <div className="skill-card-foot">
                       {s.needsApi && (s.apiConfigured
-                        ? <span className="badge badge-ok">已配置</span>
+                        ? <span className="badge badge-ok">{s.nativeImage?'原生图片可用':'已配置'}</span>
                         : <span className="badge badge-warn">需 API</span>)}
                     </div>
                   </div>

@@ -472,7 +472,8 @@ def test_missing_job_stream_fails_promptly(tmp_path, monkeypatch):
     assert exc.value.status_code == 404
 
 
-def test_chat_stop_waits_for_process_and_supervisor_cleanup():
+def test_chat_stop_waits_for_process_and_supervisor_cleanup(monkeypatch):
+    monkeypatch.setattr(web, 'abort_session', lambda _: None)
     class FakeProcess:
         def __init__(self):
             self.returncode = None

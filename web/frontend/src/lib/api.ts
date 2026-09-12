@@ -39,6 +39,7 @@ export interface PersonaDetail {
 }
 
 export interface SkillItem {
+  nativeImage?: boolean;
   name: string;
   description: string;
   layer: string;
@@ -69,6 +70,7 @@ export interface ApiSpec {
 }
 
 export interface SkillDetail {
+  nativeImage?: boolean;
   name: string;
   layer: string;
   description: string;
@@ -168,7 +170,14 @@ export function deletePersona(name: string): Promise<{ ok: boolean; deleted: str
 
 // ---- 热点雷达 ----
 export interface TrendItem { title: string; hot: string; url: string; }
-export interface TrendGroup { platform: string; label: string; items: TrendItem[]; }
+export interface TrendGroup {
+  platform: string;
+  label: string;
+  items: TrendItem[];
+  updated: number;
+  stale: boolean;
+  error?: string;
+}
 export function fetchTrends(platforms: string, limit = 12): Promise<{ trends: TrendGroup[]; updated: number }> {
   return request(`/api/trends?platforms=${encodeURIComponent(platforms)}&limit=${limit}`);
 }
@@ -291,6 +300,98 @@ export function mediaUrl(path: string): string {
 /** 删除内容库里的文件或整个项目目录（系统数据受保护，后端会拒）。 */
 export function deleteOutput(path: string): Promise<{ ok: boolean; deleted: string }> {
   return request(`/api/output/${path.split('/').map(encodeURIComponent).join('/')}`, { method: 'DELETE' });
+}
+
+// ---- 微信公众号工作区 ----
+export interface WechatAccount {
+  key: string;
+  name: string;
+  app_id: string;
+  configured: boolean;
+}
+
+export interface WechatState {
+  accounts: WechatAccount[];
+  default_account: string | null;
+  config_present: boolean;
+  history: unknown[];
+  analytics: unknown[];
+}
+
+export interface WechatAccountInput {
+  key: string;
+  name: string;
+  app_id: string;
+  app_secret: string;
+  author: string;
+}
+
+export interface WechatPrepareResponse { markdown_path: string; html_path: string; }
+export interface WechatAnalyticsEndpoint { ok: boolean; data?: unknown; error?: string; }
+export interface WechatAnalyticsResponse {
+  account: string;
+  date: string;
+  results: Record<string, WechatAnalyticsEndpoint>;
+}
+
+export interface WechatMonitorState {
+  online: boolean;
+  url: string;
+  username: string;
+  configured: boolean;
+  message: string;
+}
+
+export function fetchWechat(): Promise<WechatState> {
+  return request<WechatState>('/api/wechat');
+}
+
+export function saveWechatAccount(input: WechatAccountInput): Promise<WechatState | WechatAccount> {
+  return request('/api/wechat/accounts', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input),
+  });
+}
+
+export function checkWechatAccount(account: string): Promise<Record<string, unknown>> {
+  return request('/api/wechat/check', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ account }),
+  });
+}
+
+export function prepareWechat(input: { title: string; body: string; author?: string; account?: string }): Promise<WechatPrepareResponse> {
+  return request('/api/wechat/prepare', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input),
+  });
+}
+
+export function createWechatDraft(input: {
+  account: string; markdown_path: string; cover_path: string; title: string; digest?: string; author?: string;
+}): Promise<Record<string, unknown>> {
+  return request('/api/wechat/draft', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input),
+  });
+}
+
+export function fetchWechatAnalytics(account: string, date: string): Promise<WechatAnalyticsResponse> {
+  return request('/api/wechat/analytics', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ account, date }),
+  });
+}
+
+export function fetchWechatMonitor(): Promise<WechatMonitorState> {
+  return request<WechatMonitorState>('/api/wechat-monitor');
+}
+
+export function fetchWechatMonitorCredentials(): Promise<{ username: string; password: string }> {
+  return request('/api/wechat-monitor/credentials', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}),
+  });
+}
+
+export function syncResearchFeeds(): Promise<{ imported: number; skipped: number }> {
+  return request('/api/research/feeds/sync', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}),
+  });
 }
 
 export interface UploadedFile { id: string; name: string; path: string; }
@@ -634,3 +735,36 @@ export function fetchLastTurn(sessionId: string, turnId?: string): Promise<{ sta
   const query = turnId ? `?turn_id=${encodeURIComponent(turnId)}` : '';
   return request(`/api/chat/last/${encodeURIComponent(sessionId)}${query}`);
 }
+
+export interface WechatOnboardResponse {
+  account: string;
+  collected_at: string;
+  articles: unknown;
+  analytics: unknown;
+  missing: string[];
+  evidence_count: number;
+  prompt: string | null;
+}
+
+export function onboardWechat(account: string): Promise<WechatOnboardResponse> {
+  return request('/api/wechat/onboard', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ account }),
+  });
+}
+
+export interface AccountSource { id: string; url: string; title: string; content?: string; excerpt?: string; method: string; captured_at: number | string; state?: string; error?: string; }
+export interface AccountProfile { name: string; homepage_url: string; user_input: { intent: string }; evidence: AccountSource[]; suggestion: null | { content: string; evidence_ids: string[]; job_id: string; generated_at: string }; active: { content: string; version: number; updated_at: string }; latest_job_id: string | null; }
+export interface AccountProfileJob { job_id: string; name: string; status: string; error?: string; model?: string; }
+export async function fetchAccountProfile(name: string): Promise<AccountProfile | null> {
+  const response = await fetch(`${BASE}/api/account-profile/${encodeURIComponent(name)}`);
+  if (response.status === 404) return null;
+  const result = await response.json();
+  if (!response.ok) throw new Error(typeof result.detail === 'string' ? result.detail : '账号档案读取失败');
+  return result;
+}
+export function fetchAccountSources(): Promise<AccountSource[]> { return request('/api/research/sources'); }
+export function captureAccountSource(url: string): Promise<AccountSource> { return request('/api/research/capture', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({url, topic:'账号主页资料'}) }); }
+export function buildAccountProfile(input: {name:string; source_ids:string[]; homepage_url:string; intent:string}): Promise<AccountProfileJob> { return request('/api/account-profile/build', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(input)}); }
+export function fetchAccountProfileJob(id:string): Promise<AccountProfileJob> { return request(`/api/account-profile/jobs/${encodeURIComponent(id)}`); }
+export function analyzeAccountProfile(name:string): Promise<AccountProfileJob> { return request(`/api/account-profile/${encodeURIComponent(name)}/analyze`, {method:'POST'}); }
+export function adoptAccountProfile(name:string,content:string,expected_version:number): Promise<AccountProfile['active']> { return request(`/api/account-profile/${encodeURIComponent(name)}/active`, {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({content,expected_version})}); }

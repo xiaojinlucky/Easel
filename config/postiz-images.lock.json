@@ -1,0 +1,62 @@
+{
+  "postiz": {
+    "image": "ghcr.io/gitroomhq/postiz-app:latest",
+    "digest": "sha256:172fd235ca656b28e4f4e7a31a66b7703bf88267b4259cf9f859f10d3b3a8a6f",
+    "platform": "linux/amd64",
+    "local_image_id": "sha256:c2aa4199c49aca4442dbef49940afd8838b9481332f38b3338ce9abab79bea03"
+  },
+  "postiz-postgres": {
+    "image": "postgres:17-alpine",
+    "digest": "sha256:7456ef82e5f5bc43d997f4781bbd7c0d6389bff397564649a356e206ba473aee",
+    "platform": "linux/amd64",
+    "local_image_id": "sha256:ae8a26b5b27ef277b46284a0faa2f0059e36a0b40b4064e3353e1bbaaaa2b214"
+  },
+  "postiz-redis": {
+    "image": "redis:7.2",
+    "digest": "sha256:e17e3a1993da428251cbd88dbdb3de8c8d4007f840d7350eb17a2d8695fa705f",
+    "platform": "linux/amd64",
+    "local_image_id": "sha256:34763f95fb6f271efbe2b98e509bda93ba955217d45c36b9cb892238251d260b"
+  },
+  "temporal-elasticsearch": {
+    "image": "elasticsearch:7.17.27",
+    "digest": "sha256:07e9262b856006959e384de7ca9587bc5c6da024ca7042216a9ea26efe4c69c1",
+    "platform": "linux/amd64",
+    "local_image_id": "sha256:655ae298cc3ef10506c396124b2ff1bbd1a0006f0774fcdc3c2e237ec78eebb6"
+  },
+  "temporal-postgresql": {
+    "image": "postgres:16",
+    "digest": "sha256:485935f94cc7165afa896978809c37b592dc07f0a37d2c8f645f12412d0212c8",
+    "platform": "linux/amd64",
+    "local_image_id": "sha256:5d771498194daae8418b21d8e9f53a5d71d58021719660d5f4e838bd2f4ae8df"
+  },
+  "temporal": {
+    "image": "temporalio/auto-setup:1.28.1",
+    "digest": "sha256:e4c296d2b16d7607938e71182b9cc0936c90002ff63d97227f195625cf798ea3",
+    "platform": "linux/amd64",
+    "local_image_id": "sha256:d6c65c64bf71dba5cfd89afeb9f618c532c197c02ad2bfad46d32e8d40a37c48"
+  },
+  "temporal-admin-tools": {
+    "image": "temporalio/admin-tools:1.28.1-tctl-1.18.4-cli-1.4.1",
+    "digest": "sha256:00864ac86e79aec0d418582892d3435564c613b68b72fe2e41e9c50176794983",
+    "platform": "linux/amd64",
+    "local_image_id": "sha256:55756051e72c866ed17040d157c9a133d8de3e5fe71a770232e600bc2883fa29"
+  },
+  "temporal-ui": {
+    "image": "temporalio/ui:2.34.0",
+    "digest": "sha256:ad58bbefd5919444041ed90ff0498393ee1d95dd9c3d85eb097080d73f6259c6",
+    "platform": "linux/amd64",
+    "local_image_id": "sha256:04210a5e9935efca43076b5fabb6925b915c7769b73a94d44df33cab8f404848"
+  },
+  "freshrss": {
+    "image": "freshrss/freshrss:latest",
+    "digest": "sha256:e885cd223c96b895086f59d4e8642aa5d8eff83352619f65a56931e084fc2fdc",
+    "platform": "linux/amd64",
+    "local_image_id": "sha256:b0bcc3186c9274b3b428a42657157293f499739640a9a03958de647d0a25fbe8"
+  },
+  "werss": {
+    "image": "ghcr.io/rachelos/we-mp-rss:latest",
+    "digest": "sha256:125472e8a58a05f02b930ba2b958575ffc87378743d9491383b13390f709215e",
+    "local_image_id": "sha256:cb3eafd10f02c66fe3fe49557ab0538c6cd0da1bf27e9ee498c1dd8b0236b743",
+    "platform": "linux/amd64"
+  }
+}

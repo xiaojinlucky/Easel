@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { fetchTrends, createIdea } from '../lib/api';
 import type { TrendGroup } from '../lib/api';
 import { IconFire, IconRefresh, IconBookmark, IconCheck } from './icons';
@@ -23,6 +23,7 @@ export default function TrendsPage({ onUseTopic }: TrendsPageProps) {
   const [error, setError] = useState('');
   const [updated, setUpdated] = useState(0);
   const [saved, setSaved] = useState<Set<string>>(new Set());
+  const loadSeq = useRef(0);
 
   const save = async (title: string, source: string) => {
     if (saved.has(title)) return;
@@ -33,13 +34,34 @@ export default function TrendsPage({ onUseTopic }: TrendsPageProps) {
   };
 
   const load = useCallback((pfs: string[]) => {
-    if (pfs.length === 0) { setGroups([]); return; }
+    const seq = ++loadSeq.current;
+    if (pfs.length === 0) {
+      setGroups([]);
+      setUpdated(0);
+      setError('');
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setError('');
+    setGroups([]);
     fetchTrends(pfs.join(','), 15)
-      .then((d) => { setGroups(d.trends); setUpdated(d.updated); })
-      .catch(() => setError('热点拉取失败——请确认已配置外网代理（EASEL_PROXY）。'))
-      .finally(() => setLoading(false));
+      .then((d) => {
+        if (seq !== loadSeq.current) return;
+        const failures = d.trends.filter((g) => g.error).map((g) => `${g.label}：${g.error}`);
+        setGroups(d.trends);
+        setUpdated(d.updated);
+        setError(failures.join('；'));
+      })
+      .catch(() => {
+        if (seq !== loadSeq.current) return;
+        setGroups([]);
+        setUpdated(0);
+        setError('热点拉取失败——请确认已配置外网代理（EASEL_PROXY）。');
+      })
+      .finally(() => {
+        if (seq === loadSeq.current) setLoading(false);
+      });
   }, []);
 
   useEffect(() => { load(selected); }, [load, selected]);
@@ -69,14 +91,18 @@ export default function TrendsPage({ onUseTopic }: TrendsPageProps) {
         ))}
       </div>
 
-      {error && <div className="notice-error">{error}</div>}
+      {error && <div className="notice-error" role="alert">{error}</div>}
 
       <div className="trend-grid">
         {groups.map((g) => (
           <div key={g.platform} className="card trend-col">
-            <div className="trend-col-head">{g.label}<span className="trend-count">{g.items.length}</span></div>
+            <div className="trend-col-head">
+              {g.label}
+              {g.stale && g.updated > 0 && <span className="trend-count">缓存于 {new Date(g.updated * 1000).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</span>}
+              <span className="trend-count">{g.items.length}</span>
+            </div>
             <div className="trend-list">
-              {g.items.length === 0 && !loading && <div className="trend-empty">暂无数据</div>}
+              {g.items.length === 0 && !loading && <div className="trend-empty">{g.error || '暂无数据'}</div>}
               {g.items.map((it, i) => (
                 <div key={i} className="trend-item">
                   <span className={`trend-rank ${i < 3 ? 'top' : ''}`}>{i + 1}</span>

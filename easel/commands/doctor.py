@@ -9,6 +9,7 @@ import subprocess
 import urllib.request
 import urllib.error
 from pathlib import Path
+from easel.runtime import openclaw_command, runtime_env, subscription_status
 
 # 项目根目录（Easel/）
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -28,10 +29,10 @@ def _check(label: str, ok: bool, detail: str = "") -> bool:
 
 
 def _node_version_ok() -> bool:
-    """Check Node.js >= 22.19."""
+    """Check the supported project Node.js version."""
     try:
         result = subprocess.run(
-            ["node", "--version"],
+            [openclaw_command()[0], "--version"],
             capture_output=True, text=True, timeout=10,
         )
         if result.returncode != 0:
@@ -41,7 +42,7 @@ def _node_version_ok() -> bool:
         if not m:
             return False
         major, minor = int(m.group(1)), int(m.group(2))
-        return (major, minor) >= (22, 19)
+        return (major == 24 and minor >= 16) or major >= 26
     except (subprocess.TimeoutExpired, FileNotFoundError):
         return False
 
@@ -67,7 +68,12 @@ def _chromium_available() -> bool:
     try:
         from playwright.sync_api import sync_playwright
         with sync_playwright() as playwright:
-            return Path(playwright.chromium.executable_path).is_file()
+            browser = playwright.chromium.launch(headless=True)
+            page = browser.new_page()
+            page.set_content('<title>Easel browser check</title>')
+            available = page.title() == 'Easel browser check'
+            browser.close()
+            return available
     except (ImportError, OSError, RuntimeError):
         return False
 
@@ -151,14 +157,16 @@ def cmd_doctor(_args) -> int:
                       "Debian/Ubuntu 请安装 python3-venv")
     has_node = shutil.which("node") is not None
     node_ok = _node_version_ok()
-    node_detail = ("请安装 Node.js >= 22.19: https://nodejs.org/" if not has_node
-                   else "Node.js 版本过低，请升级到 >= 22.19: https://nodejs.org/")
-    all_ok &= _check("Node.js >= 22.19", node_ok, node_detail)
+    node_detail = '请安装项目 Node.js 24.16 或更高的受支持版本。'
+    all_ok &= _check("Project Node.js >= 24.16", node_ok, node_detail)
     all_ok &= _check("FFmpeg", shutil.which("ffmpeg") is not None,
                       "媒体处理需要 FFmpeg；请安装后重试")
 
     # 2. openclaw command
-    has_openclaw = shutil.which("openclaw") is not None
+    try:
+        has_openclaw = Path(openclaw_command()[-1]).is_file()
+    except RuntimeError:
+        has_openclaw = False
     all_ok &= _check("openclaw command", has_openclaw,
                       "请安装 openclaw: npm i -g openclaw")
 
@@ -173,9 +181,12 @@ def cmd_doctor(_args) -> int:
                       "运行 python3 -m playwright install chromium")
 
     # 3. .env file with valid key
-    env_ok = _env_key_valid()
-    all_ok &= _check(".env (API Key)", env_ok,
-                      "填 ANTHROPIC_API_KEY，或 EASEL_LLM_API_KEY + EASEL_LLM_BASE_URL")
+    try:
+        status = subscription_status()
+        all_ok &= _check('ChatGPT subscription', status['logged_in'], '在 AI 模型设置中通过官方 Codex 登录')
+        print(f"  Weekly remaining (informational): {status['weekly_remaining']}%")
+    except Exception as exc:
+        all_ok &= _check('ChatGPT subscription', False, str(exc))
 
     # 4. OpenClaw gateway running
     gw_ok = _gateway_healthy()

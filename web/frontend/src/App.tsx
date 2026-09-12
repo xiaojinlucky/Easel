@@ -5,6 +5,14 @@ import ChatPage from './components/ChatPage';
 import SkillPage from './components/SkillPage';
 import OutputsPage from './components/OutputsPage';
 import AccountsPage from './components/AccountsPage';
+import WechatPage from './components/WechatPage';
+import ModelSettingsPage from './components/ModelSettingsPage';
+import './styles/model-settings.css';
+import ResearchPage from './components/ResearchPage';
+import CapabilitiesPage from './components/CapabilitiesPage';
+import './styles/capabilities.css';
+import './styles/research.css';
+import './styles/wechat.css';
 import ProfilePage from './components/ProfilePage';
 import DashboardPage from './components/DashboardPage';
 import TrendsPage from './components/TrendsPage';
@@ -51,6 +59,7 @@ export default function App() {
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [gatewayStatus, setGatewayStatus] = useState('connecting');
   const [showRecommend, setShowRecommend] = useState(false);
+  const [homepageWizard, setHomepageWizard] = useState(false);
   const [showWizard, setShowWizard] = useState(false);
 
   // 挂载时决定进哪个会话。规则：
@@ -137,19 +146,37 @@ export default function App() {
   }, [activeSessionId]);
 
   // Fetch status on mount — 真实反映 gateway 状态 + 首次引导检测
+  // 注意：web 先启动、gateway 慢 15~25s 才 ready；若启动瞬间查询返回 false，
+  // 不能就此定格——这里在「未连接」时每 10s 重查一次，连上即停并刷新 personas。
+  // （不做无限轮询：connected 后停止；断线后再恢复由页面重开/手动操作触发）
   useEffect(() => {
-    fetchStatus()
-      .then((data) => {
-        setPersonas(data.personas || []);
-        setGatewayStatus(data.gateway ? 'connected' : 'disconnected');
-        // 首次使用：没有任何个性化画像 且 未看过引导 → 推荐配置
-        if ((data.personas || []).length === 0 && !onboardingSeen()) {
-          setShowRecommend(true);
-        }
-      })
-      .catch(() => {
-        setGatewayStatus('disconnected');
-      });
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const refresh = () => {
+      fetchStatus()
+        .then((data) => {
+          if (cancelled) return;
+          setPersonas(data.personas || []);
+          setGatewayStatus(data.gateway ? 'connected' : 'disconnected');
+          // 首次使用：没有任何个性化画像 且 未看过引导 → 推荐配置
+          if ((data.personas || []).length === 0 && !onboardingSeen()) {
+            setShowRecommend(true);
+          }
+          if (!data.gateway) {
+            timer = setTimeout(refresh, 10_000); // 未连接 → 10s 后重查
+          }
+        })
+        .catch(() => {
+          if (cancelled) return;
+          setGatewayStatus('disconnected');
+          timer = setTimeout(refresh, 10_000); // 请求失败 → 10s 后重查
+        });
+    };
+    refresh();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
   }, []);
 
   const activeSession = sessions.find((s) => s.id === activeSessionId) || null;
@@ -501,6 +528,22 @@ export default function App() {
     sendUserAndStream(ns.id, prompt);
   }, [selectedPersona, sendUserAndStream]);
 
+  const handleProfileCreate = useCallback((persona: string) => {
+    const session = createSession(persona);
+    setSessions(previous => { const updated = [session, ...previous]; saveSessions(updated); return updated; });
+    setSelectedPersona(persona);
+    setActiveSessionId(session.id);
+    setCurrentPage('chat');
+  }, []);
+
+  const handleResearch = useCallback((prompt: string, title: string) => {
+    const ns = createSession(selectedPersona || undefined);
+    setSessions((prev) => { const updated = [ns, ...prev]; saveSessions(updated); return updated; });
+    setActiveSessionId(ns.id);
+    setCurrentPage('chat');
+    sendUserAndStream(ns.id, title, undefined, prompt);
+  }, [selectedPersona, sendUserAndStream]);
+
   const handleStopStream = useCallback((sessionId: string) => {
     streamCtl.current[sessionId]?.abort();
     // 告诉后端**真正终止**这一轮 agent 并释放会话锁——否则后端进程还在跑、占着锁，下一句会被拦
@@ -620,6 +663,7 @@ export default function App() {
   // 打开引导向导
   const openWizard = useCallback(() => {
     setShowRecommend(false);
+    setHomepageWizard(false);
     setShowWizard(true);
   }, []);
 
@@ -699,7 +743,7 @@ export default function App() {
       case 'calendar':
         return <CalendarPage />;
       case 'publish':
-        return <PublishPage persona={selectedPersona} />;
+        return <PublishPage persona={selectedPersona} onNavigate={setCurrentPage} />;
       case 'breakdown':
         return <BreakdownPage persona={selectedPersona} />;
       case 'skills':
@@ -707,9 +751,17 @@ export default function App() {
       case 'outputs':
         return <OutputsPage />;
       case 'accounts':
-        return <AccountsPage />;
+        return <AccountsPage onNavigate={setCurrentPage} onNewProfile={() => { setHomepageWizard(true); setShowWizard(true); }} />;
+      case 'wechat':
+        return <WechatPage onCreate={handleResearch} />;
+      case 'model-settings':
+        return <ModelSettingsPage />;
+      case 'research':
+        return <ResearchPage onCreate={handleResearch} />;
+      case 'capabilities':
+        return <CapabilitiesPage onNavigate={setCurrentPage} />;
       case 'profile':
-        return <ProfilePage persona={selectedPersona} onNewProfile={() => setShowWizard(true)} onDeleted={handleProfileDeleted} />;
+        return <ProfilePage onStartCreate={handleProfileCreate} persona={selectedPersona} onNewProfile={() => { setHomepageWizard(false); setShowWizard(true); }} onDeleted={handleProfileDeleted} />;
       default:
         return null;
     }
@@ -744,7 +796,7 @@ export default function App() {
         personas={personas}
         selectedPersona={selectedPersona}
         onPersonaChange={handlePersonaChange}
-        onNewProfile={() => setShowWizard(true)}
+        onNewProfile={() => { setHomepageWizard(false); setShowWizard(true); }}
         sessions={sessions}
         activeSessionId={activeSessionId}
         activeSessionHasMessages={activeSession ? activeSession.messages.length > 0 : false}
@@ -784,7 +836,7 @@ export default function App() {
 
       {/* 画像配置向导 */}
       {showWizard && (
-        <OnboardingWizard onClose={() => setShowWizard(false)} onCreated={handleProfileCreated} />
+        <OnboardingWizard homepageMode={homepageWizard} onClose={() => setShowWizard(false)} onCreated={handleProfileCreated} />
       )}
     </div>
   );

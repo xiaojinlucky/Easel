@@ -7,12 +7,14 @@ import type { AccountItem, OutputFile } from '../lib/api';
 import { loadPublishDraft, savePublishDraft } from '../lib/store';
 import { renderMarkdown } from '../lib/sanitize';
 import { IconPublish, IconCopy, IconCheck, IconCalendar, IconSkills, IconEdit, IconStop, IconTrash } from './icons';
+import type { Page } from './Sidebar';
 
 interface PublishPageProps {
   persona: string;
+  onNavigate?: (page: Page) => void;
 }
 
-// 平台列表须与后端 LOGIN_RUNNERS 对齐（有登录/发布链路的才列）——微博/公众号无 publisher，不列
+// 平台列表包含内容适配目标；公众号没有自动发布 publisher，只提供工作区入口。
 const PLATFORMS: { key: string; label: string; titleLimit?: number; bodyLimit: number; hint: string }[] = [
   { key: 'xiaohongshu', label: '小红书', titleLimit: 20, bodyLimit: 1000, hint: '标题≤20，正文≤1000，重情绪+话题标签' },
   { key: 'douyin', label: '抖音', titleLimit: 55, bodyLimit: 55, hint: '文案≤55，前几字是钩子' },
@@ -20,6 +22,7 @@ const PLATFORMS: { key: string; label: string; titleLimit?: number; bodyLimit: n
   { key: 'weixin-channels', label: '视频号', bodyLimit: 1000, hint: '需附视频，短描述+话题标签，微信扫码登录' },
   { key: 'zhihu', label: '知乎', bodyLimit: 5000, hint: '长文/回答，讲清逻辑' },
   { key: 'bilibili', label: 'B站', titleLimit: 80, bodyLimit: 2000, hint: '需附视频，标题≤80、简介≤2000，默认投「知识」分区' },
+  { key: 'wechat', label: '公众号', bodyLimit: 10000, hint: '仅适配、复制、排期；送草稿箱请进入公众号工作区' },
 ];
 const LABEL2KEY = Object.fromEntries(PLATFORMS.map((p) => [p.label, p.key]));
 
@@ -40,7 +43,7 @@ function parseSections(text: string): Record<string, string> {
 
 type PubState = { status: 'publishing' | 'ok' | 'fail'; msg: string };
 
-export default function PublishPage({ persona }: PublishPageProps) {
+export default function PublishPage({ persona, onNavigate }: PublishPageProps) {
   const draft0 = loadPublishDraft();
   const [title, setTitle] = useState(draft0.title);
   const [body, setBody] = useState(draft0.body);
@@ -177,7 +180,7 @@ export default function PublishPage({ persona }: PublishPageProps) {
     if (empty || publishing || checking) return;
     const targets = PLATFORMS.filter((p) => platforms.includes(p.key) && PUBLISHABLE.has(p.key));
     if (targets.length === 0) {
-      showToast('所选平台暂不支持一键发布（B站请用「复制」或终端 biliup）');
+      showToast('所选平台暂不支持一键发布（公众号请进入工作区，B站请用「复制」或终端 biliup）');
       return;
     }
     setChecking(true);
@@ -316,6 +319,14 @@ export default function PublishPage({ persona }: PublishPageProps) {
               onClick={() => toggle(p.key)}>{p.label}</button>
           ))}
         </div>
+        {platforms.includes('wechat') && onNavigate && (
+          <div className="publish-wechat-entry">
+            <button className="btn btn-sm btn-primary" onClick={() => onNavigate('wechat')}>
+              打开公众号工作区 →
+            </button>
+            <span>公众号支持适配、复制和排期；排版、封面与送草稿箱在工作区完成，不会进入一键群发。</span>
+          </div>
+        )}
 
         <label className="field-label" style={{ marginTop: 14 }}>
           媒体附件 {selectedMedia.length > 0 && <span className="pv-badge">{selectedMedia.length} 个</span>}
