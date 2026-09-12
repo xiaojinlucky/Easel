@@ -23,10 +23,13 @@ const ROOT = (() => {
 })();
 const STATE = path.join(ROOT, '.runtime');
 const LOGS = path.join(STATE, 'logs');
+const PIDFILE = path.join(STATE, 'desktop.pid');
 const PYTHON = path.join(ROOT, '.venv', 'Scripts', 'python.exe');
 const INDEX = pathToFileURL(path.join(__dirname, 'index.html')).href;
 const PARTITION = 'persist:easel-desktop';
 fs.mkdirSync(LOGS, { recursive: true });
+function writePid() { try { fs.writeFileSync(PIDFILE, String(process.pid)); } catch (_) { /* 写失败不阻塞 */ } }
+function clearPid() { try { if (fs.readFileSync(PIDFILE, 'utf8').trim() === String(process.pid)) fs.unlinkSync(PIDFILE); } catch (_) { /* 无 pid 文件或内容不匹配，忽略 */ } }
 app.setPath('userData', path.join(STATE, process.env.EASEL_DESKTOP_SMOKE === '1' ? 'desktop-check/profile' : 'desktop-profile'));
 app.setAppUserModelId('org.easel.studio.desktop');
 app.setName('Easel');
@@ -163,14 +166,29 @@ async function startServices() {
 async function showStatus() {
   await dialog.showMessageBox(mainWindow, { type: errors.size ? 'warning' : 'info', title: 'Easel 运行状态', message: status().status, detail: [...errors.entries()].map(([key, value]) => `${key}: ${value}`).join('\n\n') || '关闭桌面窗口后，后台任务和发布排期继续运行。\n需要全部停止时，使用“应用 → 停止服务并退出”。', buttons: ['知道了'] });
 }
-async function stopAndQuit() {
-  if (starting || stopping) { await dialog.showMessageBox(mainWindow, { message: '服务正在启动或停止，请等待完成后再操作。' }); return; }
-  const answer = await dialog.showMessageBox(mainWindow, { type: 'question', message: '停止本机工作台的全部后台服务？', detail: '进行中的创作将中断，发布排期会暂停。已保存的内容保留。', buttons: ['取消', '停止并退出'], defaultId: 0, cancelId: 0 });
-  if (answer.response !== 1) return;
+function quitNow() {
+  // 「停止服务并退出」= 立即退出，绝不等、绝不弹框，避免 UI 僵死。
+  // 服务停止交给独立后台进程执行，桌面端退出后它自己跑完。
+  if (app.isQuitting) return;
+  app.isQuitting = true;
   stopping = true;
-  serviceState.web = serviceState.gateway = serviceState.platforms = '停止中'; publishState();
-  try { await runServices('stop', ['web', 'gateway', 'cloak', 'platforms']); app.isQuitting = true; if (tray) tray.destroy(); app.quit(); }
-  catch (error) { errors.set('web', error.message); stopping = false; await showStatus(); }
+  try { if (tray) { tray.destroy(); tray = null; } } catch (_) { /* 托盘销毁失败不阻塞退出 */ }
+  try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.hide(); } catch (_) { /* 忽略 */ }
+  clearPid();
+  stopServicesDetached();
+  app.quit();
+  // 兜底保险：万一 Electron 的退出流程被某个 close/preventDefault 卡住，
+  // 3 秒后强制结束进程，保证「停止并退出」永远有响应。
+  setTimeout(() => { try { process.exit(0); } catch (_) { /* 已退出 */ } }, 3000).unref();
+}
+function stopServicesDetached() {
+  // 分离一个不随主进程退出的子进程去停服务，主界面立即关闭。
+  // detached:true + unref() 已验证：父进程退出后子进程仍会跑完写文件。
+  try {
+    const child = spawn(PYTHON, ['-m', 'easel.services', 'stop', 'web', 'gateway', 'cloak', 'platforms'], { cwd: ROOT, detached: true, windowsHide: true, stdio: 'ignore', env: { ...process.env, PYTHONUTF8: '1' } });
+    child.unref();
+    log(`Detached service-stop started (pid=${child.pid}); quitting now.`);
+  } catch (error) { log(`Stop-detach failed: ${error.message}`); }
 }
 function showMainWindow() {
   if (!mainWindow) return;
@@ -188,9 +206,7 @@ function installTray() {
     { label: '打开工作台', click: () => showMainWindow() },
     { label: '最小化到后台（继续运行）', click: () => { if (mainWindow) mainWindow.minimize(); } },
     { type: 'separator' },
-    {
-      label: '停止服务并退出', click: () => void stopAndQuit(),
-    },
+    { label: '停止服务并退出', click: () => quitNow() },
   ]);
   tray.setContextMenu(menu);
   tray.on('click', () => showMainWindow());
@@ -206,7 +222,7 @@ function installMenu() {
       { label: '打开成品文件夹', click: () => void shell.openPath(path.join(ROOT, 'outputs')) },
       { type: 'separator' },
       { label: '最小化到后台（继续运行）', click: () => { if (mainWindow) mainWindow.minimize(); } },
-      { label: '停止服务并退出', click: () => void stopAndQuit() },
+      { label: '停止服务并退出', click: () => quitNow() },
     ] },
     { label: '编辑', submenu: [{ role: 'undo' }, { role: 'redo' }, { type: 'separator' }, { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }] },
     { label: '查看', submenu: [
@@ -229,6 +245,7 @@ function installMenu() {
 if (!app.requestSingleInstanceLock()) { app.quit(); }
 else {
   app.on('second-instance', () => { if (mainWindow) { if (mainWindow.isMinimized()) mainWindow.restore(); mainWindow.show(); mainWindow.focus(); } });
+  app.on('will-quit', () => clearPid());
   app.whenReady().then(async () => {
     if (!fs.existsSync(PYTHON)) throw new Error('未找到本机 Easel Python 环境，请先完成部署。');
     const desktopSession = session.fromPartition(PARTITION);
@@ -269,6 +286,7 @@ else {
     });
     installMenu();
     installTray();
+    writePid();
     await mainWindow.loadFile(path.join(__dirname, 'index.html'));
     mainWindow.show();
     log(`Desktop started pid=${process.pid}, electron=${process.versions.electron}`);
