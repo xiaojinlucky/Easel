@@ -28,9 +28,17 @@ from pathlib import Path
 # --- path resolution -------------------------------------------------------
 
 HOME = Path.home()
-# Easel runs OpenClaw under an isolated `easel` profile at ~/.openclaw-easel/;
-# allow an override for non-default setups.
-PROFILE_DIR = Path(os.environ.get("EASEL_OPENCLAW_STATE_DIR") or (HOME / ".openclaw-easel"))
+# Easel runs OpenClaw under an isolated profile; default to the runtime's
+# profile dir (~/.openclaw-easel-studio for PROFILE=easel-studio) instead of
+# a hardcoded `easel` profile, so the question bridge reads the SAME sqlite
+# state DB the running gateway actually uses. EASEL_OPENCLAW_STATE_DIR still
+# wins for non-default setups.
+try:
+    from easel.runtime import PROFILE
+    _DEFAULT_STATE_DIR = HOME / f".openclaw-{PROFILE}"
+except ImportError:  # pragma: no cover - fallback when imported standalone
+    _DEFAULT_STATE_DIR = HOME / ".openclaw-easel"
+PROFILE_DIR = Path(os.environ.get("EASEL_OPENCLAW_STATE_DIR") or _DEFAULT_STATE_DIR)
 PROFILE_STATE_DIR = PROFILE_DIR / "state"
 PROFILE_DB = PROFILE_STATE_DIR / "openclaw.sqlite"
 
