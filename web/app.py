@@ -17,13 +17,17 @@ import tempfile
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse
+from fastapi.responses import JSONResponse
+from fastapi import Request
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
@@ -36,6 +40,7 @@ if str(PROJECT_ROOT / "scripts") not in sys.path:
 
 from easel.persona import load_profile_text, persona_prefix, chat_turn_message, profile_exists, _FILE_ORDER
 from easel.timeouts import TIMEOUT_CHAT, TIMEOUT_DIRECT, TIMEOUT_PRODUCE
+from easel.runtime import openclaw_command, runtime_env, agent_options, require_subscription, CREATE_FLAGS, PROFILE, run_agent_command, abort_session, agent_reply, native_image_ready
 
 PROFILES_DIR = PROJECT_ROOT / "profiles"
 SKILLS_DIR = PROJECT_ROOT / "skills"
@@ -43,34 +48,8 @@ OUTPUTS_DIR = PROJECT_ROOT / "outputs"
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 REACT_DIR = Path(__file__).resolve().parent / "frontend" / "dist"
-OPENCLAW_PROFILE = "easel"
-OPENCLAW_WORKSPACE = Path.home() / ".openclaw" / f"workspace-{OPENCLAW_PROFILE}"
-# OpenClaw 会话历史（transcript）目录：<profile 配置目录>/agents/main/sessions/<session-id>.jsonl
-OPENCLAW_SESSIONS_DIR = Path.home() / f".openclaw-{OPENCLAW_PROFILE}" / "agents" / "main" / "sessions"
-
-# 思考档位（每轮 --thinking）。OpenClaw 默认 high 会每轮产生大量 thinking 块，且这些块被存进
-# 历史时**丢了签名**，回放到内网 Bedrock 网关校验失败 → 「Session history/replay invalid」。
-# 降到 low 减少产生量；配合 _heal_openclaw_session 每轮清洗历史，彻底规避。可用 off 完全关闭。
-THINKING_LEVEL = (os.environ.get("EASEL_THINKING_LEVEL", "").strip() or "low")
-
-
-def _heal_openclaw_session(sk: str) -> None:
-    """每轮 spawn openclaw 前，清洗该会话历史里的无签名 thinking 块 + 空消息（自愈防回放失效）。
-
-    best-effort：任何异常都不阻断对话（清洗失败大不了退回原样，仍可 /new）。
-    """
-    try:
-        import session_heal  # scripts/session_heal.py（已加入 sys.path）
-        p = OPENCLAW_SESSIONS_DIR / f"{_openclaw_session_id(sk)}.jsonl"
-        if p.is_file():
-            st = session_heal.sanitize_history_file(p)
-            if st.get("changed"):
-                print(f"[session-heal] {p.name}: -{st['thinking_removed']} thinking / "
-                      f"-{st['msgs_dropped']} empty", file=sys.stderr, flush=True)
-    except Exception as e:
-        print(f"[session-heal] 跳过（{e}）", file=sys.stderr, flush=True)
-
-
+OPENCLAW_PROFILE = PROFILE
+OPENCLAW_WORKSPACE = Path.home() / ".openclaw" / "workspace-easel"
 # 制作层/直接执行层/chat 超时统一走 easel/timeouts.py（CLI/Web/skill 三入口单一真相源）
 
 SHARED_SCRIPTS = PROJECT_ROOT / "skills" / "shared" / "scripts"
@@ -188,7 +167,40 @@ VIDEO_EXTS = {".mp4", ".mov", ".webm", ".m4v"}
 AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"}
 
 app = FastAPI(title="Easel", docs_url=None, redoc_url=None)
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+_LOCAL_ORIGINS = ['http://127.0.0.1:7860', 'http://localhost:7860', 'http://127.0.0.1:5173', 'http://localhost:5173']
+app.add_middleware(CORSMiddleware, allow_origins=_LOCAL_ORIGINS, allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=['localhost', '127.0.0.1'])
+from web.settings_api import router as settings_router
+from web.research_api import router as research_router
+from web.clipper_api import router as clipper_router
+from web.capabilities_api import router as capabilities_router
+from web.account_profile_api import router as account_profile_router
+from web.publishing_api import router as publishing_router
+from web.wechat_api import router as wechat_router
+from web.wechat_monitor_api import router as wechat_monitor_router
+app.include_router(wechat_router)
+app.include_router(wechat_monitor_router)
+app.include_router(publishing_router)
+app.include_router(settings_router)
+app.include_router(research_router)
+app.include_router(clipper_router)
+app.include_router(capabilities_router)
+app.include_router(account_profile_router)
+
+
+@app.middleware('http')
+async def local_write_guard(request: Request, call_next):
+    origin = request.headers.get('origin')
+    if request.url.path == '/api/clipper' and origin and re.fullmatch(r'chrome-extension://[a-p]{32}', origin):
+        headers = {'Access-Control-Allow-Origin': origin, 'Access-Control-Allow-Methods': 'POST', 'Access-Control-Allow-Headers': 'Authorization, Content-Type', 'Vary': 'Origin'}
+        if request.method == 'OPTIONS':
+            return JSONResponse({}, headers=headers)
+        response = await call_next(request)
+        response.headers.update(headers)
+        return response
+    if request.method not in ('GET', 'HEAD', 'OPTIONS') and origin and origin not in _LOCAL_ORIGINS:
+        return JSONResponse({'detail': '仅允许从本机工作台操作。'}, status_code=403)
+    return await call_next(request)
 
 
 def list_personas() -> list[dict]:
@@ -214,7 +226,9 @@ def find_skill(name: str) -> str | None:
     """查找 SKILL，返回完整名或 None。与 CLI skill.py 一致。"""
     cands = [name, f'skill-{name}'] if not name.startswith('skill-') else [name]
     for cand in cands:
-        if (SKILLS_DIR / 'openclaw' / cand / 'SKILL.md').is_file():
+        if not re.fullmatch(r'[a-zA-Z0-9_-]+', cand):
+            continue
+        if any((SKILLS_DIR / group / cand / 'SKILL.md').is_file() for group in ('openclaw', 'extensions')):
             return cand
     return None
 
@@ -270,18 +284,21 @@ def _parse_skill_md(path: Path) -> tuple[str, str, str]:
 def get_skills() -> list[dict]:
     env = _read_env()
     result = []
-    sd = SKILLS_DIR / 'openclaw'
-    if sd.is_dir():
+    for sd in (SKILLS_DIR / 'openclaw', SKILLS_DIR / 'extensions'):
+        if not sd.is_dir():
+            continue
         for d in sorted(sd.iterdir()):
             if d.is_dir() and (d / 'SKILL.md').is_file():
                 desc, layer, _ = _parse_skill_md(d / 'SKILL.md')
                 needs_api = d.name in SKILL_API_REQUIREMENTS
+                native_image = d.name == 'ai-image-gen' and native_image_ready()
                 result.append({
                     'name': d.name,
                     'description': desc,
-                    'layer': layer,
+                    'layer': layer or 'general',
                     'needsApi': needs_api,
-                    'apiConfigured': _skill_api_configured(d.name, env) if needs_api else True,
+                    'apiConfigured': native_image or (_skill_api_configured(d.name, env) if needs_api else True),
+                    'nativeImage': native_image,
                 })
     return result
 
@@ -299,7 +316,7 @@ def clean_agent_output(raw: str) -> str:
 
 def _proxy_env() -> dict[str, str]:
     """返回带外网代理的环境变量（保护内网直连）。"""
-    env = os.environ.copy()
+    env = runtime_env()
     env.setdefault('EASEL_ROOT', str(PROJECT_ROOT))
     env.setdefault('http_proxy', os.environ.get('EASEL_PROXY', ''))
     env.setdefault('https_proxy', os.environ.get('EASEL_PROXY', ''))
@@ -434,24 +451,28 @@ def _api_spec_status(skill: str, env: dict[str, str]) -> dict:
 
 def run_agent_sync(msg: str, timeout: int = TIMEOUT_DIRECT, session_id: str | None = None) -> str:
     sk = session_id or f'web-{int(time.time() * 1000)}'
-    _heal_openclaw_session(sk)   # 清洗历史里无签名 thinking 块，防回放失效
     # 钉死 --session-id 让 OpenClaw 每轮续同一 transcript（防跨天空闲后新起空会话丢历史，见 _openclaw_session_id）
-    cmd = ['openclaw', '--profile', OPENCLAW_PROFILE, 'agent', '--agent', 'main',
+    cmd = openclaw_command() + ['--profile', OPENCLAW_PROFILE, 'agent', '--agent', 'main',
            '--session-key', f'agent:main:{sk}', '--session-id', _openclaw_session_id(sk),
-           '--thinking', THINKING_LEVEL,
-           '--timeout', str(timeout), '--message', msg]
+           '--timeout', str(timeout), '--json', '--message', msg] + agent_options()
     # 跨进程锁：同一会话同时刻只跑一个 openclaw，防并发 takeover 崩溃（rc=1）
     xlock = _CrossProcLock(sk)
     if not xlock.acquire(timeout=min(timeout, 300)):
         return '⏳ 这个会话正在另一个窗口运行，请稍候再试'
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, cwd=str(PROJECT_ROOT), timeout=timeout + 30, env=_proxy_env())
-        return clean_agent_output(r.stdout or '') or '（无输出）'
+        r = run_agent_command(cmd, timeout=timeout + 30, on_start=lambda proc: _RUNNING_CHAT.__setitem__(sk, proc))
+        if sk in _STOPPED_CHAT:
+            return '已停止生成。'
+        if r.returncode != 0:
+            raise RuntimeError(clean_agent_output(r.stderr or r.stdout)[-1000:] or f'Agent 退出码 {r.returncode}')
+        return agent_reply(r.stdout)
     except subprocess.TimeoutExpired:
         return '⏱️ 请求超时'
     except Exception as e:
         return f'❌ {e}'
     finally:
+        _RUNNING_CHAT.pop(sk, None)
+        _STOPPED_CHAT.discard(sk)
         xlock.release()
 
 
@@ -568,6 +589,8 @@ def _safe_output_path(rel: str) -> Path:
     root = OUTPUTS_DIR.resolve()
     if root != full and root not in full.parents:
         raise HTTPException(403, '非法路径')
+    if _is_protected(full):
+        raise HTTPException(403, '系统数据受保护，不可从内容库访问')
     if not full.is_file():
         raise HTTPException(404, '文件不存在')
     return full
@@ -652,6 +675,8 @@ async def api_persona_files(name: str):
     if not profile_exists(name):
         raise HTTPException(404, "画像不存在")
     pd = PROFILES_DIR / name
+    if (pd / 'account-profile.json').is_file():
+        return {'name': name, 'files': []}
     ordered = list(_FILE_ORDER) + sorted(f.name for f in pd.glob("*.md") if f.name not in _FILE_ORDER)
     files = []
     for fn in ordered:
@@ -671,6 +696,8 @@ async def api_persona_file_save(name: str, req: PersonaFileRequest):
     if not profile_exists(name):
         raise HTTPException(404, "画像不存在")
     fp = _persona_file_path(name, req.filename)
+    if (fp.parent / 'account-profile.json').is_file():
+        raise HTTPException(409, '该账号使用版本化档案，请通过账号档案编辑器或 /api/account-profile/{name}/active 保存。')
     tmp = fp.with_suffix(".md.tmp")
     tmp.write_text(req.content, encoding="utf-8")
     tmp.replace(fp)
@@ -701,8 +728,10 @@ async def api_skill_detail(name: str):
     full = find_skill(name)
     if full is None:
         raise HTTPException(404, f"SKILL '{name}' 不存在")
-    desc, layer, body = _parse_skill_md(SKILLS_DIR / "openclaw" / full / "SKILL.md")
+    skill_file = next(SKILLS_DIR / group / full / 'SKILL.md' for group in ('openclaw', 'extensions') if (SKILLS_DIR / group / full / 'SKILL.md').is_file())
+    desc, layer, body = _parse_skill_md(skill_file)
     needs_api = full in SKILL_API_REQUIREMENTS
+    native_image = full == 'ai-image-gen' and native_image_ready()
     env = _read_env()
     return {
         "name": full,
@@ -710,7 +739,8 @@ async def api_skill_detail(name: str):
         "description": desc,
         "body": body,
         "needsApi": needs_api,
-        "apiConfigured": _skill_api_configured(full, env) if needs_api else True,
+        "apiConfigured": native_image or (_skill_api_configured(full, env) if needs_api else True),
+        "nativeImage": native_image,
         "apiSpec": _api_spec_status(full, env) if needs_api else None,
     }
 
@@ -795,14 +825,22 @@ def _attachment_context(req: ChatRequest) -> str:
     )
 
 
-def _chat_message(req: ChatRequest) -> str:
+def _chat_message(req: ChatRequest, turn_context: dict | None = None) -> str:
     context = _attachment_context(req)
     message = req.message.strip()
     if context:
         message = f"{message}\n\n{context}" if message else context
     if not message:
         raise HTTPException(400, "消息不能为空")
-    return chat_turn_message(message, req.persona)
+    active = None
+    if req.persona:
+        from easel import account_profile
+        path = account_profile.profile_path(req.persona)
+        if path.is_file():
+            active = account_profile.read_profile(req.persona)['active']
+            if turn_context is not None:
+                turn_context['account_profile'] = {'name': req.persona, 'version': active['version'], 'sha256': hashlib.sha256(active['content'].encode('utf-8')).hexdigest(), 'confirmed': bool(active['content'])}
+    return chat_turn_message(message, req.persona, active)
 
 
 # 每个会话（session-key）一把锁：防止同一会话被两个并发的 openclaw agent 进程同时处理。
@@ -834,7 +872,7 @@ def _openclaw_session_id(sk: str) -> str:
 
 
 def _session_flock_path(sk: str) -> Path:
-    safe = re.sub(r"[^A-Za-z0-9_.-]", "_", sk)[:120]
+    safe = _openclaw_session_id(sk)
     return SESSIONS_DIR / f"{safe}.lock"
 
 
@@ -898,7 +936,7 @@ class _CrossProcLock:
 
 def _turn_file(sk: str) -> Path:
     """每会话最近一轮结果的落盘路径（sk 做文件名安全化）。"""
-    safe = re.sub(r"[^A-Za-z0-9_.-]", "_", sk)[:120]
+    safe = _openclaw_session_id(sk)
     return SESSIONS_DIR / f"{safe}.json"
 
 
@@ -1031,8 +1069,13 @@ async def api_chat_stream(req: ChatRequest):
     把 assistant_text_stream 的 token delta 立即转成 SSE `token`、thinking delta 转成 `thinking`。
     每轮独立文件天然无并发串扰。stdout 仅留作错误/兜底。
     """
+    try:
+        await asyncio.to_thread(require_subscription)
+    except Exception as exc:
+        raise HTTPException(503, str(exc)) from exc
     # 每轮末尾追加「先查技能库」提醒，抗长对话指令衰减（对用户不可见）
-    message = _chat_message(req)
+    turn_context: dict = {}
+    message = _chat_message(req, turn_context)
 
     # supervisor（跑 openclaw run）与 forward（转发 SSE 给浏览器）之间的事件通道。
     # 关键：run 跑在独立后台任务里，客户端断开只结束 forward，不取消 supervisor →
@@ -1050,7 +1093,7 @@ async def api_chat_stream(req: ChatRequest):
         timed_out = False                # 只有真·超时才 terminate 进程；断线绝不杀
 
         # Claim this turn before waiting for locks, so recovery cannot return the previous turn.
-        _save_turn(pk, "running", "", {"turn_id": turn_id})
+        _save_turn(pk, "running", "", {"turn_id": turn_id, **turn_context})
 
         event_path = _job_event_file(turn_id)
         try:
@@ -1072,17 +1115,15 @@ async def api_chat_stream(req: ChatRequest):
                 pass
             client_q.put_nowait({"t": kind, "text": text, "id": event_seq, **extra})
 
-        _heal_openclaw_session(sk)       # 清洗历史里无签名 thinking 块，防回放失效
         fd, raw_path = tempfile.mkstemp(prefix="pc-stream-", suffix=".jsonl")
         os.close(fd)
         raw_path = Path(raw_path)
 
-        cmd = [
-            "openclaw", "--profile", OPENCLAW_PROFILE, "agent", "--agent", "main",
+        cmd = openclaw_command() + [
+            "--profile", OPENCLAW_PROFILE, "agent", "--agent", "main",
             "--session-key", f"agent:main:{sk}", "--session-id", _openclaw_session_id(sk),
-            "--thinking", THINKING_LEVEL,
-            "--timeout", str(TIMEOUT_CHAT), "--message", message,
-        ]
+            "--timeout", str(TIMEOUT_CHAT), "--json", "--message", message,
+        ] + agent_options()
         env = _proxy_env()
         env["OPENCLAW_RAW_STREAM"] = "1"
         env["OPENCLAW_RAW_STREAM_PATH"] = str(raw_path)
@@ -1100,6 +1141,7 @@ async def api_chat_stream(req: ChatRequest):
         if not got:
             lock.release()
             _save_turn(pk, "done", "这个会话正在另一个窗口运行，请稍候再试。", {
+                **turn_context,
                 "turn_id": turn_id, "clean_end": False, "stop_reason": "session_lock_timeout",
             })
             to_client("activity", "⏳ 这个会话正在另一个窗口运行，请稍候再试")
@@ -1112,9 +1154,11 @@ async def api_chat_stream(req: ChatRequest):
             return
 
         try:
+            # A queued request must recheck the subscription login before it starts.
+            await asyncio.to_thread(require_subscription)
             proc = subprocess.Popen(
                 cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                cwd=str(PROJECT_ROOT), text=True, bufsize=1, env=env,
+                cwd=str(PROJECT_ROOT), text=True, encoding='utf-8', bufsize=1, env=env, creationflags=CREATE_FLAGS,
             )
         except BaseException:
             lock.release()
@@ -1124,6 +1168,7 @@ async def api_chat_stream(req: ChatRequest):
             except OSError:
                 pass
             _save_turn(pk, "done", "❌ 启动失败，请重试", {
+                **turn_context,
                 "turn_id": turn_id, "clean_end": False, "stop_reason": "spawn_failed",
             })
             to_client("error", "❌ 启动失败，请重试")
@@ -1131,6 +1176,7 @@ async def api_chat_stream(req: ChatRequest):
             client_q.put_nowait(CLIENT_DONE)
             return
         _RUNNING_CHAT[sk] = proc         # 注册运行中进程，供 /api/chat/stop 显式终止
+        to_client('activity', '正在调用订阅模型，完成后会保存结果；可以切换页面。')
         q = asyncio.Queue()
         SENTINEL = object()
         stdout_lines = []
@@ -1218,6 +1264,8 @@ async def api_chat_stream(req: ChatRequest):
         loop.run_in_executor(None, _tail)
 
         deadline = time.monotonic() + TIMEOUT_CHAT + 30
+        started_at = time.monotonic()
+        next_progress = started_at + 60
         emitted = False
         tail_finished = False
         try:
@@ -1226,6 +1274,9 @@ async def api_chat_stream(req: ChatRequest):
                 # completion. Keep the session lock until the process exits.
                 if tail_finished and proc.poll() is not None:
                     break
+                if time.monotonic() >= next_progress:
+                    to_client('activity', f'任务仍在运行 · 已用时 {int((time.monotonic() - started_at) / 60)} 分钟；结果将自动保存。')
+                    next_progress = time.monotonic() + 60
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     timed_out = True
@@ -1256,14 +1307,26 @@ async def api_chat_stream(req: ChatRequest):
                 pass
             sr = run_info.get("stop_reason")
             if not emitted:
-                clean = clean_agent_output("".join(stdout_lines))
+                clean = ''
+                if rc == 0 and sk not in _STOPPED_CHAT and not timed_out:
+                    try:
+                        clean = agent_reply(''.join(stdout_lines))
+                        run_info['last_ev'] = 'assistant_message_end'
+                        run_info['saw_message_end'] = True
+                        run_info['stop_reason'] = 'completed'
+                    except RuntimeError as exc:
+                        run_info['stop_reason'] = 'invalid_result'
+                        full_text.append(str(exc))
+                        to_client('error', str(exc))
                 if clean:
                     emitted = True
                     full_text.append(clean)
                     to_client("token", clean)
                 elif rc not in (0, None):
                     err = clean_agent_output("".join(stdout_lines))[:200]
-                    to_client("error", f"❌ 执行失败（退出码 {rc}）{' — ' + err if err else ''}")
+                    failure = f"❌ 执行失败（退出码 {rc}）{' — ' + err if err else ''}"
+                    full_text.append(failure)
+                    to_client("error", failure)
             # 收尾检测：即使已吐了内容，只要不是「正常收尾」就显式告知——
             # 否则被截断（触顶）/被杀（负载）/流被中断，都会被当成「清晰地答完了」，
             # 用户看到的就是「答一半突然停、也不说做完」（本 bug 根因）。
@@ -1298,6 +1361,11 @@ async def api_chat_stream(req: ChatRequest):
             # stop, cancellation, or an internal stream failure. Never release
             # the session locks while such a process can still write history.
             if proc.poll() is None:
+                try:
+                    await asyncio.to_thread(abort_session, f'agent:main:{sk}')
+                except Exception:
+                    from easel.services import stop
+                    await asyncio.to_thread(stop, 'gateway')
                 try:
                     proc.terminate()
                 except OSError:
@@ -1339,9 +1407,10 @@ async def api_chat_stream(req: ChatRequest):
                 pass
             # 落盘完整结果：后端跑完整轮不依赖客户端连接，断线后前端用 /api/chat/last 取回
             _save_turn(pk, "done", "".join(full_text), {
+                **turn_context,
                 "turn_id": turn_id,
                 "clean_end": run_info.get("last_ev") == "assistant_message_end",
-                "stop_reason": "user_stopped" if user_stopped else run_info.get("stop_reason"),
+                "stop_reason": "user_stopped" if user_stopped else 'timeout' if timed_out else run_info.get("stop_reason"),
             })
             xlock.release()
             lock.release()
@@ -1414,6 +1483,11 @@ async def api_chat_stop(req: StopRequest):
     if proc is not None and proc.poll() is None:
         _STOPPED_CHAT.add(sk)          # 标记为用户停止，供 supervisor 正常收尾（不报「被中断」）
         try:
+            await asyncio.to_thread(abort_session, f'agent:main:{sk}')
+        except Exception as exc:
+            from easel.services import stop
+            await asyncio.to_thread(stop, 'gateway')
+        try:
             proc.terminate()
         except OSError:
             pass
@@ -1437,10 +1511,22 @@ async def api_chat_stop(req: StopRequest):
 async def api_chat(req: ChatRequest):
     """非流式对话（备选）。"""
     # 每轮末尾追加「先查技能库」提醒，抗长对话指令衰减（对用户不可见）
-    message = _chat_message(req)
+    turn_context: dict = {}
+    message = _chat_message(req, turn_context)
     loop = asyncio.get_event_loop()
     # chat 可能中途触发制作层长任务 → 用 TIMEOUT_CHAT，与流式 /api/chat/stream 一致（勿用 300s）
-    result = await loop.run_in_executor(None, run_agent_sync, message, TIMEOUT_CHAT, req.sessionId)
+    key = f"web:{req.sessionId}" if req.sessionId else None
+    metadata = {'turn_id': req.turnId or uuid.uuid4().hex, **turn_context}
+    if key:
+        _save_turn(key, 'running', '', metadata)
+    try:
+        result = await loop.run_in_executor(None, run_agent_sync, message, TIMEOUT_CHAT, req.sessionId)
+    except Exception:
+        if key:
+            _save_turn(key, 'done', '模型执行失败', {**metadata, 'clean_end': False, 'stop_reason': 'failed'})
+        raise
+    if key:
+        _save_turn(key, 'done', result, {**metadata, 'clean_end': True, 'stop_reason': 'completed'})
     return {"response": result}
 
 
@@ -1485,12 +1571,13 @@ async def api_output(path: str):
 async def api_media(path: str):
     """原样输出媒体文件（图片/视频/音频/HTML/PDF），供 <img>/<video>/iframe/下载。"""
     full = _safe_output_path(path)
-    return FileResponse(full)
+    headers = {'X-Content-Type-Options': 'nosniff'}
+    if full.suffix.lower() in ('.html', '.htm', '.svg', '.xhtml'):
+        headers['Content-Security-Policy'] = "sandbox allow-scripts allow-downloads; frame-ancestors 'self'"
+    return FileResponse(full, headers=headers)
 
 
-# 系统数据目录/文件——不允许从内容库删除（删了会丢登录态/日历/发布记录）
-PROTECTED_OUTPUTS = {"_login", "_analytics", "_schedule.json", "_ideas.json",
-                     "_publish", "_publish.log"}
+# 内容库的读取、删除和媒体交接共用系统数据边界。
 UPLOAD_EXTS = IMAGE_EXTS | VIDEO_EXTS | {
     ".pdf", ".txt", ".md", ".markdown", ".csv", ".json", ".srt", ".vtt",
     ".docx", ".doc", ".xlsx", ".xls", ".pptx", ".ppt", ".mp3", ".wav", ".m4a"}
@@ -1529,7 +1616,7 @@ def _is_protected(full: Path) -> bool:
         rel = full.relative_to(OUTPUTS_DIR.resolve())
     except ValueError:
         return True
-    return bool(rel.parts) and rel.parts[0] in PROTECTED_OUTPUTS
+    return not rel.parts or rel.parts[0].startswith(('_', '.')) or rel.parts[0] in SYSTEM_TOPLEVEL_DIRS
 
 
 @app.delete("/api/output/{path:path}")
@@ -2212,18 +2299,18 @@ def _write_baseline_profile(name: str, form: dict) -> None:
 
 @app.delete("/api/session/{session_key}")
 async def api_delete_session(session_key: str):
-    """删除 OpenClaw 本地的 session 记录。"""
-    sessions_file = Path.home() / '.openclaw-easel' / 'agents' / 'main' / 'sessions' / 'sessions.json'
-    if not sessions_file.is_file():
-        return {'deleted': False, 'reason': 'sessions file not found'}
-    data = json.loads(sessions_file.read_text())
-    full_key = f'agent:main:{session_key}' if not session_key.startswith('agent:') else session_key
-    for key in (full_key, session_key):
-        if key in data:
-            del data[key]
-            sessions_file.write_text(json.dumps(data, ensure_ascii=False))
-            return {'deleted': True}
-    return {'deleted': False, 'reason': 'session not found'}
+    """Use OpenClaw's lifecycle API for both SQLite and native Codex sessions."""
+    short_key = session_key.removeprefix('agent:main:')
+    if not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', short_key):
+        raise HTTPException(422, '会话标识无效。')
+    command = openclaw_command() + ['--profile', PROFILE, 'sessions', 'delete', f'agent:main:{short_key}', '--yes', '--json']
+    try:
+        result = await asyncio.to_thread(subprocess.run, command, cwd=PROJECT_ROOT, env=runtime_env(), capture_output=True, text=True, encoding='utf-8', timeout=30, creationflags=CREATE_FLAGS)
+        if result.returncode:
+            raise HTTPException(503, '运行时未确认删除：' + (result.stderr or result.stdout)[-500:])
+        return {'deleted': True, 'result': json.loads(result.stdout)}
+    except (subprocess.TimeoutExpired, ValueError) as exc:
+        raise HTTPException(503, '暂时无法确认会话删除结果。') from exc
 
 
 TREND_SOURCES: dict[str, tuple[str, str | None]] = {
@@ -2232,7 +2319,7 @@ TREND_SOURCES: dict[str, tuple[str, str | None]] = {
     "zhihu": ("https://60s.viki.moe/v2/zhihu", None),
     "bilibili": ("https://60s.viki.moe/v2/bili", "https://v2.xxapi.cn/api/bilibilihot"),
     "baidu": ("https://60s.viki.moe/v2/baidu/hot", "https://v2.xxapi.cn/api/baiduhot"),
-    "toutiao": ("https://60s.viki.moe/v2/toutiao", None),
+    "toutiao": ("https://60s.viki.moe/v2/toutiao", "https://www.toutiao.com/hot-event/hot-board/?origin=toutiao_pc"),
 }
 TREND_LABELS = {
     "weibo": "微博",
@@ -2258,15 +2345,19 @@ def _parse_hot(obj: dict) -> list[dict]:
     out = []
     if isinstance(data, list):
         for it in data:
+            if isinstance(it, str):
+                if it.strip():
+                    out.append({"title": it.strip(), "hot": "", "url": ""})
+                continue
             if not isinstance(it, dict):
                 continue
-            title = it.get("title") or it.get("word") or it.get("name") or it.get("keyword")
+            title = it.get("title") or it.get("Title") or it.get("word") or it.get("name") or it.get("keyword")
             if not title:
                 continue
             out.append({
                 "title": str(title),
-                "hot": str(it.get("hot") or it.get("hot_value") or it.get("num") or ""),
-                "url": it.get("url") or it.get("link") or it.get("mobil_url") or "",
+                "hot": str(it.get("hot") or it.get("hot_value") or it.get("HotValue") or it.get("num") or ""),
+                "url": it.get("url") or it.get("Url") or it.get("link") or it.get("mobil_url") or "",
             })
     return out
 
@@ -2279,6 +2370,10 @@ def _fetch_platform(pf: str) -> list[dict]:
         try:
             items = _parse_hot(_http_get_json(url))
             if items:
+                if pf == "bilibili":
+                    for item in items:
+                        if not item["url"]:
+                            item["url"] = "https://search.bilibili.com/all?keyword=" + urllib.parse.quote(item["title"])
                 return items
         except Exception:
             continue
@@ -2287,26 +2382,44 @@ def _fetch_platform(pf: str) -> list[dict]:
 
 @app.get("/api/trends")
 async def api_trends(platforms: str = "weibo,douyin,zhihu", limit: int = 12):
-    pfs = [p.strip() for p in platforms.split(",") if p.strip() in TREND_SOURCES]
-    now = time.time()
+    pfs = list(dict.fromkeys(p.strip() for p in platforms.split(",") if p.strip() in TREND_SOURCES))
     loop = asyncio.get_event_loop()
     result = []
     for pf in pfs:
+        now = time.time()
         c = _TREND_CACHE.get(pf)
         if c and now - c[0] < 300:
             items = c[1]
+            source_updated = c[0]
+            stale = False
+            error = None
         else:
             items = await loop.run_in_executor(None, _fetch_platform, pf)
             if items:
-                _TREND_CACHE[pf] = (now, items)
+                source_updated = time.time()
+                _TREND_CACHE[pf] = (source_updated, items)
+                stale = False
+                error = None
             elif c:
                 items = c[1]
-        result.append({
+                source_updated = c[0]
+                stale = True
+                error = "实时热点暂时不可用，当前展示缓存数据"
+            else:
+                source_updated = 0
+                stale = False
+                error = "实时热点暂时不可用"
+        group = {
             "platform": pf,
             "label": TREND_LABELS.get(pf, pf),
             "items": items[:max(1, min(limit, 30))],
-        })
-    return {"trends": result, "updated": int(now)}
+            "updated": int(source_updated),
+            "stale": stale,
+        }
+        if error:
+            group["error"] = error
+        result.append(group)
+    return {"trends": result, "updated": max((g["updated"] for g in result), default=0)}
 
 
 SCHEDULE_FILE = OUTPUTS_DIR / "_schedule.json"

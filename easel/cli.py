@@ -24,6 +24,7 @@ from easel.commands.skill import cmd_skill
 from easel.persona import list_personas as _list_personas
 from easel.persona import persona_prefix
 from easel.timeouts import TIMEOUT_CHAT
+from easel.runtime import runtime_env
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PROFILES_DIR = PROJECT_ROOT / "profiles"
@@ -32,7 +33,7 @@ PROFILE = "easel"
 
 def _proxy_env() -> dict[str, str]:
     """返回带外网代理的环境变量（保护内网直连）。"""
-    env = os.environ.copy()
+    env = runtime_env()
     env.setdefault("EASEL_ROOT", str(PROJECT_ROOT))
     env.setdefault("http_proxy", os.environ.get("EASEL_PROXY", ""))
     env.setdefault("https_proxy", os.environ.get("EASEL_PROXY", ""))
@@ -96,29 +97,22 @@ def cmd_chat(_args) -> int:
     session_key = f"easel-{time.strftime('%m%d-%H%M%S')}"
 
     print(f"  {DIM}会话: {session_key}{NC}")
-    print(f"  {DIM}切换历史会话: 对话中输入 /session{NC}")
+    print(f"  {DIM}输入 /exit 退出；历史会话可在 Web 界面管理。{NC}")
     print(f"  {CYAN}Ctrl+C{NC} 退出")
     print()
 
-    cmd = [
-        "openclaw", "--profile", PROFILE,
-        "chat",
-        "--session", session_key,
-        # chat 里可能直接发起制作层/跨层编排，给足制作层预算，避免长任务被 turn 超时掐断（O2）。
-        # 超时统一走 easel/timeouts.py（三入口单一真相源），毫秒 = TIMEOUT_CHAT * 1000。
-        "--timeout-ms", str(TIMEOUT_CHAT * 1000),
-    ]
-
-    # 画像作为初始消息内联注入（无全局 USER.md，避免并发竞态；与 web/skill 同源）。
-    # 说明：注入随 session 历史留存，超长会话被压缩后可能丢画像——换取「每个请求自包含」，
-    # 与 docs/prompt-stack.md 声明的架构一致。
-    prefix = persona_prefix(selected_persona)
-    if prefix:
-        cmd += ["--message", prefix]
-
-    result = subprocess.run(cmd, cwd=str(PROJECT_ROOT), env=_proxy_env())
-
-    return result.returncode
+    from web.app import run_agent_sync
+    from easel.persona import chat_turn_message
+    while True:
+        try:
+            message = input('你：').strip()
+            if message == '/exit':
+                return 0
+            if message:
+                print(run_agent_sync(chat_turn_message(message, selected_persona), TIMEOUT_CHAT, session_key))
+        except (EOFError, KeyboardInterrupt):
+            print('\n已退出。')
+            return 0
 
 
 def main(argv: list[str] | None = None) -> int:

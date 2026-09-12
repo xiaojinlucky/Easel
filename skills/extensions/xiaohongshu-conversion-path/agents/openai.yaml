@@ -1,0 +1,7 @@
+interface:
+  display_name: "AI工作台 · 成交路径"
+  short_description: "《小红书运营手册 · AI工作台》内容到私信/体验/成交路径"
+  default_prompt: "Use $xiaohongshu-conversion-path from 《小红书运营手册 · AI工作台》 to design a Xiaohongshu conversion path for this offer."
+
+policy:
+  allow_implicit_invocation: true

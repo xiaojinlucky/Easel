@@ -5,10 +5,10 @@ import type { ComponentType } from 'react';
 import {
   IconChat, IconSkills, IconOutputs, IconAccounts, IconProfile,
   IconNewChat, IconEdit, IconArchive, IconUnarchive, IconTrash, IconChevron,
-  IconDashboard,
+  IconDashboard, IconSettings, IconBookmark, IconLayout,
 } from './icons';
 
-export type Page = 'dashboard' | 'chat' | 'trends' | 'ideas' | 'calendar' | 'publish' | 'breakdown' | 'skills' | 'outputs' | 'accounts' | 'profile';
+export type Page = 'dashboard' | 'chat' | 'trends' | 'ideas' | 'calendar' | 'publish' | 'breakdown' | 'skills' | 'outputs' | 'accounts' | 'profile' | 'model-settings' | 'research' | 'capabilities' | 'wechat';
 
 interface SidebarProps {
   currentPage: Page;
@@ -32,10 +32,14 @@ interface SidebarProps {
 const NAV: { page: Page; Icon: ComponentType<{ size?: number }>; label: string }[] = [
   { page: 'dashboard', Icon: IconDashboard, label: '工作台' },
   { page: 'chat', Icon: IconChat, label: '对话' },
+  { page: 'research', Icon: IconBookmark, label: '调研与素材' },
   { page: 'skills', Icon: IconSkills, label: '技能库' },
   { page: 'outputs', Icon: IconOutputs, label: '内容库' },
   { page: 'accounts', Icon: IconAccounts, label: '账号' },
+  { page: 'wechat', Icon: IconLayout, label: '公众号工作区' },
   { page: 'profile', Icon: IconProfile, label: '画像' },
+  { page: 'model-settings', Icon: IconSettings, label: 'AI 模型设置' },
+  { page: 'capabilities', Icon: IconSkills, label: '能力与集成' },
 ];
 
 export default function Sidebar({

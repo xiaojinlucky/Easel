@@ -1,0 +1,24 @@
+.account-profile-panel { margin: 18px 0; padding: 22px; background: var(--surface, #fff); border: 1px solid var(--border); border-radius: var(--radius); }
+.account-profile-panel h3 { margin-top: 0; }
+.account-profile-panel p, .account-profile-panel small { color: var(--text-secondary); font-size: 13px; line-height: 1.65; }
+.account-profile-panel label { display: block; margin: 12px 0; font-size: 13px; }
+.account-profile-panel .field { display: block; width: 100%; margin-top: 6px; }
+.account-profile-panel .btn { margin: 6px 8px 6px 0; }
+.account-profile-panel details { margin: 16px 0; }
+.account-profile-panel summary { cursor: pointer; font-weight: 600; }
+.account-profile-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+.account-profile-columns > div { min-width: 0; }
+.account-evidence { margin-top: 14px; padding: 14px; background: var(--bg-elev); border-radius: var(--radius); }
+.account-evidence pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 220px; overflow-y: auto; font: inherit; font-size: 13px; }
+.account-profile-panel .account-source-choice { display: flex; gap: 10px; align-items: start; }
+.account-source-choice small { display: block; overflow-wrap: anywhere; }
+.account-job { padding: 12px 0; color: var(--text-secondary); }
+@media (max-width: 900px) { .account-profile-columns { grid-template-columns: 1fr; } }
+
+/* Keep article-length analysis inside its reading area, with actions above it. */
+.account-profile-columns > div { display: flex; flex-direction: column; align-items: flex-start; }
+.account-profile-columns > div > h4 { order: -3; margin-bottom: 6px; }
+.account-profile-columns > div > p { order: -2; margin: 4px 0 8px; }
+.account-profile-columns > div > .btn { order: -1; }
+.account-profile-columns .profile-content { width: 100%; max-height: min(48vh, 420px); overflow-y: auto; overscroll-behavior: contain; overflow-wrap: anywhere; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-elev); }
+.account-profile-columns textarea.field { height: min(48vh, 420px); min-height: 180px; resize: vertical; }

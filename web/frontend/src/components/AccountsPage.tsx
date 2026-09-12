@@ -1,3 +1,4 @@
+import type { Page } from './Sidebar';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   fetchAccounts, startLogin, loginStatus, mediaUrl,
@@ -38,7 +39,7 @@ function Avatar({ url, name }: { url?: string; name: string }) {
   return <div className="account-avatar account-avatar-fallback">{initial}</div>;
 }
 
-export default function AccountsPage() {
+export default function AccountsPage({ onNavigate, onNewProfile }: { onNavigate: (page: Page) => void; onNewProfile: () => void }) {
   const [accounts, setAccounts] = useState<AccountItem[]>([]);
   const [err, setErr] = useState('');
   const [qr, setQr] = useState<QRState | null>(null);
@@ -188,6 +189,8 @@ export default function AccountsPage() {
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
         <div>
           <h1 className="page-title">账号登录 Accounts</h1>
+          <button className="btn btn-sm" onClick={onNewProfile}>从账号主页建立档案 →</button>
+          <button className="btn btn-sm" onClick={() => onNavigate('wechat')}>公众号账号与草稿箱 →</button>
           <p className="page-subtitle">
             用手机 App 扫码登录，登录态本地持久化，之后发布免登。<br />
             ⚠️ 平台可能对机房/代理 IP 判风险导致二维码弹不出，需干净/家宽 IP，或在正常网络登录后拷贝登录态目录。

@@ -81,6 +81,8 @@ export default function OutputsPage() {
   const [selected, setSelected] = useState<OutputNode | null>(null);
   const [content, setContent] = useState('');
   const [loading, setLoading] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [delivery, setDelivery] = useState('');
   const reqSeq = useRef(0);
 
   const load = useCallback(() => {
@@ -134,7 +136,7 @@ export default function OutputsPage() {
 
   const open = useCallback(async (f: OutputNode) => {
     const seq = ++reqSeq.current;
-    setSelected(f); setContent('');
+    setSelected(f); setContent(''); setDelivery('');
     if (f.kind === 'text' && !isHtml(f.name)) {
       setLoading(true);
       try {
@@ -144,11 +146,25 @@ export default function OutputsPage() {
     }
   }, []);
 
+  const sendToPostiz = async () => {
+    if (!selected || sending) return;
+    const seq = reqSeq.current;
+    setSending(true); setDelivery('');
+    try {
+      const response = await fetch('/api/publishing/postiz/media', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({path: selected.path})});
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.detail || '传送失败');
+      if (seq === reqSeq.current) setDelivery('已保存到 Postiz 媒体库，可以在那里选择频道并编排内容。');
+    } catch (error) {
+      if (seq === reqSeq.current) setDelivery((error as Error).message);
+    } finally { setSending(false); }
+  };
+
   const preview = () => {
     if (!selected) return null;
     const url = mediaUrl(selected.path);
-    if (selected.kind === 'image') return <img src={url} alt={selected.name} style={{ maxWidth: '100%', borderRadius: 'var(--radius)' }} />;
-    if (selected.kind === 'video') return <video src={url} controls style={{ maxWidth: '100%', borderRadius: 'var(--radius)' }} />;
+    if (selected.kind === 'image') return <img src={url} alt={selected.name} style={{ display: 'block', maxWidth: '100%', maxHeight: '65vh', objectFit: 'contain', margin: '0 auto', borderRadius: 'var(--radius)' }} />;
+    if (selected.kind === 'video') return <video src={url} controls style={{ display: 'block', maxWidth: '100%', maxHeight: '65vh', margin: '0 auto', borderRadius: 'var(--radius)' }} />;
     if (selected.kind === 'audio') return <audio src={url} controls style={{ width: '100%' }} />;
     if (selected.kind === 'text' && isHtml(selected.name)) return (
       <>
@@ -296,8 +312,10 @@ export default function OutputsPage() {
               </div>
               <button className="icon-btn" onClick={() => setSelected(null)}>×</button>
             </div>
-            <div className="drawer-body">{preview()}</div>
-            <div style={{ padding: '10px 16px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-end' }}>
+            <div className="drawer-body">{preview()}{delivery && <p role="status">{delivery}</p>}</div>
+            <div style={{ padding: '10px 16px', borderTop: '1px solid var(--border)', display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              {['image','video'].includes(selected.kind || '') && <button className="btn btn-sm" disabled={sending} onClick={sendToPostiz}>{sending?'传送中…':'送入 Postiz 媒体库'}</button>}
+              <a className="btn btn-sm" href="http://localhost:4007/" target="_blank" rel="noreferrer">打开发布日历 ↗</a>
               <button className="btn btn-sm btn-danger" onClick={(e) => remove(selected, e)}><IconTrash size={13} /> 删除此文件</button>
             </div>
           </div>

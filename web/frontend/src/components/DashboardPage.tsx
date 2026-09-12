@@ -40,6 +40,8 @@ const STATUS_LABEL: Record<string, string> = { idea: '选题', draft: '草稿', 
 
 export default function DashboardPage({ persona, gatewayStatus, onNavigate, onUseTopic }: DashboardProps) {
   const [trends, setTrends] = useState<TrendGroup[]>([]);
+  const [trendLoading, setTrendLoading] = useState(true);
+  const [trendError, setTrendError] = useState('');
   const [schedule, setSchedule] = useState<ScheduleItem[]>([]);
   const [outputs, setOutputs] = useState<OutputNode[]>([]);
   const [accounts, setAccounts] = useState<AccountItem[]>([]);
@@ -55,7 +57,17 @@ export default function DashboardPage({ persona, gatewayStatus, onNavigate, onUs
   const [whoamiMap, setWhoamiMap] = useState<Record<string, AccountWhoami>>(() => getWhoamiCache());
 
   useEffect(() => {
-    fetchTrends('weibo,douyin', 6).then((d) => setTrends(d.trends)).catch(() => {});
+    let active = true;
+    fetchTrends('weibo,douyin', 6)
+      .then((d) => {
+        if (!active) return;
+        setTrends(d.trends);
+        setTrendError(d.trends.filter((g) => g.error).map((g) => `${g.label}：${g.error}`).join('；'));
+      })
+      .catch(() => {
+        if (active) setTrendError('热点拉取失败——请确认已配置外网代理（EASEL_PROXY）。');
+      })
+      .finally(() => { if (active) setTrendLoading(false); });
     fetchSchedule().then(setSchedule).catch(() => {});
     fetchOutputs().then(setOutputs).catch(() => {});
     fetchAccounts().then(setAccounts).catch(() => {});
@@ -74,6 +86,7 @@ export default function DashboardPage({ persona, gatewayStatus, onNavigate, onUs
         },
       });
     }).catch(() => {});
+    return () => { active = false; };
   }, []);
 
   const runAna = (platform: string) => {
@@ -150,10 +163,12 @@ export default function DashboardPage({ persona, gatewayStatus, onNavigate, onUs
             <span><IconFire size={16} /> 今日热点</span>
             <button className="dash-more" onClick={() => onNavigate('trends')}>热点雷达 →</button>
           </div>
-          {trends.length === 0 && <div className="dash-empty">热点加载中 / 需配置代理</div>}
+          {trends.length === 0 && <div className="dash-empty">{trendLoading ? '热点加载中…' : trendError || '暂无可用热点'}</div>}
+          {trendError && trends.length > 0 && <div className="dash-empty">{trendError}</div>}
           {trends.map((g) => (
             <div key={g.platform} className="dash-trend-group">
-              <div className="dash-trend-plat">{g.label}</div>
+              <div className="dash-trend-plat">{g.label} {g.stale && g.updated > 0 && <span className="badge">缓存于 {new Date(g.updated * 1000).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</span>}</div>
+              {g.items.length === 0 && <div className="dash-empty">{g.error || '暂无数据'}</div>}
               {g.items.slice(0, 3).map((it, i) => (
                 <div key={i} className="dash-trend-item" title={`${it.title}（点击做成内容）`}>
                   <span className="dash-trend-title" onClick={() => onUseTopic(it.title)}>{it.title}</span>

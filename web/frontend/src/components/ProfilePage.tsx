@@ -1,3 +1,4 @@
+import AccountProfilePanel from './AccountProfilePanel';
 import { useState, useEffect } from 'react';
 import { fetchPersonaFiles, savePersonaFile, deletePersona } from '../lib/api';
 import type { PersonaFile } from '../lib/api';
@@ -6,6 +7,7 @@ import { renderMarkdown } from '../lib/sanitize';
 interface ProfilePageProps {
   persona: string;
   onNewProfile: () => void;
+  onStartCreate: (persona: string) => void;
   onDeleted: (name: string) => void;
 }
 
@@ -18,7 +20,7 @@ const DIM_META: Record<string, { label: string; icon: string }> = {
   'memory.md': { label: '经验沉淀', icon: '🧠' },
 };
 
-export default function ProfilePage({ persona, onNewProfile, onDeleted }: ProfilePageProps) {
+export default function ProfilePage({ persona, onNewProfile, onDeleted, onStartCreate }: ProfilePageProps) {
   const [files, setFiles] = useState<PersonaFile[]>([]);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [editing, setEditing] = useState(false);
@@ -93,12 +95,12 @@ export default function ProfilePage({ persona, onNewProfile, onDeleted }: Profil
       <div className="profile-head">
         <div>
           <h1 className="page-title">{persona}</h1>
-          <p className="page-subtitle">六个维度构成一个完整人设，可随时编辑保存。</p>
+          <p className="page-subtitle">{files.length ? '六维资料与账号档案共同记录定位，可随时编辑保存。' : '从原始资料形成建议，确认采用后用于此画像的创作。'}</p>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className={`btn ${editing ? 'btn-primary' : ''}`} onClick={() => setEditing((v) => !v)}>
+          {files.length > 0 && <button className={`btn ${editing ? 'btn-primary' : ''}`} onClick={() => setEditing((v) => !v)}>
             {editing ? '完成编辑' : '✏️ 编辑资料'}
-          </button>
+          </button>}
           <button className="btn" style={{ color: 'var(--red)', borderColor: 'var(--red)' }}
             disabled={deleting} onClick={handleDelete}>
             {deleting ? '删除中…' : '🗑 删除画像'}
@@ -106,6 +108,7 @@ export default function ProfilePage({ persona, onNewProfile, onDeleted }: Profil
         </div>
       </div>
 
+      <AccountProfilePanel key={persona} persona={persona} onStartCreate={onStartCreate} />
       {error && <div style={{ color: 'var(--red)', fontSize: 14, marginTop: 12 }}>{error}</div>}
 
       {loading ? (

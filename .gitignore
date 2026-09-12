@@ -1,5 +1,8 @@
 # Dependencies
 node_modules/
+.venv/
+.runtime/
+config/local.json
 __pycache__/
 *.pyc
 *.pyo
@@ -12,6 +15,8 @@ build/
 .env
 .env.local
 .env.xhs
+skills/openclaw/skill-wechat-publisher/wechat-publisher.yaml
+skills/openclaw/skill-wechat-publisher/scripts/.token_cache*.json
 
 # Docker
 docker/data/
