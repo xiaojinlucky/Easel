@@ -147,8 +147,8 @@ export default function App() {
 
   // Fetch status on mount — 真实反映 gateway 状态 + 首次引导检测
   // 注意：web 先启动、gateway 慢 15~25s 才 ready；若启动瞬间查询返回 false，
-  // 不能就此定格——这里在「未连接」时每 10s 重查一次，连上即停并刷新 personas。
-  // （不做无限轮询：connected 后停止；断线后再恢复由页面重开/手动操作触发）
+  // 不能就此定格——这里持续巡检 gateway：未连接时每 10s 重查（直至连上并刷新 personas），
+  // 已连接后改为每 30s 轻量巡检一次，网关中途重启/断线也能自动恢复显示。
   useEffect(() => {
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -162,9 +162,8 @@ export default function App() {
           if ((data.personas || []).length === 0 && !onboardingSeen()) {
             setShowRecommend(true);
           }
-          if (!data.gateway) {
-            timer = setTimeout(refresh, 10_000); // 未连接 → 10s 后重查
-          }
+          // 持续巡检：未连接/断开 10s，已连接 30s（轻量，/api/status 仅探测 127.0.0.1）
+          timer = setTimeout(refresh, data.gateway ? 30_000 : 10_000);
         })
         .catch(() => {
           if (cancelled) return;

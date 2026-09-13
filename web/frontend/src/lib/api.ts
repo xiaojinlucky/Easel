@@ -136,7 +136,8 @@ export interface ProfileBuildStatus {
 }
 
 export function fetchStatus(): Promise<StatusResponse> {
-  return request<StatusResponse>('/api/status');
+  // no-store：网关状态必须实时，禁用启发式 HTTP 缓存，避免重启后拿到旧响应
+  return request<StatusResponse>('/api/status', { cache: 'no-store' });
 }
 
 export function fetchPersonas(): Promise<PersonaItem[]> {
