@@ -18,19 +18,28 @@ LOG_BACKUP_COUNT = 3
 
 
 def open_log(name: str):
-    """打开（并轮转）服务日志。超过 5MB 自动切为 .1/.2/.3，避免无限增长。"""
+    """打开（并轮转）服务日志。超过 5MB 自动切为 .1/.2/.3，避免无限增长。
+
+    Windows 下如果旧日志被其他进程（杀毒/编辑器/旧实例）以非共享删除模式占用，
+    轮转 rename 会抛 [WinError 32]。这里把轮转段包成 try/except：失败就跳过轮转
+    直接 append（本次不切日志但服务照常启动，不崩溃、不留孤儿进程）。
+    """
     logs = STATE / 'logs'
     logs.mkdir(parents=True, exist_ok=True)
     log_path = logs / f'{name}.log'
     if log_path.exists() and log_path.stat().st_size >= LOG_MAX_BYTES:
-        for i in range(LOG_BACKUP_COUNT - 1, 0, -1):
-            old = logs / f'{name}.log.{i}'
-            if old.exists():
-                (logs / f'{name}.log.{i + 1}').unlink(missing_ok=True)
-                old.rename(logs / f'{name}.log.{i + 1}')
-        if (logs / f'{name}.log.1').exists():
-            (logs / f'{name}.log.1').unlink(missing_ok=True)
-        log_path.rename(logs / f'{name}.log.1')
+        try:
+            for i in range(LOG_BACKUP_COUNT - 1, 0, -1):
+                old = logs / f'{name}.log.{i}'
+                if old.exists():
+                    (logs / f'{name}.log.{i + 1}').unlink(missing_ok=True)
+                    old.rename(logs / f'{name}.log.{i + 1}')
+            if (logs / f'{name}.log.1').exists():
+                (logs / f'{name}.log.1').unlink(missing_ok=True)
+            log_path.rename(logs / f'{name}.log.1')
+        except OSError:
+            # 轮转被占用打断：跳过本次轮转，继续 append（不致命）
+            pass
     return (logs / f'{name}.log').open('a', encoding='utf-8')
 
 

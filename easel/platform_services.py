@@ -38,7 +38,10 @@ def manage(action):
     logs.mkdir(parents=True, exist_ok=True)
     if action == 'start':
         start('wsl-runtime')
-        result = subprocess.run(WSL + ['ip', '-4', '-o', 'addr', 'show', 'eth0'], capture_output=True, check=True, timeout=30, creationflags=CREATE_FLAGS)
+        try:
+            result = subprocess.run(WSL + ['ip', '-4', '-o', 'addr', 'show', 'eth0'], capture_output=True, check=True, timeout=30, creationflags=CREATE_FLAGS)
+        except (subprocess.SubprocessError, OSError) as exc:
+            raise RuntimeError('WSL 运行环境未就绪（' + str(exc) + '），请确认已安装并首次启动 Ubuntu-24.04 分发。') from exc
         match = re.search(rb'inet ([0-9.]+)/', result.stdout)
         if not match or not ipaddress.ip_address(match[1].decode()).is_private:
             raise RuntimeError('未取得 WSL 私有地址。')
@@ -52,7 +55,12 @@ def manage(action):
             stop('platform-proxy')
             proxy.write_text(content, encoding='utf-8')
         with (logs / 'platforms.log').open('ab') as log:
-            result = subprocess.run(compose_command() + ['up', '-d', '--pull', 'never', '--wait', '--wait-timeout', '300'], stdout=log, stderr=log, creationflags=CREATE_FLAGS, timeout=420)
+            try:
+                result = subprocess.run(compose_command() + ['up', '-d', '--pull', 'never', '--wait', '--wait-timeout', '300'], stdout=log, stderr=log, creationflags=CREATE_FLAGS, timeout=420)
+            except subprocess.TimeoutExpired:
+                raise RuntimeError('发布 / 订阅服务启动超过 7 分钟仍未就绪，请查看 .runtime/logs/platforms.log。') from None
+            except (subprocess.SubprocessError, OSError) as exc:
+                raise RuntimeError('发布 / 订阅服务启动失败（' + str(exc) + '），请查看 .runtime/logs/platforms.log。') from exc
         if result.returncode:
             raise RuntimeError('发布 / 订阅服务未就绪，请查看 .runtime/logs/platforms.log。')
         start('platform-proxy')
@@ -60,7 +68,12 @@ def manage(action):
     if action == 'stop':
         stop('platform-proxy')
         with (logs / 'platforms.log').open('ab') as log:
-            subprocess.run(compose_command() + ['stop'], stdout=log, stderr=log, check=True, timeout=120, creationflags=CREATE_FLAGS)
+            try:
+                subprocess.run(compose_command() + ['stop'], stdout=log, stderr=log, check=True, timeout=120, creationflags=CREATE_FLAGS)
+            except subprocess.TimeoutExpired:
+                raise RuntimeError('发布 / 订阅服务停止超过 2 分钟，请稍后重试或查看 .runtime/logs/platforms.log。') from None
+            except (subprocess.SubprocessError, OSError) as exc:
+                raise RuntimeError('停止发布 / 订阅服务失败（' + str(exc) + '）。') from exc
         stop('wsl-runtime')
         return {'service':'platforms','status':'stopped'}
     raise ValueError('Use start, stop or status')

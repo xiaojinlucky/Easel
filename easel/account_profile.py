@@ -121,7 +121,15 @@ def read_job(identifier):
             except (psutil.Error, ValueError):
                 alive = False
             if not alive:
-                job.update(status='failed', error='运行服务已中断，请重新分析；已确认档案保留。', finished_at=now())
+                # Web 服务重启（日常 stop/start、崩溃恢复）会使上一代进程的
+                # owner_pid 失效；此时若画像的 suggestion 已由本 job 落盘，
+                # 分析实际已完成，应显示成功而不是误报失败（P1-5）。
+                profile = read_profile(job['name'])
+                suggestion = profile.get('suggestion') or {}
+                if suggestion.get('job_id') == identifier and suggestion.get('generated_at'):
+                    job.update(status='succeeded', finished_at=now())
+                else:
+                    job.update(status='failed', error='运行服务已中断，请重新分析；已确认档案保留。', finished_at=now())
                 write_json(path, job)
         return job
 

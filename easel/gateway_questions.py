@@ -173,7 +173,7 @@ class GatewayClient:
             ws.close()
             raise
 
-        scopes = ["operator.admin", "operator.read", "operator.write"]
+        scopes = ["operator.questions", "operator.read", "operator.write"]
         payload = "|".join([
             "v2", dev["device_id"], "cli", "cli", "operator",
             ",".join(scopes), str(ts), dev["token"], nonce,
@@ -207,6 +207,13 @@ class GatewayClient:
             if msg.get("id") == "1":
                 ok = msg.get("ok", False)
                 if not ok:
+                    err = msg.get("error") or {}
+                    reason = (err.get("details") or {}).get("reason") or err.get("code") or ""
+                    if "scope-upgrade" in str(reason) or "PAIRING_REQUIRED" in str(err.get("code")):
+                        raise GatewayQuestionError(
+                            "网关设备授权不足：问答题卡桥接需要 operator.questions 权限。"
+                            "请在本机 OpenClaw 控制台重新配对/授权该设备（cli），或运行 "
+                            "`easel doctor` 检查网关配对状态。")
                     raise GatewayQuestionError(
                         f"gateway connect failed: {json.dumps(msg.get('error'))[:200]}")
                 break

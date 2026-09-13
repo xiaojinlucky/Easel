@@ -918,6 +918,12 @@ class _CrossProcLock:
                 return True
             except OSError:
                 if time.time() >= deadline:
+                    # 超时未拿到锁：必须释放文件句柄，避免泄漏（P1-2）
+                    try:
+                        self._fh.close()
+                    except OSError:
+                        pass
+                    self._fh = None
                     return False
                 time.sleep(poll)
 
@@ -1038,7 +1044,20 @@ async def api_chat_job_stream(turn_id: str, after: int = 0):
     async def events():
         cursor = max(0, after)
         idle_since = time.monotonic()
+        # 服务端硬超时：supervisor 进程异常死亡时事件文件可能永远没有终态，
+        # SSE 若只发心跳会让前端拖到 130 分钟才报错（P0-2）。这里设一个上限：
+        # 超过 TIMEOUT_CHAT + 120s 仍无终态就主动下发 error 并结束流。
+        stream_started = time.monotonic()
+        hard_deadline = stream_started + TIMEOUT_CHAT + 120
         while True:
+            # 超过硬超时且从未收到终态 → 主动结束，避免悬挂
+            if time.monotonic() >= hard_deadline:
+                yield {
+                    "id": str(cursor),
+                    "event": "error",
+                    "data": json.dumps({"error": "对话任务超时未见完成，请重试。"}, ensure_ascii=False),
+                }
+                return
             batch = _read_job_events(turn_id, cursor)
             if batch:
                 idle_since = time.monotonic()
@@ -1416,9 +1435,11 @@ async def api_chat_stream(req: ChatRequest):
             if proc.poll() is None:
                 try:
                     await asyncio.to_thread(abort_session, f'agent:main:{sk}')
-                except Exception:
-                    from easel.services import stop
-                    await asyncio.to_thread(stop, 'gateway')
+                except Exception as exc:
+                    # abort 失败（网关忙/重启中）不要整个停 gateway：
+                    # 用户点一次「停止」不应把工作台全局网关杀掉（P1-3）。
+                    # 只把异常打日志，下面由 proc.terminate() 终止本会话自己的进程收尾。
+                    print(f"[chat] abort_session failed, terminating local session proc only: {exc}", flush=True)
                 try:
                     proc.terminate()
                 except OSError:
@@ -1537,15 +1558,21 @@ async def api_question_answer(req: QuestionAnswerRequest):
     """前端点击 ask_user 选项后调用：转发 gateway question.resolve，让等待的 agent 拿到答案。"""
     if GatewayClient is None:
         return {"ok": False, "error": "gateway question bridge unavailable"}
-    client = GatewayClient()
-    try:
-        client.connect()
-        result = client.resolve(req.questionId, req.answers or {}, req.resolvedBy)
-        return {"ok": True, "result": result}
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
-    finally:
-        client.close()
+
+    # GatewayClient 是同步 websocket-client（connect/recv 会阻塞）。
+    # 必须在线程池执行，否则网关抖动时整个 asyncio 事件循环被阻塞（P0-1）。
+    def _do() -> dict:
+        client = GatewayClient()
+        try:
+            client.connect()
+            result = client.resolve(req.questionId, req.answers or {}, req.resolvedBy)
+            return {"ok": True, "result": result}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+        finally:
+            client.close()
+
+    return await asyncio.to_thread(_do)
 
 
 class QuestionStatusRequest(BaseModel):
@@ -1557,25 +1584,30 @@ async def api_question_status(req: QuestionStatusRequest):
     """批量查 question 状态（重放旧事件时过滤已解决的题）。"""
     if GatewayClient is None:
         return {"ok": False, "questions": {}}
-    client = GatewayClient()
-    try:
-        client.connect()
-        out = {}
-        for qid in req.questionIds:
-            try:
-                q = client.get_question(qid)
-                # QUESTION_NOT_FOUND 抛异常捕获后报 not_found；正常返回则按 status
-                out[qid] = {"status": q.get("status") if q else "not_found"}
-            except GatewayQuestionError as e:
-                # gateway 明确错：问题已清理/不存在 = 已答或已过期，一律 not_found
-                out[qid] = {"status": "not_found"}
-            except Exception:
-                out[qid] = {"status": "unknown"}   # 网络/连接异常：保持 unknown（前端保留显示，宁不缺题）
-        return {"ok": True, "questions": out}
-    except Exception as e:
-        return {"ok": False, "error": str(e), "questions": {}}
-    finally:
-        client.close()
+
+    # 同 P0-1：同步 websocket 调用放线程池，避免 N 题 × 12s 阻塞事件循环。
+    def _do() -> dict:
+        client = GatewayClient()
+        try:
+            client.connect()
+            out = {}
+            for qid in req.questionIds:
+                try:
+                    q = client.get_question(qid)
+                    # QUESTION_NOT_FOUND 抛异常捕获后报 not_found；正常返回则按 status
+                    out[qid] = {"status": q.get("status") if q else "not_found"}
+                except GatewayQuestionError as e:
+                    # gateway 明确错：问题已清理/不存在 = 已答或已过期，一律 not_found
+                    out[qid] = {"status": "not_found"}
+                except Exception:
+                    out[qid] = {"status": "unknown"}   # 网络/连接异常：保持 unknown（前端保留显示，宁不缺题）
+            return {"ok": True, "questions": out}
+        except Exception as e:
+            return {"ok": False, "error": str(e), "questions": {}}
+        finally:
+            client.close()
+
+    return await asyncio.to_thread(_do)
 
 
 class StopRequest(BaseModel):
@@ -1593,8 +1625,8 @@ async def api_chat_stop(req: StopRequest):
         try:
             await asyncio.to_thread(abort_session, f'agent:main:{sk}')
         except Exception as exc:
-            from easel.services import stop
-            await asyncio.to_thread(stop, 'gateway')
+            # abort 失败不要 kill 整个网关（P1-3）：本会话进程由下方 terminate 收尾即可。
+            print(f"[chat] stop: abort_session failed, terminating local proc only: {exc}", flush=True)
         try:
             proc.terminate()
         except OSError:
