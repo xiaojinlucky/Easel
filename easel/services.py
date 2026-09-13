@@ -186,13 +186,16 @@ def start(name: str) -> dict:
                 env.pop(key)
     with open_log(name) as log:
         child = subprocess.Popen(command_for(name), cwd=ROOT, env=env, stdout=log, stderr=log, creationflags=CREATE_FLAGS)
-    for _ in range(50):
+    # gateway 冷启动实测约 26.5s（13 个插件加载），窗口给到 60s，避免「其实已就绪却报启动失败」。
+    for _ in range(120):
         if healthy(name):
             return {'service': name, 'status': 'running', 'pid': child.pid}
         if child.poll() is not None:
             break
         time.sleep(0.5)
-    raise RuntimeError(f'{name} 启动失败或超时，请查看 {logs / (name + ".log")}')
+    # 超时/提前退出：回滚本次启动的进程树，避免留下孤儿进程，或「界面报失败但服务实际在跑」的矛盾状态。
+    stop_tree(psutil.Process(child.pid))
+    raise RuntimeError(f'{name} 启动失败或超时，已回滚本次启动；请查看 {logs / (name + ".log")}')
 
 
 def main() -> None:
