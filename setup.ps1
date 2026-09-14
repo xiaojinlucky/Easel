@@ -32,6 +32,13 @@ function OpenClaw-Config($Key, $Value, [switch]$Json) {
     & openclaw @arguments 2>&1 | Where-Object { $_ -notmatch '^No change$' }
     if ($LASTEXITCODE -ne 0) { Fail "OpenClaw 配置失败：$Key" }
 }
+# 尽力而为版：写入失败不 Fail，只返回是否成功，用于探测不同 OpenClaw 版本接受哪套配置 key。
+function Try-OpenClawConfig($Key, $Value, [switch]$Json) {
+    $arguments = @('--profile','easel','config','set',$Key,$Value)
+    if ($Json) { $arguments += '--strict-json' }
+    & openclaw @arguments 2>&1 | Out-Null
+    return ($LASTEXITCODE -eq 0)
+}
 # 原子写入 anthropic provider。部分 OpenClaw 版本（如 2026.3.x）的 schema 要求 provider 一次性带齐
 # baseUrl + models，逐字段 config set 会因中间态缺字段而整体校验失败（baseUrl/models: received undefined）。
 # 用 venv Python 生成 JSON，避开 ConvertTo-Json 对空数组的序列化坑；整块替换也会顺带清掉旧的残留 header。
@@ -58,12 +65,14 @@ print(json.dumps(p))
 Write-Host "`nEasel · Windows 安装向导" -ForegroundColor Magenta
 Info '检查系统环境...'
 Ensure-Command 'git' 'Git.Git' '请安装 Git for Windows 并加入 PATH。'
-Ensure-Command 'node' 'OpenJS.NodeJS.LTS' '请安装 Node.js 22.19+ 并加入 PATH。'
-Ensure-Command 'npm' 'OpenJS.NodeJS.LTS' '请安装 Node.js 22.19+ 并加入 PATH。'
+Ensure-Command 'node' 'OpenJS.NodeJS.LTS' '请安装 Node.js 24.16+ 并加入 PATH。'
+Ensure-Command 'npm' 'OpenJS.NodeJS.LTS' '请安装 Node.js 24.16+ 并加入 PATH。'
 if (-not (Get-Command python -ErrorAction SilentlyContinue) -and -not (Get-Command py -ErrorAction SilentlyContinue)) { Ensure-Command 'python' 'Python.Python.3.12' '请安装 Python 3.10+ 并勾选 Add Python to PATH。' }
 Ensure-Command 'ffmpeg' 'Gyan.FFmpeg' '请安装 FFmpeg 并加入 PATH。'
+# 跟随 openclaw@latest 的引擎要求（当前 2026.9.x 需要 Node >=24.16.0 <25 || >=26.1.0，25.x/26.0 被排除）。
 $nodeParts = (& node -p 'process.versions.node').Split('.') | ForEach-Object { [int]$_ }
-if ($nodeParts[0] -lt 22 -or ($nodeParts[0] -eq 22 -and $nodeParts[1] -lt 19)) { Fail 'Node.js 22.19+ 是必需依赖。' }
+$nodeOk = ($nodeParts[0] -eq 24 -and $nodeParts[1] -ge 16) -or ($nodeParts[0] -eq 26 -and $nodeParts[1] -ge 1) -or ($nodeParts[0] -ge 27)
+if (-not $nodeOk) { Fail 'Node.js 24.16+（24.x）或 26.1+ 是必需依赖（openclaw@latest 要求）；winget 的 LTS 若仍是 22.x，请手动安装 Node 24。' }
 $pythonCommand = (Get-Command python -ErrorAction SilentlyContinue).Source
 if ($pythonCommand) { & $pythonCommand --version *> $null; if ($LASTEXITCODE -ne 0) { $pythonCommand = $null } }
 if (-not $pythonCommand -and (Get-Command py -ErrorAction SilentlyContinue)) { $pythonCommand = (Get-Command py).Source; $pythonArgs = @('-3') } else { $pythonArgs = @() }
@@ -222,10 +231,20 @@ $embeddingKey = $embeddingKeyNames | Where-Object { Is-UsableKey $envValues[$_] 
 $embeddingUrl = $embeddingUrlNames | Where-Object { -not [string]::IsNullOrWhiteSpace($envValues[$_]) } | Select-Object -First 1
 $embeddingModel = $embeddingModelNames | Where-Object { -not [string]::IsNullOrWhiteSpace($envValues[$_]) } | Select-Object -First 1
 if ($embeddingKey -and $embeddingUrl -and $embeddingModel) {
-    OpenClaw-Config 'agents.defaults.memorySearch.provider' 'openai-compatible'; OpenClaw-Config 'agents.defaults.memorySearch.model' $envValues[$embeddingModel]; OpenClaw-Config 'agents.defaults.memorySearch.remote.baseUrl' $envValues[$embeddingUrl]; OpenClaw-Config 'agents.defaults.memorySearch.remote.apiKey' $envValues[$embeddingKey]
-    Ok "独立向量模型已配置：$($envValues[$embeddingModel])"
+    # 记忆检索 schema 位置随 OpenClaw 版本变化：2026.9.x 起在顶层 memory.search.*，之前在 agents.defaults.memorySearch.*。
+    # 两者互斥，用「先试新 key、失败再退老 key」自适应：第一条写入既是真实配置也是版本探测。
+    if (Try-OpenClawConfig 'memory.search.provider' 'openai-compatible') {
+        OpenClaw-Config 'memory.search.enabled' 'true' -Json; OpenClaw-Config 'memory.search.model' $envValues[$embeddingModel]; OpenClaw-Config 'memory.search.remote.baseUrl' $envValues[$embeddingUrl]; OpenClaw-Config 'memory.search.remote.apiKey' $envValues[$embeddingKey]
+        Ok "独立向量模型已配置（memory.search）：$($envValues[$embeddingModel])"
+    } else {
+        OpenClaw-Config 'agents.defaults.memorySearch.provider' 'openai-compatible'; OpenClaw-Config 'agents.defaults.memorySearch.model' $envValues[$embeddingModel]; OpenClaw-Config 'agents.defaults.memorySearch.remote.baseUrl' $envValues[$embeddingUrl]; OpenClaw-Config 'agents.defaults.memorySearch.remote.apiKey' $envValues[$embeddingKey]
+        Ok "独立向量模型已配置（memorySearch）：$($envValues[$embeddingModel])"
+    }
 } else {
-    OpenClaw-Config 'agents.defaults.memorySearch.provider' 'none'
+    # 新 schema 用 memory.search.enabled=false 关闭向量检索；老 schema 用 provider=none。
+    if (-not (Try-OpenClawConfig 'memory.search.enabled' 'false' -Json)) {
+        OpenClaw-Config 'agents.defaults.memorySearch.provider' 'none'
+    }
     if (($embeddingKeyNames + $embeddingUrlNames + $embeddingModelNames | Where-Object { $envValues.ContainsKey($_) }).Count -gt 0) { Write-Warning '向量 API 配置不完整，已关闭向量检索；需要同时设置向量 API key、Base URL 和模型名' } else { Info '未配置独立向量 API，使用关键词记忆检索' }
 }
 OpenClaw-Config 'agents.defaults.timeoutSeconds' '7200'; OpenClaw-Config 'gateway.mode' 'local'; OpenClaw-Config 'gateway.bind' 'loopback'; OpenClaw-Config 'gateway.auth.mode' 'none'

@@ -11,8 +11,14 @@ import urllib.error
 from pathlib import Path
 from easel.runtime import openclaw_command, runtime_env, subscription_status
 
+from easel.openclaw_cmd import openclaw_base_cmd
+
 # 项目根目录（Easel/）
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+# OpenClaw 已验证的稳定下限。低于此版本会命中一系列破坏性变更：anthropic provider 必须原子写入、
+# timeoutSeconds 被判 Unrecognized key、记忆检索 schema 尚未迁移到 memory.search.* 等（见 issue #9/#11）。
+MIN_OPENCLAW = (2026, 6, 11)
 
 GREEN = "\033[0;32m"
 RED = "\033[0;31m"
@@ -28,8 +34,12 @@ def _check(label: str, ok: bool, detail: str = "") -> bool:
     return ok
 
 
-def _node_version_ok() -> bool:
-    """Check the supported project Node.js version."""
+def _node_version_ok(strict: bool) -> bool:
+    """检查 Node.js 版本。
+
+    strict=True 对齐 openclaw@latest（2026.9.x）的引擎：>=24.16.0 <25 || >=26.1.0（25.x/26.0 被排除）。
+    strict=False 用于已装较旧 OpenClaw（<=2026.6.x，引擎 ^20.10 || ^22.11 || >=24）的宽松下限 >=20.10。
+    """
     try:
         result = subprocess.run(
             [openclaw_command()[0], "--version"],
@@ -37,14 +47,38 @@ def _node_version_ok() -> bool:
         )
         if result.returncode != 0:
             return False
-        # e.g. "v22.19.0"
+        # e.g. "v24.21.0"
         m = re.match(r"v(\d+)\.(\d+)", result.stdout.strip())
         if not m:
             return False
         major, minor = int(m.group(1)), int(m.group(2))
-        return (major == 24 and minor >= 16) or major >= 26
+        if strict:
+            return (major == 24 and minor >= 16) or (major == 26 and minor >= 1) or major >= 27
+        return (major, minor) >= (20, 10)
     except (subprocess.TimeoutExpired, FileNotFoundError):
         return False
+
+
+def _openclaw_version() -> tuple[int, int, int] | None:
+    """解析 `openclaw --version`，返回 (year, month, patch)；无法确定时返回 None。"""
+    try:
+        # 不能裸调 ["openclaw", ...]：Windows 上它是 npm 装的 `.cmd` shim，
+        # CreateProcess 不按 PATHEXT 解析、裸名找不到文件 → FileNotFoundError
+        # → 版本被误判「未知」。统一走 openclaw_cmd 的解析（Windows 上解析为
+        # node + openclaw.mjs，Unix 上为直接可执行路径）。
+        result = subprocess.run(
+            openclaw_base_cmd() + ["--version"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode != 0:
+            return None
+        # e.g. "OpenClaw 2026.9.4 (3a9d69d)"
+        m = re.search(r"(\d+)\.(\d+)\.(\d+)", result.stdout)
+        if not m:
+            return None
+        return (int(m.group(1)), int(m.group(2)), int(m.group(3)))
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return None
 
 
 def _python_version_ok() -> bool:
@@ -155,20 +189,34 @@ def cmd_doctor(_args) -> int:
                       "请安装 Python 3.10 或更高版本")
     all_ok &= _check("Python venv module", _venv_available(),
                       "Debian/Ubuntu 请安装 python3-venv")
+    # openclaw 版本决定 Node 引擎要求：2026.9.x 需要 Node 24.16+，较旧版本沿用 >=20.10 的宽松下限。
+    # 未装 openclaw 时按 setup 的默认安装目标（openclaw@latest）从严要求 24.16+。
+    oc_ver = _openclaw_version()
+    node_strict = oc_ver is None or oc_ver >= (2026, 9, 0)
+    node_floor = "24.16" if node_strict else "20.10"
     has_node = shutil.which("node") is not None
-    node_ok = _node_version_ok()
-    node_detail = '请安装项目 Node.js 24.16 或更高的受支持版本。'
-    all_ok &= _check("Project Node.js >= 24.16", node_ok, node_detail)
+    node_ok = _node_version_ok(node_strict)
+    node_detail = (f"请安装 Node.js >= {node_floor}: https://nodejs.org/" if not has_node
+                   else f"Node.js 版本不满足当前 OpenClaw 要求，请升级到 >= {node_floor}: https://nodejs.org/")
+    all_ok &= _check(f"Node.js >= {node_floor}", node_ok, node_detail)
     all_ok &= _check("FFmpeg", shutil.which("ffmpeg") is not None,
                       "媒体处理需要 FFmpeg；请安装后重试")
 
-    # 2. openclaw command
+    # 2. openclaw：本机工作台优先查独立运行时；找不到再退回 PATH。
     try:
         has_openclaw = Path(openclaw_command()[-1]).is_file()
     except RuntimeError:
-        has_openclaw = False
+        has_openclaw = shutil.which("openclaw") is not None
     all_ok &= _check("openclaw command", has_openclaw,
                       "请安装 openclaw: npm i -g openclaw")
+    if has_openclaw:
+        min_str = ".".join(map(str, MIN_OPENCLAW))
+        ver_str = ".".join(map(str, oc_ver)) if oc_ver else "未知"
+        oc_ver_ok = oc_ver is not None and oc_ver >= MIN_OPENCLAW
+        all_ok &= _check(
+            f"OpenClaw >= {min_str}", oc_ver_ok,
+            f"当前 {ver_str}，过旧会有 provider/schema 兼容问题；请升级：npm i -g openclaw@latest",
+        )
 
     for module in ("fastapi", "uvicorn", "sse_starlette", "multipart"):
         all_ok &= _check(f"Python package: {module}", _module_available(module),

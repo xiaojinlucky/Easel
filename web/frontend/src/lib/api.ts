@@ -7,7 +7,9 @@ function getBasePath(): string {
 const BASE = getBasePath();
 
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE}${url}`, options);
+  // 全部是动态应用接口（登录态/数据等），禁止浏览器 HTTP 缓存——否则 /api/accounts 等可能被启发式
+  // 缓存住旧响应（曾表现为“扫码登录后卡片仍显示未登录”）。调用方可用 options.cache 覆盖。
+  const res = await fetch(`${BASE}${url}`, { cache: 'no-store', ...options });
   if (!res.ok) {
     // 优先显示后端返回的实质错误信息（FastAPI 的 {detail}），而不是无意义的 "API error: 400"
     let detail = '';
@@ -481,10 +483,46 @@ export interface AccountItem {
 }
 
 export interface LoginStart {
-  mode: 'qr' | 'terminal';
+  mode: 'qr' | 'terminal' | 'credentials';   // credentials = 凭证式（公众号 AppID/AppSecret）
   state?: string;       // starting | qr_ready | success | expired | error | unknown
   message?: string;
   qr?: string;          // outputs 下相对路径，用 mediaUrl() 取图
+  configured?: boolean; // 凭证式：是否已配置
+}
+
+// ---- 凭证式账号（微信公众号 AppID/AppSecret）----
+export interface CredentialStatus {
+  configured: boolean;
+  appIdMasked: string;
+  name: string;
+  author: string;
+}
+
+/** 读取凭证式平台（公众号）已配置状态（AppSecret 不回传）。 */
+export function getCredentials(platform: string): Promise<CredentialStatus> {
+  return request<CredentialStatus>(`/api/accounts/${encodeURIComponent(platform)}/credentials`);
+}
+
+/** 保存公众号 AppID/AppSecret（后端会调官方接口验证连通性）。 */
+export function saveCredentials(
+  platform: string,
+  payload: { appId: string; appSecret: string; name?: string; author?: string },
+): Promise<{ ok: boolean; message: string }> {
+  return request(`/api/accounts/${encodeURIComponent(platform)}/credentials`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+}
+
+/** 启动「公众号后台」扫码登录（数据中心取数用，独立于 AppID 凭证）。返回二维码状态。 */
+export function startMpLogin(platform: string): Promise<LoginStatus> {
+  return request<LoginStatus>(`/api/accounts/${encodeURIComponent(platform)}/mp-login`, { method: 'POST' });
+}
+
+/** 轮询公众号后台扫码登录状态。 */
+export function mpLoginStatus(platform: string): Promise<LoginStatus> {
+  return request<LoginStatus>(`/api/accounts/${encodeURIComponent(platform)}/mp-login/status`);
 }
 
 export interface LoginStatus {

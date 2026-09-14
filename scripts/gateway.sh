@@ -11,25 +11,61 @@ LOGFILE="/tmp/easel-gateway.log"
 ADAPTER_LOGFILE="/tmp/easel-openai-maas-adapter.log"
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
+# ---- 跨平台兼容（macOS 没有 ss/setsid/procfs）--------------------------
+# ss/setsid 属 iproute2/util-linux，/proc 是 Linux 专属；macOS/BSD 三者都没有。
+# 按可用性回退，让 gateway.sh 在 Linux 与 macOS 上都能起停。
+_port_pid() {
+    # 取监听指定端口的进程 PID。Linux 用 ss，macOS/BSD 用 lsof。找不到返回空、退出码 0。
+    local port="$1"
+    if command -v ss >/dev/null 2>&1; then
+        ss -ltnp 2>/dev/null \
+            | sed -n "s/.*127\\.0\\.0\\.1:${port}.*pid=\\([0-9][0-9]*\\).*/\\1/p" \
+            | head -n 1 || true
+    elif command -v lsof >/dev/null 2>&1; then
+        lsof -nP -iTCP:"${port}" -sTCP:LISTEN -t 2>/dev/null | head -n 1 || true
+    fi
+    return 0
+}
+
+_detach() {
+    # 后台剥离启动子进程，使其在脚本退出后继续运行。
+    # Linux 用 setsid -f（新会话）；macOS 无 setsid，用 nohup + disown。
+    # 调用方的 `>LOG 2>&1` 重定向会被子进程继承。
+    if command -v setsid >/dev/null 2>&1; then
+        setsid -f "$@"
+    else
+        nohup "$@" &
+        disown 2>/dev/null || true
+    fi
+}
+
+_cmdline() {
+    # 取进程命令行，用于 kill 前核对身份。Linux 用 /proc，macOS/BSD 用 ps。
+    local pid="$1"
+    if [ -r "/proc/$pid/cmdline" ]; then
+        tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null || true
+    else
+        ps -p "$pid" -o command= 2>/dev/null || true
+    fi
+    return 0
+}
+
 gateway_live() {
     curl -sf --max-time 2 http://localhost:18789/healthz > /dev/null 2>&1
 }
 
 gateway_pid() {
-    ss -ltnp 2>/dev/null \
-        | sed -n 's/.*127\.0\.0\.1:18789.*pid=\([0-9][0-9]*\).*/\1/p' \
-        | head -n 1
+    _port_pid 18789
 }
 
 adapter_port() {
-    sed -n 's/^OPENAI_MAAS_ADAPTER_PORT=//p' "$PROJECT_ROOT/.env" 2>/dev/null | tail -n 1
+    # .env 不存在（未安装/首次运行）时 sed 会失败 → 加 || true，不让 set -e 掐断 stop/status。
+    sed -n 's/^OPENAI_MAAS_ADAPTER_PORT=//p' "$PROJECT_ROOT/.env" 2>/dev/null | tail -n 1 || true
 }
 
 adapter_pid() {
     local port="${1:-18791}"
-    ss -ltnp 2>/dev/null \
-        | sed -n "s/.*127\\.0\\.0\\.1:${port}.*pid=\\([0-9][0-9]*\\).*/\\1/p" \
-        | head -n 1
+    _port_pid "$port"
 }
 
 start_adapter() {
@@ -41,7 +77,7 @@ start_adapter() {
     if [ -n "$pid" ]; then
         return 0
     fi
-    setsid -f /usr/bin/python3 "$PROJECT_ROOT/scripts/openai_maas_adapter.py" \
+    _detach /usr/bin/python3 "$PROJECT_ROOT/scripts/openai_maas_adapter.py" \
         --env-file "$PROJECT_ROOT/.env" --port "$port" >"$ADAPTER_LOGFILE" 2>&1
     for _ in $(seq 1 20); do
         curl -sf --max-time 1 "http://127.0.0.1:${port}/health" >/dev/null && return 0
@@ -56,7 +92,7 @@ stop_adapter() {
     port="${port:-18791}"
     pid="$(adapter_pid "$port")"
     [ -n "$pid" ] || return 0
-    cmdline="$(tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null || true)"
+    cmdline="$(_cmdline "$pid")"
     if [[ "$cmdline" == *"openai_maas_adapter.py"* ]]; then
         kill "$pid" 2>/dev/null || true
     fi
@@ -82,7 +118,7 @@ case "${1:-status}" in
             exit 0
         fi
         echo "[easel] Starting Easel gateway (profile: $PROFILE)..."
-        setsid -f openclaw --profile "$PROFILE" gateway run --force --allow-unconfigured --bind loopback > "$LOGFILE" 2>&1
+        _detach openclaw --profile "$PROFILE" gateway run --force --allow-unconfigured --bind loopback > "$LOGFILE" 2>&1
         sleep 4
         if gateway_live; then
             PID="$(gateway_pid)"

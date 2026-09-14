@@ -43,7 +43,9 @@ PLATFORMS: dict[str, dict] = {
         "overview_dir": "after",
         "overview": {"followers": ["粉丝", "粉丝数"], "likes": ["获赞", "点赞"], "following": ["关注"]},
         "uid_anchor": "抖音号",  # 昵称=「抖音号：」上一行（主页在 抖音号 与 关注 间夹了干扰行）
-        "metrics": ["播放量", "主页访问", "涨粉", "点赞", "评论", "分享", "主页访客"],
+        # 首页「近7日」块真实标签（旧列表与页面不符导致 metrics 恒空）；环比是「较前7日±X」。
+        "metrics": ["播放量", "主页访问量", "作品分享", "作品评论"],
+        "metrics_anchor": "近7日",   # 只从「近7日」之后解析，避开「最新作品」卡片里的同名「播放量」
         "note_url_re": r"douyin\.com/(video|note)/|creator-micro/content",
     },
     "kuaishou": {
@@ -185,14 +187,22 @@ def extract_nickname(lines: list[str], overview: dict, uid_anchor: str = "") -> 
     return ""
 
 
-def metrics_with_vs(lines: list[str], labels: list[str]) -> list[dict]:
-    """近N日各指标：标签后就近找「纯数字值」+「±环比」。兼容两种排布：
-    小红书「标签\\n值\\n环比+X%」、快手「标签\\n昨日\\n+X\\n值」——值取首个不带正负号的纯数字，
-    环比取 +N/-N 或「环比±X」。"""
+def metrics_with_vs(lines: list[str], labels: list[str], anchor: str | None = None) -> list[dict]:
+    """近N日各指标：标签后就近找「纯数字值」+「±环比」。兼容三种排布：
+    小红书「标签\\n值\\n环比+X%」、快手「标签\\n昨日\\n+X\\n值」、
+    抖音「标签\\n值\\n较前7日±X」（较前7日0 视为无变化 → vs 空）——值取首个不带正负号的纯数字。
+    anchor：若给定，只从**首个含该锚点文本的行之后**开始解析（如抖音「近7日」，避开页面上
+    「最新作品」卡片里同名的「播放量」等标签被串取）。"""
+    if anchor:
+        ai = next((i for i, ln in enumerate(lines) if anchor in ln), None)
+        if ai is None:
+            return []      # 锚点块还没渲染出来：宁可返回空让上层继续轮询，也不从全页误取同名标签
+        lines = lines[ai + 1:]
     out = []
     seen = set()
     numre = re.compile(r"^[\d][\d.,]*\s*[万亿wWkK千]?%?$")   # 纯值（可带 % / 万）
     signre = re.compile(r"^[+\-]\d")                          # +57 / -3（涨跌）
+    vsre = re.compile(r"[+\-]\d[\d.,]*\s*[万亿wWkK千]?%?")     # 从「较前7日+7」里抽带符号增量
     for i, ln in enumerate(lines):
         clean = ln.rstrip("：:")
         if clean not in labels or clean in seen:
@@ -209,6 +219,10 @@ def metrics_with_vs(lines: list[str], labels: list[str]) -> list[dict]:
                     vs = s
                 elif s.startswith("环比"):
                     vs = s[2:].strip()
+                elif s.startswith("较前") or s.startswith("较上"):
+                    m = vsre.search(s)          # 「较前7日+7」→ +7；「较前7日0」无符号 → 不设 vs
+                    if m:
+                        vs = m.group(0)
         if val is not None:
             out.append({"label": clean, "value": val, "vs": vs})
             seen.add(clean)
@@ -349,12 +363,17 @@ def _scrape(platform: str, headed: bool, base: str | None, proxy: str | None) ->
             page.goto(cfg["url"], wait_until="domcontentloaded", timeout=30000)
             ov, d = cfg["overview"], cfg.get("overview_dir", "after")
             mets = cfg.get("metrics", [])
+            manchor = cfg.get("metrics_anchor")
             # 稳定性轮询：概览/指标数值连续两次一致才走，避开占位0→真实值的异步坑
             def _sig(L):
                 lk = num_by_label(L, ov.get("likes", []), d)
                 fo = num_by_label(L, ov.get("followers", []), d)
-                m = metrics_with_vs(L, mets)
+                m = metrics_with_vs(L, mets, manchor)
                 mv = m[0]["value"] if m else None
+                # 配了 metrics_anchor（如抖音「近7日」）说明该页必有指标块；块异步晚于概览渲染，
+                # 若还没解析到指标就别急着「稳定」返回，继续轮询等它出来（避免 metrics 偶发为空）。
+                if manchor and mets and not m:
+                    return None
                 return None if (lk is None and fo is None and mv is None) else (lk, fo, mv)
             lines = _poll_stable(page, _sig, 10000)
             clicked = False
@@ -373,7 +392,7 @@ def _scrape(platform: str, headed: bool, base: str | None, proxy: str | None) ->
             r["likes"] = num_by_label(lines, ov["likes"], d)
             r["following"] = num_by_label(lines, ov.get("following", []), d)
             r["posts"] = num_by_label(lines, cfg.get("posts_labels", ["笔记数", "作品数", "内容数", "视频数"]), d)
-            r["metrics"] = metrics_with_vs(lines, cfg.get("metrics", []))[:8]
+            r["metrics"] = metrics_with_vs(lines, cfg.get("metrics", []), manchor)[:8]
             r["nickname"] = extract_nickname(lines, ov, cfg.get("uid_anchor", ""))
             # 昵称优先用专用选择器（视频号文本锚点不稳：概览是「关注者1」同行，锚不到昵称）
             nsel = cfg.get("nickname_selector")
@@ -496,6 +515,56 @@ _KUAISHOU_NOTES_JS = r"""() => {
   return out.slice(0, 6);
 }"""
 
+# 抖音作品管理页：每条作品一张卡，标题在 .info-title-text-*，封面 img 与「播放/点赞/评论…」
+# 数据在同卡（.video-card-*）里。类名带随机 hash 后缀，故用前缀子串匹配；无独立视频链接，
+# 点击回作品管理页。数值可能是「-」（新作品无数据），非数字则跳过不拼进 stat。
+_DOUYIN_NOTES_JS = r"""() => {
+  const seen = new Set(), out = [];
+  document.querySelectorAll("[class*='info-title-text'], [class*='info-title-operation']").forEach(tEl => {
+    const title = (tEl.textContent || '').trim().split('\n')[0].slice(0, 44);
+    if (!title || seen.has(title)) return;
+    // 向上找含「播放」的卡片容器
+    let card = tEl;
+    for (let i = 0; i < 8 && card; i++) {
+      if (/播放/.test(card.textContent || '')) break;
+      card = card.parentElement;
+    }
+    card = card || tEl;
+    // 封面：抖音用 CSS background-image（非 <img>），且封面元素常在卡片文本块的上层，
+    // 故从 card 起向上找 2 层的子树里第一个带 douyinpic 背景图的元素；退到 img.src。
+    let cover = '';
+    let croot = card;
+    for (let i = 0; i < 3 && croot && !cover; i++) {
+      const img = croot.querySelector('img');
+      if (img) cover = img.src || img.getAttribute('data-src') || '';
+      if (!cover) {
+        for (const e of croot.querySelectorAll('*')) {
+          const b = getComputedStyle(e).backgroundImage;
+          const m = b && b.match(/url\("?(https?:[^"')]+)"?\)/);
+          if (m) { cover = m[1]; break; }
+        }
+      }
+      croot = croot.parentElement;
+    }
+    const txt = (card.textContent || '').replace(/\s+/g, ' ');
+    // 「播放 123」或「播放 1.2万」；「-」表示无数据 → 不计入
+    const grab = (kw) => { const m = txt.match(new RegExp(kw + '\\s*([\\d.,]+\\s*[万wW]?)')); return m ? m[1].trim() : ''; };
+    const pv = grab('播放'), lk = grab('点赞'), cm = grab('评论');
+    let stat = '';
+    if (pv) stat += '▶' + pv;
+    if (lk) stat += (stat ? ' ' : '') + '👍' + lk;
+    if (cm) stat += (stat ? ' ' : '') + '💬' + cm;
+    seen.add(title);
+    out.push({
+      title,
+      url: 'https://creator.douyin.com/creator-micro/content/manage',
+      cover,
+      stat,
+    });
+  });
+  return out.slice(0, 6);
+}"""
+
 
 def _extract_note_tokens(data) -> dict:
     """递归遍历拦截到的接口 JSON，凡是同时含 note-id 与 xsec_token 的对象，收成 {note_id: token}。
@@ -583,6 +652,20 @@ def _scrape_notes(platform: str, page, cfg: dict) -> list[dict]:
             return [{"title": n.get("title") or "(无标题)", "url": n.get("href") or "",
                      "cover": "", "stat": n.get("stat") or ""}
                     for n in (page.evaluate(_ZHIHU_NOTES_JS) or [])]
+        except Exception:
+            return []
+    if platform == "douyin":
+        try:
+            page.goto("https://creator.douyin.com/creator-micro/content/manage",
+                      wait_until="domcontentloaded", timeout=30000)
+            try:
+                page.wait_for_selector("a[href*='/video/'], img", timeout=6000)
+            except Exception:
+                page.wait_for_timeout(1500)
+            page.wait_for_timeout(800)   # 等作品列表异步渲染
+            return [{"title": n.get("title") or "(无标题)", "url": n.get("url") or "",
+                     "cover": n.get("cover") or "", "stat": n.get("stat") or ""}
+                    for n in (page.evaluate(_DOUYIN_NOTES_JS) or [])]
         except Exception:
             return []
     if platform == "kuaishou":
@@ -701,6 +784,14 @@ def cmd_selftest(_a) -> int:
     assert km[0] == {"label": "播放量", "value": "57", "vs": "+57"}, km
     assert km[1] == {"label": "完播率", "value": "30.8%", "vs": ""}, km
     assert km[2]["value"] == "0" and km[2]["vs"] == "+0"
+    # 抖音「近7日」锚点：只从锚点后解析，避开「最新作品」卡片里同名「播放量」；
+    # 环比「较前7日+7」抽 +7、「较前7日0」视为无变化(vs 空)。
+    dy = lines_of("最新作品\n播放量\n210.14万\n近7日\n播放量\n0\n较前7日0\n主页访问量\n9\n较前7日+7")
+    dm = metrics_with_vs(dy, ["播放量", "主页访问量"], "近7日")
+    assert dm[0] == {"label": "播放量", "value": "0", "vs": ""}, dm       # 不是 210.14万
+    assert dm[1] == {"label": "主页访问量", "value": "9", "vs": "+7"}, dm
+    # 锚点缺失（块未渲染）→ 返回空，交由上层继续轮询，绝不从全页误取
+    assert metrics_with_vs(lines_of("最新作品\n播放量\n210.14万"), ["播放量"], "近7日") == []
     # 多窗口增长
     now = 100 * 86400
     hist = [{"ts": now - 40 * 86400, "followers": 10, "likes": 5, "posts": 1},   # >month

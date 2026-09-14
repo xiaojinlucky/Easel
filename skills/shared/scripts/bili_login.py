@@ -41,6 +41,37 @@ def _die(msg: str, code: int = 1) -> None:
     sys.exit(code)
 
 
+def _fmt(n) -> str:
+    """数字友好展示：万/亿。非数字原样返回。"""
+    try:
+        n = int(n)
+    except (TypeError, ValueError):
+        return str(n)
+    if abs(n) >= 100_000_000:
+        return f"{n / 1e8:.1f}亿"
+    if abs(n) >= 10_000:
+        return f"{n / 1e4:.1f}万"
+    return str(n)
+
+
+def _vs(n) -> str:
+    """环比增量 → 前端认的 vs 串：正数 +N、负数 -N、0/空 返回 ''（不显示环比徽标）。"""
+    try:
+        n = int(n or 0)
+    except (TypeError, ValueError):
+        return ""
+    if n > 0:
+        return f"+{_fmt(n)}"
+    if n < 0:
+        return f"-{_fmt(-n)}"
+    return ""
+
+
+def _https(u: str) -> str:
+    """B站封面常是 http://i0.hdslb.com/...，转 https 免前端混合内容拦截。"""
+    return ("https://" + u[7:]) if u.startswith("http://") else u
+
+
 def _sign(params: dict) -> bytes:
     """按 key 排序拼接 + 追加 appsec 求 md5，返回可直接 POST 的 form body。"""
     q = "&".join(f"{k}={urllib.parse.quote(str(params[k]), safe='')}" for k in sorted(params))
@@ -192,22 +223,43 @@ def cmd_stats(a) -> int:
         stat = (_api("https://api.bilibili.com/x/web-interface/nav/stat", cookie).get("data") or {})
         r["followers"] = stat.get("follower")
         r["following"] = stat.get("following")
-        metrics = []
-        if mid:
-            up = (_api(f"https://api.bilibili.com/x/space/upstat?mid={mid}", cookie).get("data") or {})
-            r["likes"] = up.get("likes")
-            plays = (up.get("archive") or {}).get("view")
-            if plays is not None:
-                metrics.append({"label": "总播放", "value": plays})
-            try:
-                nn = (_api(f"https://api.bilibili.com/x/space/navnum?mid={mid}", cookie).get("data") or {})
-                r["posts"] = nn.get("video")
-            except Exception:
-                pass
-        dyn = stat.get("dynamic_count")
-        if dyn is not None:
-            metrics.append({"label": "动态", "value": dyn})
-        r["metrics"] = metrics
+
+        # 近7日·环比：创作中心总览 index/stat 给「累计 total_* + 近期增量 incr_*/inc_*」，
+        # 直接映射成 {值, 环比}。字段名不统一（有的 incr_ 有的 inc_），按对逐个取。
+        st = (_api("https://member.bilibili.com/x/web/index/stat", cookie).get("data") or {})
+        if st:
+            r["likes"] = st.get("total_like")
+            # (标签, 累计键, 增量键)
+            pairs = [
+                ("播放", "total_click", "incr_click"),
+                ("获赞", "total_like", "inc_like"),
+                ("评论", "total_reply", "incr_reply"),
+                ("收藏", "total_fav", "inc_fav"),
+                ("分享", "total_share", "inc_share"),
+                ("涨粉", "total_fans", "incr_fans"),
+            ]
+            r["metrics"] = [
+                {"label": lab, "value": _fmt(st.get(tk) or 0), "vs": _vs(st.get(ik))}
+                for lab, tk, ik in pairs if st.get(tk) is not None
+            ]
+
+        # 最近作品：创作中心稿件列表（cookie 鉴权、无需 wbi 签名）。
+        arc = (_api("https://member.bilibili.com/x/web/archives?status=pubed&pn=1&ps=6",
+                    cookie).get("data") or {})
+        items = arc.get("arc_audits") or arc.get("archives") or []
+        r["posts"] = (arc.get("page") or {}).get("count", r["posts"])
+        notes = []
+        for it in items[:6]:
+            av = it.get("Archive") or it.get("archive") or it
+            sv = it.get("stat") or {}
+            bvid = av.get("bvid") or ""
+            notes.append({
+                "title": av.get("title") or "(无标题)",
+                "url": f"https://www.bilibili.com/video/{bvid}" if bvid else "",
+                "cover": _https(av.get("cover") or ""),
+                "stat": f"▶{_fmt(sv.get('view', 0))} 👍{_fmt(sv.get('like', 0))} 💬{_fmt(sv.get('reply', 0))}",
+            })
+        r["notes"] = notes
     except Exception as e:  # noqa: BLE001
         r["error"] = str(e)
     print(json.dumps(r, ensure_ascii=False))

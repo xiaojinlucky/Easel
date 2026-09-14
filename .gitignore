@@ -81,3 +81,6 @@ skill-test/
 *.orig
 *.tmp
 *.swp
+
+# 公众号发布器用户凭证配置（含 AppID/AppSecret），只提交 .example 模板
+skills/openclaw/skill-wechat-publisher/wechat-publisher.yaml

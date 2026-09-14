@@ -16,7 +16,8 @@ layer: publish
 
 | 能力 | 状态 | 依赖 |
 |------|------|------|
-| 公众号发草稿（`publish.py` → 官方 HTTP API） | ✅ 可跑 | `wechat-publisher.yaml` 里的 `app_id` / `app_secret` + IP 白名单 |
+| 公众号发草稿（`publish.py` → **默认后台会话**） | ✅ 可跑 | 先扫码登录公众号后台（`../../shared/scripts/weixin_mp_stats.py login`，或 Web 账号页「登录公众号后台」）。**免 app_secret、免 IP 白名单**，还能群发 |
+| 公众号发草稿（`publish.py --official-api` → 官方 HTTP API，回退） | ✅ 可跑 | `wechat-publisher.yaml` 的 `app_id`/`app_secret` + 出口 IP 加进公众号 IP 白名单 |
 | 反 AI 检测（`ai_score.py`） | ✅ 可跑 | 纯本地，无外部依赖 |
 | MD→公众号排版（`html_converter.py`） | ✅ 可跑 | 纯本地 |
 | 生成配图（`generate_image.py`） | ❌ 当前不可用 | 需图像 API key（OpenAI Images / Gemini 代理） |
@@ -73,13 +74,16 @@ python3 skills/openclaw/skill-wechat-publisher/scripts/ai_score.py outputs/主�
 ```
 命中时按脚本列出的 AI 套话/高频词逐句**重写整个句式**（不只换词），重跑到通过。可选双保险：朱雀 / GPTZero 第三方检测。
 
-### 阶段六：发布到草稿箱（不自动群发）
+### 阶段六：发布到草稿箱（默认走后台会话，不自动群发）
 ```bash
 python3 skills/openclaw/skill-wechat-publisher/scripts/publish.py --account main \
   --input outputs/主题名/article.md \
   --cover .../cover.jpg --title "标题" --digest "120 字以内摘要" --exec
 ```
-先省略 `--exec` 预览账号、模式和输入，向用户展示标题/摘要并取得确认后再执行。`publish.py` 真执行时自动读账号 `author`/`theme` → 出站敏感信息检查 → 排版 → 处理图片 → 转 HTML → 上传封面 → 建草稿 → 返回 `media_id`。成功后调用 `skill-publish-log` 记录草稿；再告知用户登录 mp.weixin.qq.com 手动确认发布。
+**默认走公众号后台会话发布**（免 app_secret、免 IP 白名单）——前提是已扫码登录后台
+（`../../shared/scripts/weixin_mp_stats.py login`，或 Web 账号页「登录公众号后台」）；封面与正文内嵌图会自动传 mp CDN。
+若后台未登录会报错提示先登录。加 `--official-api` 可回退到官方 HTTP API（需 app_secret + IP 白名单）。
+先省略 `--exec` 预览账号、模式和输入，向用户展示标题/摘要并取得确认后再执行。成功后调用 `skill-publish-log` 记录草稿；再告知用户登录 mp.weixin.qq.com 查看/群发。
 
 ### 阶段七：多平台同步（可选，默认不启用，当前环境不可用）
 一键同步到知乎/掘金/CSDN/头条（均存草稿）。基于 Wechatsync Chrome 扩展 + `@wechatsync/cli`，需浏览器。触发方式与失败处理见 [references/multi-platform-sync.md](references/multi-platform-sync.md)。

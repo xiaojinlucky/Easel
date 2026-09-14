@@ -23,6 +23,7 @@ Easel 的 SKILL 集合在自研基础上，参考、改编或借鉴了大量优�
 | [enescingoz/awesome-n8n-templates](https://github.com/enescingoz/awesome-n8n-templates) | template-library | 模板分类 + 目录组织 |
 | [danielmiessler/fabric](https://github.com/danielmiessler/fabric) | template-library | patterns 模板复用模式 |
 | [liangdabiao/ecom-details-image](https://github.com/liangdabiao/ecom-details-image) | ecom-details-image | 电商详情图视觉方案（原始来源） |
+| [isjiamu/gzh-design-skill](https://github.com/isjiamu/gzh-design-skill) | gzh-design | 公众号排版（Markdown/docx/pdf → 可粘贴进编辑器的 HTML）；**整包集成（vendored），随原项目 AGPL-3.0 许可**；作者 甲木 (Jiamu) × 摸鱼小李 (Moyu Xiaoli)，2026 |
 
 ## 文案 / 写作 / 风格
 

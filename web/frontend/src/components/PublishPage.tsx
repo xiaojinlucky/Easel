@@ -14,7 +14,7 @@ interface PublishPageProps {
   onNavigate?: (page: Page) => void;
 }
 
-// 平台列表包含内容适配目标；公众号没有自动发布 publisher，只提供工作区入口。
+// 平台列表须与后端 LOGIN_RUNNERS 对齐；公众号一键发草稿走 wechat-oa，工作区仍可从下方入口进入。
 const PLATFORMS: { key: string; label: string; titleLimit?: number; bodyLimit: number; hint: string }[] = [
   { key: 'xiaohongshu', label: '小红书', titleLimit: 20, bodyLimit: 1000, hint: '标题≤20，正文≤1000，重情绪+话题标签' },
   { key: 'douyin', label: '抖音', titleLimit: 55, bodyLimit: 55, hint: '文案≤55，前几字是钩子' },
@@ -22,14 +22,14 @@ const PLATFORMS: { key: string; label: string; titleLimit?: number; bodyLimit: n
   { key: 'weixin-channels', label: '视频号', bodyLimit: 1000, hint: '需附视频，短描述+话题标签，微信扫码登录' },
   { key: 'zhihu', label: '知乎', bodyLimit: 5000, hint: '长文/回答，讲清逻辑' },
   { key: 'bilibili', label: 'B站', titleLimit: 80, bodyLimit: 2000, hint: '需附视频，标题≤80、简介≤2000，默认投「知识」分区' },
-  { key: 'wechat', label: '公众号', bodyLimit: 10000, hint: '仅适配、复制、排期；送草稿箱请进入公众号工作区' },
+  { key: 'wechat-oa', label: '公众号', titleLimit: 64, bodyLimit: 20000, hint: '图文文章，正文用 Markdown，首图作封面，发到草稿箱；需先在账号页扫码登录公众号后台' },
 ];
 const LABEL2KEY = Object.fromEntries(PLATFORMS.map((p) => [p.label, p.key]));
 
 // 能一键发布的平台（有后端 publisher）
-const PUBLISHABLE = new Set(['xiaohongshu', 'douyin', 'kuaishou', 'weixin-channels', 'zhihu', 'bilibili']);
-// 必须附带媒体的平台（无媒体发不了）
-const MEDIA_REQUIRED = new Set(['xiaohongshu', 'douyin', 'kuaishou', 'weixin-channels', 'bilibili']);
+const PUBLISHABLE = new Set(['xiaohongshu', 'douyin', 'kuaishou', 'weixin-channels', 'zhihu', 'bilibili', 'wechat-oa']);
+// 必须附带媒体的平台（无媒体发不了）——公众号需要一张封面图，也计入
+const MEDIA_REQUIRED = new Set(['xiaohongshu', 'douyin', 'kuaishou', 'weixin-channels', 'bilibili', 'wechat-oa']);
 // 只能发视频的平台（抖音/视频号/B站：图文不走此链路，必须视频）
 const VIDEO_ONLY = new Set(['douyin', 'weixin-channels', 'bilibili']);
 const VIDEO_RE = /\.(mp4|mov|webm|mkv|avi|m4v|flv|ts)$/i;
@@ -319,7 +319,7 @@ export default function PublishPage({ persona, onNavigate }: PublishPageProps) {
               onClick={() => toggle(p.key)}>{p.label}</button>
           ))}
         </div>
-        {platforms.includes('wechat') && onNavigate && (
+        {platforms.includes('wechat-oa') && onNavigate && (
           <div className="publish-wechat-entry">
             <button className="btn btn-sm btn-primary" onClick={() => onNavigate('wechat')}>
               打开公众号工作区 →

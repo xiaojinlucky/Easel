@@ -74,15 +74,22 @@ echo -e "${CYAN}│${NC}  ${DIM}OpenClaw-powered · Linux / macOS${NC}          
 echo -e "${CYAN}╰────────────────────────────────────────────────────╯${NC}"
 echo -e "\n${DIM}  Easel 会使用独立 profile ~/.openclaw-${PROFILE}/，不会覆盖已有 OpenClaw。${NC}\n"
 
-# ---- 1. Node.js >= 22.19 ----
+# ---- 1. Node.js >= 24.16 ----
+# 跟随 openclaw@latest 的引擎要求：当前 2026.9.x 需要 Node >=24.16.0 <25 || >=26.1.0
+# （注意 25.x 与 26.0 被排除）。setup 默认安装 openclaw@latest，故 Node 下限对齐到 24.16。
 step "1/8" "检查系统环境" "Python · Node.js · Git · FFmpeg"
 info "检查 Node.js..."
+node_version_ok() {  # $1=major $2=minor
+    { [ "$1" -eq 24 ] && [ "$2" -ge 16 ]; } \
+        || { [ "$1" -eq 26 ] && [ "$2" -ge 1 ]; } \
+        || [ "$1" -ge 27 ]
+}
 NODE_OK=false
 if command -v node &>/dev/null; then
     NODE_VER=$(node -v | sed 's/v//')
     NODE_MAJOR=$(echo "$NODE_VER" | cut -d. -f1)
     NODE_MINOR=$(echo "$NODE_VER" | cut -d. -f2)
-    if [ "$NODE_MAJOR" -gt 22 ] || { [ "$NODE_MAJOR" -eq 22 ] && [ "$NODE_MINOR" -ge 19 ]; }; then
+    if node_version_ok "$NODE_MAJOR" "$NODE_MINOR"; then
         NODE_OK=true
     fi
 fi
@@ -90,22 +97,26 @@ fi
 if $NODE_OK; then
     ok "Node.js $NODE_VER"
 else
-    info "安装 Node.js 22..."
+    if [ -n "${NODE_VER:-}" ]; then
+        info "Node.js $NODE_VER 过旧（openclaw@latest 需要 24.16+），安装 Node.js 24..."
+    else
+        info "安装 Node.js 24..."
+    fi
     if [ "$(uname -s)" = "Darwin" ]; then
         if command -v brew >/dev/null 2>&1; then
-            brew install node@22
-            export PATH="$(brew --prefix node@22)/bin:$PATH"
+            brew install node@24
+            export PATH="$(brew --prefix node@24)/bin:$PATH"
         else
-            echo "macOS 未找到 Homebrew。请先安装 Node.js 22.19+（Homebrew: brew install node@22），再重新运行 setup.sh。" >&2
+            echo "macOS 未找到 Homebrew。请先安装 Node.js 24.16+（Homebrew: brew install node@24），再重新运行 setup.sh。" >&2
             exit 1
         fi
     else
-        NODE_TARGET="v22.23.1"
-        curl -fL --max-time 120 "https://nodejs.org/dist/${NODE_TARGET}/node-${NODE_TARGET}-linux-x64.tar.xz" -o /tmp/node22.tar.xz
-        cd /tmp && tar xf node22.tar.xz
+        NODE_TARGET="v24.21.0"
+        curl -fL --max-time 120 "https://nodejs.org/dist/${NODE_TARGET}/node-${NODE_TARGET}-linux-x64.tar.xz" -o /tmp/node24.tar.xz
+        cd /tmp && tar xf node24.tar.xz
         cp -rf node-${NODE_TARGET}-linux-x64/bin/* /usr/local/bin/
         cp -rf node-${NODE_TARGET}-linux-x64/lib/* /usr/local/lib/
-        rm -rf /tmp/node-${NODE_TARGET}-linux-x64 /tmp/node22.tar.xz
+        rm -rf /tmp/node-${NODE_TARGET}-linux-x64 /tmp/node24.tar.xz
         cd "$PROJECT_ROOT"
     fi
     ok "Node.js $(node -v)"
@@ -116,7 +127,7 @@ if command -v python3 >/dev/null 2>&1; then
     if [ "$PYTHON_OK" -eq 1 ]; then
         ok "Python $(python3 --version 2>&1 | awk '{print $2}')"
     else
-        echo "Python 版本过低：检测到 $PYTHON_VER，需要 Python 3.10+。" >&2
+        echo "Python 版本过低：检测到 ${PYTHON_VER}，需要 Python 3.10+。" >&2
         exit 1
     fi
 else
@@ -197,7 +208,21 @@ if command -v openclaw >/dev/null 2>&1; then
 else
     info "安装 OpenClaw..."
     npm install -g openclaw@latest --loglevel warn 2>&1 | tail -1
+    # npm 全局 bin 目录未必在当前 shell 的 PATH 上：macOS Homebrew 的 Node 会把全局包装到
+    # $(npm prefix -g)/bin（如 /opt/homebrew/Cellar/node/<ver>/bin），而 /opt/homebrew/bin 里
+    # 并没有 openclaw 链接。此时 command -v 拿到空值，后面 $OPENCLAW_BIN --version 会直接崩。
+    # 先把 npm 全局 bin 补进 PATH 再检测。
+    if ! command -v openclaw >/dev/null 2>&1; then
+        NPM_GLOBAL_BIN="$(npm prefix -g 2>/dev/null)/bin"
+        if [ -x "$NPM_GLOBAL_BIN/openclaw" ]; then
+            export PATH="$NPM_GLOBAL_BIN:$PATH"
+        fi
+    fi
     OPENCLAW_BIN="$(command -v openclaw)"
+    if [ -z "$OPENCLAW_BIN" ]; then
+        echo "OpenClaw 安装后仍未在 PATH 中找到。请把 npm 全局 bin 目录（$(npm prefix -g 2>/dev/null)/bin）加入 PATH 后重新运行 setup.sh（幂等，会跳过已装部分）。" >&2
+        exit 1
+    fi
     ok "OpenClaw 已安装：$($OPENCLAW_BIN --version 2>&1 | head -1)"
 fi
 OC="$OPENCLAW_BIN --profile $PROFILE"
@@ -553,15 +578,33 @@ $OC config set agents.defaults.timeoutSeconds 7200 2>&1 | sed '/^No change$/d'
 EMBEDDING_API_KEY="${EASEL_EMBEDDING_API_KEY:-${EASEL_EMBEDDINGS_API_KEY:-${OPENAI_EMBEDDING_API_KEY:-${EMBEDDING_API_KEY:-${EMBEDDINGS_API_KEY:-}}}}}"
 EMBEDDING_BASE_URL="${EASEL_EMBEDDING_BASE_URL:-${EASEL_EMBEDDINGS_BASE_URL:-${OPENAI_EMBEDDING_BASE_URL:-${EMBEDDING_BASE_URL:-${EMBEDDINGS_BASE_URL:-}}}}}"
 EMBEDDING_MODEL="${EASEL_EMBEDDING_MODEL:-${EASEL_EMBEDDINGS_MODEL:-${OPENAI_EMBEDDING_MODEL:-${EMBEDDING_MODEL:-${EMBEDDINGS_MODEL:-}}}}}"
+# 记忆检索配置的 schema 位置随 OpenClaw 版本变化：2026.9.x 起挪到顶层 memory.search.*，
+# 之前（<=2026.6.x）在 agents.defaults.memorySearch.*。两者互斥（各自把对方的 key 判为 Unrecognized）。
+# 用「先试新 key、失败再退老 key」自适应：第一条写入既是真实配置也是版本探测（失败输出静默）。
 if [ -n "$EMBEDDING_API_KEY" ] && [ -n "$EMBEDDING_BASE_URL" ] && [ -n "$EMBEDDING_MODEL" ]; then
-    $OC config set agents.defaults.memorySearch.provider openai-compatible 2>&1 | sed '/^No change$/d'
-    $OC config set agents.defaults.memorySearch.model "$EMBEDDING_MODEL" 2>&1 | sed '/^No change$/d'
-    $OC config set agents.defaults.memorySearch.remote.baseUrl "$EMBEDDING_BASE_URL" 2>&1 | sed '/^No change$/d'
-    $OC config set agents.defaults.memorySearch.remote.apiKey "$EMBEDDING_API_KEY" 2>&1 | sed '/^No change$/d'
-    ok "独立向量模型已配置：$EMBEDDING_MODEL"
+    if $OC config set memory.search.provider openai-compatible >/dev/null 2>&1; then
+        # 新 schema：顶层 memory.search（OpenClaw 2026.9.x+）
+        $OC config set memory.search.enabled true --strict-json 2>&1 | sed '/^No change$/d'
+        $OC config set memory.search.model "$EMBEDDING_MODEL" 2>&1 | sed '/^No change$/d'
+        $OC config set memory.search.remote.baseUrl "$EMBEDDING_BASE_URL" 2>&1 | sed '/^No change$/d'
+        $OC config set memory.search.remote.apiKey "$EMBEDDING_API_KEY" 2>&1 | sed '/^No change$/d'
+        ok "独立向量模型已配置（memory.search）：$EMBEDDING_MODEL"
+    else
+        # 老 schema：agents.defaults.memorySearch（OpenClaw <=2026.6.x）
+        $OC config set agents.defaults.memorySearch.provider openai-compatible 2>&1 | sed '/^No change$/d'
+        $OC config set agents.defaults.memorySearch.model "$EMBEDDING_MODEL" 2>&1 | sed '/^No change$/d'
+        $OC config set agents.defaults.memorySearch.remote.baseUrl "$EMBEDDING_BASE_URL" 2>&1 | sed '/^No change$/d'
+        $OC config set agents.defaults.memorySearch.remote.apiKey "$EMBEDDING_API_KEY" 2>&1 | sed '/^No change$/d'
+        ok "独立向量模型已配置（memorySearch）：$EMBEDDING_MODEL"
+    fi
 else
     # Deliberate FTS-only mode: never fall back to the chat endpoint for embeddings.
-    $OC config set agents.defaults.memorySearch.provider none 2>&1 | sed '/^No change$/d'
+    # 新 schema 用 memory.search.enabled=false 关闭向量检索；老 schema 用 provider=none。
+    if $OC config set memory.search.enabled false --strict-json >/dev/null 2>&1; then
+        :
+    else
+        $OC config set agents.defaults.memorySearch.provider none 2>&1 | sed '/^No change$/d'
+    fi
     if [ -n "$EMBEDDING_API_KEY$EMBEDDING_BASE_URL$EMBEDDING_MODEL" ]; then
         warn "向量 API 配置不完整，已关闭向量检索；需要同时设置 EASEL_EMBEDDING_API_KEY、EASEL_EMBEDDING_BASE_URL、EASEL_EMBEDDING_MODEL"
     else

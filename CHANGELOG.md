@@ -25,6 +25,27 @@ All notable changes to Easel are documented in this file.
   `cookies.json`、公众号凭据等，是 `scripts/backup_local.py` 之外的互补一层。
   用法与分工见 `docs/BACKUP_RESTORE.md`。
 - `web/platform_registry.py`：平台能力与状态的单一注册表（`/api/platforms`），前端按键渲染，不写平台分支。
+- **2026-09-15 合并上游 v0.1.1**：接入公众号后台扫码会话（`wechat-oa`）、小红书登录容错、抖音发布回读、B站/抖音近 7 日数据；可选排版 Skill `gzh-design`（AGPL-3.0，仅本机自用）。
+
+## [0.1.1] - 2026-09-15
+
+### Added
+
+- Added WeChat Official Account (公众号) support: article publishing, Data Center metrics, and account management via a background QR-scan session.
+- Added an optional vendored typesetting Skill (`gzh-design`, AGPL-3.0), bringing the Skill count to 113.
+
+### Improved
+
+- Improved the workbench **创作数据** panel: Bilibili and Douyin now populate "近 7 日 · 环比" (7-day metrics with week-over-week change) and "最近作品" (recent works).
+  - Bilibili reads the creator overview API for play/like/comment/favorite/share/follower deltas, and lists recent uploads (title/link/cover/stats).
+  - Douyin parses the real "近 7 日" labels with a section anchor to avoid mis-reading the "最新作品" card, handles the "较前7日±X" delta format, hardens polling stability, and scrapes recent works from the content-manage page.
+
+### Fixed
+
+- Fixed OpenClaw version detection in `easel doctor` on Windows (the `.cmd` shim cannot be invoked bare).
+- Fixed cross-platform gateway/launcher robustness and Xiaohongshu login navigation races.
+
+[0.1.1]: https://github.com/ZJU-REAL/Easel/releases/tag/v0.1.1
 
 ## [0.1.0] - 2026-08-31
 

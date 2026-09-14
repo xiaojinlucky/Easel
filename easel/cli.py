@@ -21,6 +21,7 @@ from easel.commands.doctor import cmd_doctor
 from easel.commands.gateway import cmd_gateway
 from easel.commands.ping import cmd_ping
 from easel.commands.skill import cmd_skill
+from easel.openclaw_cmd import openclaw_base_cmd
 from easel.persona import list_personas as _list_personas
 from easel.persona import persona_prefix
 from easel.timeouts import TIMEOUT_CHAT
@@ -43,8 +44,35 @@ def _proxy_env() -> dict[str, str]:
 CYAN = "\033[0;36m"
 GREEN = "\033[0;32m"
 YELLOW = "\033[0;33m"
+RED = "\033[0;31m"
 DIM = "\033[0;90m"
 NC = "\033[0m"
+
+
+def _build_chat_cmd(session_key: str, message_prefix: str = "") -> list[str]:
+    """组装 `easel chat` 的 openclaw tui 命令行。
+
+    必须用 openclaw_base_cmd() 解析启动方式，不能写死字面量 "openclaw"：Windows 上
+    PATH 里的 openclaw 是 .cmd shim，CreateProcess 跑不了（见 easel/openclaw_cmd.py）。
+    必须用 tui 子命令——`chat`/`terminal` 是 tui 的别名，会强制本地模式
+    （openclaw dist/tui-cli-*.js: invokedSubcommand === "chat" → isLocal = true），
+    而 --local 要求独占 state 目录，与 Easel 自启的 gateway 冲突，只会打印
+    "A Gateway is running for this state directory" 后退出。
+    """
+    cmd = openclaw_base_cmd() + [
+        "--profile", PROFILE,
+        "tui",
+        "--session", session_key,
+        # chat 里可能直接发起制作层/跨层编排，给足制作层预算，避免长任务被 turn 超时掐断（O2）。
+        # 超时统一走 easel/timeouts.py（三入口单一真相源），毫秒 = TIMEOUT_CHAT * 1000。
+        "--timeout-ms", str(TIMEOUT_CHAT * 1000),
+    ]
+    # 画像作为初始消息内联注入（无全局 USER.md，避免并发竞态；与 web/skill 同源）。
+    # 说明：注入随 session 历史留存，超长会话被压缩后可能丢画像——换取「每个请求自包含」，
+    # 与 docs/prompt-stack.md 声明的架构一致。
+    if message_prefix:
+        cmd += ["--message", message_prefix]
+    return cmd
 
 
 def cmd_chat(_args) -> int:
@@ -113,6 +141,27 @@ def cmd_chat(_args) -> int:
         except (EOFError, KeyboardInterrupt):
             print('\n已退出。')
             return 0
+    return 0
+
+
+def cmd_web(args) -> int:
+    """启动 Web 工作台（FastAPI + React），默认 http://localhost:7860。"""
+    port = getattr(args, "port", 7860)
+    env = _proxy_env()
+    env["EASEL_PORT"] = str(port)
+    script = PROJECT_ROOT / "web" / "app.py"
+    if not script.is_file():
+        print(f"{RED}未找到 web/app.py{NC} — 安装可能不完整，请重跑 `bash setup.sh`。",
+              file=sys.stderr)
+        return 1
+    # 透传子进程返回码：端口占用/依赖缺失导致 app.py 立刻退出时，调用方
+    # （自启/CI/脚本）能据此判断启动是否成功，而非恒拿到 0。
+    result = subprocess.run(
+        [sys.executable, str(script)],
+        cwd=str(PROJECT_ROOT),
+        env=env,
+    )
+    return result.returncode
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -148,17 +197,6 @@ def main(argv: list[str] | None = None) -> int:
     p_skill.set_defaults(func=cmd_skill)
 
     # web
-    def cmd_web(args):
-        port = getattr(args, "port", 7860)
-        env = _proxy_env()
-        env["EASEL_PORT"] = str(port)
-        subprocess.run(
-            [sys.executable, str(PROJECT_ROOT / "web" / "app.py")],
-            cwd=str(PROJECT_ROOT),
-            env=env,
-        )
-        return 0
-
     p_web = sub.add_parser("web", help="启动 Web UI")
     p_web.add_argument("--port", type=int, default=7860, help="端口（默认 7860）")
     p_web.set_defaults(func=cmd_web)

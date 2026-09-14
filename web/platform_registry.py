@@ -55,6 +55,16 @@ PLATFORM_CAPS: dict[str, dict] = {
         'group': 'video', 'authKind': 'qrcode', 'publishMode': 'direct',
         'contentKind': 'media', 'analyticsSource': 'scrape', 'workspace': '', 'panels': [],
     },
+    'wechat-oa': {
+        'group': 'article', 'authKind': 'qrcode', 'publishMode': 'draft_then_publish',
+        'contentKind': 'markdown', 'analyticsSource': 'scrape', 'workspace': 'wechat',
+        'panels': [
+            {'id': 'compose', 'label': '编辑排版'},
+            {'id': 'drafts', 'label': '草稿箱'},
+            {'id': 'analytics', 'label': '数据'},
+            {'id': 'monitor', 'label': '同行监测'},
+        ],
+    },
     'wechat': {
         'group': 'article', 'authKind': 'credential', 'publishMode': 'draft_then_publish',
         'contentKind': 'markdown', 'analyticsSource': 'official_api', 'workspace': 'wechat',
@@ -267,17 +277,18 @@ def platform_list() -> list[dict]:
             'actionUrl': '',
         })
 
-    status = _wechat_status()
-    items.append({
-        **_caps('wechat'),
-        'id': 'wechat',
-        'name': '微信公众号',
-        'backend': 'official_api',
-        'supported': True,
-        'loggedIn': bool(status['loggedIn']),
-        'note': str(status['note']),
-        'actionUrl': '',
-    })
+    if not any(it['id'] == 'wechat-oa' for it in items):
+        status = _wechat_status()
+        items.append({
+            **_caps('wechat'),
+            'id': 'wechat',
+            'name': '微信公众号',
+            'backend': 'official_api',
+            'supported': True,
+            'loggedIn': bool(status['loggedIn']),
+            'note': str(status['note']),
+            'actionUrl': '',
+        })
 
     postiz = _postiz_status()
     items.append({

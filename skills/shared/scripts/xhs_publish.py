@@ -446,6 +446,37 @@ def cmd_check(_a) -> int:
     return 0 if ok else 3
 
 
+def _wait_sel(page, selector: str, timeout_ms: int = 15000, what: str = "元素") -> object:
+    """等待选择器出现，容忍登录页导航竞态。
+
+    小红书登录页会多次跳转（探索页 → 登录引导），Playwright 在导航瞬间
+    查询旧 DOM 会抛 "Execution context was destroyed"——这不是选择器错误，
+    是页面在跳。重试直到 deadline 而非一次失败就报错。
+    """
+    deadline = time.time() + timeout_ms / 1000
+    last_err: Exception | None = None
+    while time.time() < deadline:
+        try:
+            el = page.wait_for_selector(selector, timeout=2500)
+            if el is not None:
+                return el
+        except Exception as e:  # navigation / context destroyed / timeout
+            last_err = e
+        page.wait_for_timeout(800)
+    if last_err is not None and "Timeout" not in type(last_err).__name__:
+        raise last_err
+    raise TimeoutError(f"等待 {what} 超时（{timeout_ms}ms）：{selector}")
+
+
+def _query_safe(page, selector: str):
+    """query_selector 的容错版：导航瞬间 context 被销毁会抛异常，这里吞掉返回
+    None。裸 query_selector 在页面跳转期会崩，用它做一次性登录态探测更稳。"""
+    try:
+        return page.query_selector(selector)
+    except Exception:
+        return None
+
+
 def cmd_login(a) -> int:
     """登录并持久化 cookie。桌面环境默认有头窗口扫码；无桌面时抠二维码 PNG。
     REF login.go FetchQrcodeImage/WaitForLogin。"""
@@ -475,25 +506,51 @@ def cmd_login(a) -> int:
                 _die(f"打开 {EXPLORE_URL} 失败：{e}", 1)
             page.wait_for_timeout(800)
 
-            # 已登录直接返回
-            if page.query_selector(SELECTORS["login_ok"]):
+            def _risk_blocked() -> bool:
+                """小红书风险 IP 拦截页（重定向可能晚于 domcontentloaded，须重复查）。"""
+                try:
+                    return ("website-login/error" in page.url
+                            or "安全限制" in (page.title() or ""))
+                except Exception:
+                    return False
+
+            # 等待页面稳定并完成可能的跳转（登录引导 / 风险拦截 / 已登录态）
+            for _ in range(10):
+                page.wait_for_timeout(800)
+                if _risk_blocked():
+                    login_state.write_status(sf, "error", "IP 存在风险，需干净网络/代理")
+                    _die("小红书判定当前网络为风险 IP（安全限制 300012「IP存在风险，请切换可靠网络环境」）——"
+                         "二维码在此环境无法弹出。解决：①用干净/家宽 IP 的代理 `--proxy socks5://...`；"
+                         "②在正常网络的机器上 login 拿到登录态，再把持久化目录 "
+                         f"{_profile_dir(a.profile_base)} 整个拷到本机复用。", 4)
+                try:
+                    if page.query_selector(SELECTORS["login_ok"]) is not None:
+                        break  # 已登录
+                except Exception:
+                    pass
+
+            # 已登录直接返回（页面可能仍在跳转，查询失败按未登录继续走登录流程）
+            try:
+                logged_in = page.query_selector(SELECTORS["login_ok"]) is not None
+            except Exception:
+                logged_in = False
+            if logged_in:
                 print("✅ 已登录（cookie 已在持久化目录），无需扫码")
                 login_state.write_status(sf, "success", "已登录")
                 return 0
 
-            # 风险 IP 拦截检测：机房/代理出口常被小红书判为风险，直接拦在登录页之前
-            if "website-login/error" in page.url or "安全限制" in (page.title() or ""):
-                login_state.write_status(sf, "error", "IP 存在风险，需干净网络/代理")
-                _die("小红书判定当前网络为风险 IP（安全限制 300012「IP存在风险，请切换可靠网络环境」）——"
-                     "二维码在此环境无法弹出。解决：①用干净/家宽 IP 的代理 `--proxy socks5://...`；"
-                     "②在正常网络的机器上 login 拿到登录态，再把持久化目录 "
-                     f"{_profile_dir(a.profile_base)} 整个拷到本机复用。", 4)
-
             # 抠二维码存 PNG（元素截图，不依赖 src 格式，最稳）
             qr = None
             try:
-                qr = page.wait_for_selector(SELECTORS["qrcode"], timeout=15000)
+                qr = _wait_sel(page, SELECTORS["qrcode"], 20000, "登录二维码")
             except Exception:
+                # 超时后先复查是不是风险拦截页（重定向晚到的情况），别误报「页面结构变了」
+                if _risk_blocked():
+                    login_state.write_status(sf, "error", "IP 存在风险，需干净网络/代理")
+                    _die("小红书判定当前网络为风险 IP（安全限制 300012「IP存在风险，请切换可靠网络环境」）——"
+                         "二维码在此环境无法弹出。解决：①用干净/家宽 IP 的代理 `--proxy socks5://...`；"
+                         "②在正常网络的机器上 login 拿到登录态，再把持久化目录 "
+                         f"{_profile_dir(a.profile_base)} 整个拷到本机复用。", 4)
                 if not a.headed:
                     login_state.write_status(sf, "error", "未找到登录二维码")
                     _die("未找到登录二维码（页面结构可能已变，检查 SELECTORS.qrcode），"
@@ -516,22 +573,26 @@ def cmd_login(a) -> int:
                 print(f"   （二维码有时效，约几分钟；过期请重跑 login）")
             print(f"⏳ 等待扫码确认（最长 {timeout_s}s）...", file=sys.stderr)
 
-            # 轮询登录成功
+            # 轮询登录成功（扫码成功瞬间页面会跳转，查询崩了是正常的，重试继续等）
             deadline = time.time() + timeout_s
             while time.time() < deadline:
                 try:
-                    if page.query_selector(SELECTORS["login_ok"]):
-                        print("✅ 登录成功，cookie 已持久化，下次免登")
-                        login_state.write_status(sf, "success", "登录成功")
-                        try:
-                            qr_out.unlink()  # 登录成功清掉二维码图，避免误扫过期码
-                        except OSError:
-                            pass
-                        return 0
-                    page.wait_for_timeout(2000)
+                    logged_in = page.query_selector(SELECTORS["login_ok"]) is not None
                 except Exception as e:
-                    login_state.write_status(sf, "error", "登录窗口被关闭，请关闭弹窗后重试")
-                    _die(f"登录窗口已关闭：{e}", 1)
+                    err = str(e).lower()
+                    if a.headed and ("target" in err or "closed" in err or "has been closed" in err):
+                        login_state.write_status(sf, "error", "登录窗口被关闭，请关闭弹窗后重试")
+                        _die(f"登录窗口已关闭：{e}", 1)
+                    logged_in = False
+                if logged_in:
+                    print("✅ 登录成功，cookie 已持久化，下次免登")
+                    login_state.write_status(sf, "success", "登录成功")
+                    try:
+                        qr_out.unlink()  # 登录成功清掉二维码图，避免误扫过期码
+                    except OSError:
+                        pass
+                    return 0
+                page.wait_for_timeout(2000)
             login_state.write_status(sf, "expired", "二维码超时未扫")
             print(f"⏱️ {timeout_s}s 内未检测到登录成功（二维码可能已过期）。请重跑 login 再扫。",
                   file=sys.stderr)
@@ -610,7 +671,15 @@ def _publish(a, kind: str) -> int:
         try:
             page.goto(PUBLISH_URL, wait_until="domcontentloaded")
             page.wait_for_timeout(1500)
-            if not page.query_selector(SELECTORS["login_ok"]) and "login" in page.url.lower():
+            # 登录态探测容忍导航竞态：发布页也可能仍在跳转，跳转瞬间裸 query 会抛
+            # context-destroyed；重试几次再据 url 判定「未登录」，避免误报。
+            logged = False
+            for _ in range(4):
+                if _query_safe(page, SELECTORS["login_ok"]) is not None:
+                    logged = True
+                    break
+                page.wait_for_timeout(500)
+            if not logged and "login" in page.url.lower():
                 _die("未登录，请先 `login` 扫码")
             if kind == "image":
                 _click_publish_tab(page, "上传图文")
@@ -664,7 +733,7 @@ def cmd_whoami(a) -> int:
                     page.wait_for_selector(SELECTORS["login_ok"], timeout=4000)
                 except Exception:
                     pass
-                logged = bool(page.query_selector(SELECTORS["login_ok"]))
+                logged = _query_safe(page, SELECTORS["login_ok"]) is not None
                 result["loggedIn"] = logged
                 if logged:
                     img = page.query_selector('.main-container .user img.reds-img')

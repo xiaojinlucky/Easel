@@ -10,7 +10,7 @@ WJZ-P/douyin-upload-mcp-skill（src/douyin-ops.js）。确定性 IO 在脚本，
   - 切 tab（发布视频/发布图文）→ 隐藏 file input 塞文件
   - 视频等 uploading-container 消失（≤5min）→ 等 AI 封面（≤60s）选推荐封面
   - 标题 input[placeholder*=作品标题]；简介 slate contenteditable（Ctrl+A 清空再输）
-  - 发布按钮在 card-container-creator-layout 内文本「发布」→ toast 校验「发布成功」
+  - 发布按钮在 card-container-creator-layout 内文本「发布」→ 发布后读回创作者中心作品列表对账（platform_readback；标题+时间窗对上才算成功）
   - 登录：img[aria-label=二维码] 抠图轮询；命中短信验证给提示
 
 子命令: check / login / plan / publish / publish-video / selftest
@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import random
 import sys
 import time
 from pathlib import Path
@@ -28,6 +29,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import login_state  # noqa: E402
 import content_guard  # noqa: E402  出站内容安全闸门
+import platform_readback  # noqa: E402  发布读回对账（快照+列表对账协议）
+import human_pace  # noqa: E402  人类节奏（分档随机停顿）
 
 HOME_URL = "https://creator.douyin.com/"
 TITLE_MAX = 30  # 抖音作品标题上限（字符）
@@ -86,7 +89,12 @@ SMS_ERROR_TEXTS = ("验证码错误", "验证码填写错误", "验证码输入�
 # 必须把找输入框/按钮/手机号/错误文案都**限定在这个弹窗内**，否则 query_selector 会取到
 # DOM 顺序在前的背景框，导致码打进没用的框、弹窗框空着（真机实测的坑，见截图）。
 SMS_MODAL_SELS = ("[class*='semi-modal-content']", "[class*='semi-modal']",
-                  "div[role='dialog']", "[class*='modal-content']", "[class*='dialog']")
+                  "div[role='dialog']", "[class*='modal-content']", "[class*='dialog']",
+                  # 发布风控墙（2026-09-12 真机 dump 校准）：second_verify_panel / second-verify-mask 双形态
+                  "[class*='second_verify_panel']", "[class*='second-verify-panel']",
+                  "[class*='second_verify_mask']", "[class*='second-verify-mask']",
+                  # 通用身份验证弹窗（多种 class 形态容错）
+                  "[data-e2e='verification-dialog']", "[data-testid='verification-dialog']")
 # 判「真正出现了身份验证/短信墙」的文案——**只认弹窗里的这些词**，不认背景『验证码登录』表单
 # （它也有验证码框但不是风控墙）。没命中=不需要短信验证，别硬跳短信流程（实事求是）。
 WALL_KEYWORDS = ("身份验证", "接收短信", "短信验证", "验证方式", "短信已发送",
@@ -142,10 +150,33 @@ def _proxy(explicit: str | None, disable: bool) -> str | None:
 def _launch(p, headed: bool, base: str | None, proxy: str | None):
     profile = _profile_dir(base)
     profile.mkdir(parents=True, exist_ok=True)
-    kwargs = dict(headless=not headed, locale="zh-CN", args=LAUNCH_ARGS)
+    args = list(LAUNCH_ARGS)
+    if not proxy:
+        # 显式直连：忽略环境里可能存在的 http_proxy/https_proxy
+        #（国内平台发布/登录必须直连；web 侧 _proxy_env 可能注入代理变量，这里兜底）
+        args.append("--no-proxy-server")
+    kwargs = dict(headless=not headed, locale="zh-CN", args=args)
     if proxy:
         kwargs["proxy"] = {"server": proxy}
     return p.chromium.launch_persistent_context(str(profile), **kwargs)
+
+
+def _wait_ready(page, timeout_ms: int = 15000) -> None:
+    """等首页 SPA 跳转并渲染出「登录判定元素」（发布按钮或二维码）——goto 裸域名后页面会
+    从 `creator.douyin.com/` 跳到 `creator-micro/home`，跳转期间 DOM 还没渲染，过早 query 会把
+    已登录误判成未登录（真机实测：只 wait 1.5s 时 hd_publish 找不到 → 误报『未登录』）。
+    轮询直到 hd_publish 或 qrcode 出现，或超时（超时后仍交给 _logged_in 判定，不在此处 _die）。"""
+    deadline = time.time() + timeout_ms / 1000
+    while time.time() < deadline:
+        try:
+            if page.query_selector(SELECTORS["hd_publish"]) or page.query_selector(SELECTORS["qrcode"]):
+                return
+        except Exception:
+            pass
+        try:
+            page.wait_for_timeout(500)
+        except Exception:
+            return
 
 
 def _logged_in(page) -> bool:
@@ -247,15 +278,17 @@ def _refresh_qr_if_expired(page) -> bool:
     return False
 
 
-def _human_type(page, el, text: str) -> None:
-    """聚焦→Ctrl+A 清空→逐字输入（REF fillTitle/fillDescription）。"""
+def _human_type(page, el, text: str, delay_ms: tuple[int, int] | None = None) -> None:
+    """聚焦→Ctrl+A 清空→逐字输入（REF fillTitle/fillDescription）。
+    delay_ms=(lo, hi) 时逐字随机延迟（逐字随机 65~140ms，更像手打）；
+    默认 None 保持登录等场景的快速输入。"""
     el.click()
     page.wait_for_timeout(200)
     page.keyboard.press("Control+a")
     page.keyboard.press("Delete")
     for ch in text:
         page.keyboard.type(ch)
-        page.wait_for_timeout(15)
+        page.wait_for_timeout(random.randint(*delay_ms) if delay_ms else 15)
 
 
 def _go_upload(page):
@@ -295,16 +328,41 @@ def _upload_files(page, paths: list[str]):
     page.wait_for_timeout(1000)
 
 
-def _wait_video_processed(page, timeout_s: int = 300):
-    """等上传/转码完成 + 编辑器就绪。小文件秒传时 uploading-container 可能还没出现就返回=假就绪
-    （真机实测：标题框还没渲染就去填→找不到）。改为**正向等标题输入框出现**（编辑页
-    content/post/video 渲染完成的标志），再等上传条彻底消失。"""
+def _wait_video_processed(page, timeout_s: int = 480):
+    """等上传/转码完成 + 编辑器就绪。编辑页（content/post/video）渲染完成、标题输入框可交互
+    即视为基线就绪信号，不依赖 uploading 进度条元素是否存在：真机实测（2026-09）编辑页存在
+    class 含 'uploading-container' 的**常驻**元素，若把『uploading 消失』当作就绪条件会死等到
+    超时（曾卡 300s）。仅当标题框已出现但仍检测到**可见**的 uploading 条时才继续等。
+
+    稳定性增强：就绪需**连续两次**检查通过（间隔 2s），
+    防瞬时假就绪；页面出现 role=progressbar 且带 aria-valuenow 时要求 >= 100。"""
     deadline = time.time() + timeout_s
+    stable = 0
     while time.time() < deadline:
-        if page.query_selector(SELECTORS["title_input"]) and not page.query_selector(SELECTORS["uploading"]):
-            page.wait_for_timeout(1200)   # 编辑器完全可交互
+        ok = False
+        ti = page.query_selector(SELECTORS["title_input"])
+        if ti and ti.is_visible():
+            up = page.query_selector(SELECTORS["uploading"])
+            # 只要上传条不可见（或不存在）就认为上传已完成，避免匹配到常驻隐藏元素而空等
+            if not up or not up.is_visible():
+                ok = True
+                # role=progressbar 存在时加验进度值（拿不到就当通过，不误伤）
+                try:
+                    pb = page.query_selector('[role="progressbar"]')
+                except Exception:
+                    pb = None
+                if pb is not None:
+                    try:
+                        val = pb.get_attribute("aria-valuenow")
+                        if val is not None and float(val) < 100:
+                            ok = False
+                    except Exception:
+                        pass
+        stable = stable + 1 if ok else 0
+        if stable >= 2:                       # 连续两次就绪 → 稳定，放行
+            page.wait_for_timeout(1200)       # 编辑器完全可交互
             return
-        page.wait_for_timeout(1500)
+        page.wait_for_timeout(2000)
     _die(f"视频上传/转码超时或编辑器未就绪（{timeout_s}s）")
 
 
@@ -333,32 +391,60 @@ def _fill_title_desc(page, title: str, desc: str, tags: list[str]):
     ti = page.query_selector(SELECTORS["title_input"])
     if not ti:
         _die("未找到标题输入框（检查 SELECTORS.title_input）")
-    _human_type(page, ti, title)
-    page.wait_for_timeout(300)
+    _human_type(page, ti, title, delay_ms=(65, 140))     # 随机打字节奏
+    human_pace.pace("field-switch")                      # 标题→简介的自然切换停顿
     # 抖音话题写进简介正文（# 自动联想成话题）
     body = desc or ""
     if tags:
         body = (body + " " + " ".join("#" + t.lstrip("#") for t in tags)).strip()
     di = page.query_selector(SELECTORS["desc_input"])
     if di and body:
-        _human_type(page, di, body)
-        page.wait_for_timeout(300)
+        _human_type(page, di, body, delay_ms=(65, 140))
+    page.wait_for_timeout(300)
 
 
-def _click_publish(page):
-    """在 card-container-creator-layout 内点文本为「发布」的按钮。REF publishVideo step8。"""
+def _find_publish_button(page):
+    """在 card-container-creator-layout 内找文本为「发布」的按钮（返回句柄或 None）。"""
     container = page.query_selector(SELECTORS["publish_container"])
     scope = container or page
-    btn = None
     for b in scope.query_selector_all("button"):
         try:
             if (b.inner_text() or "").strip() == "发布" and b.is_visible():
-                btn = b
-                break
+                return b
         except Exception:
             continue
-    if not btn:
-        _die("未找到发布按钮（card-container 内文本『发布』）")
+    return None
+
+
+def _wait_publish_button_ready(page, timeout_s: int = 180):
+    """等「发布」按钮进入可提交稳态（提交前独立收敛阶段，绝不在按钮未就绪时点——
+    防「点了但没生效」的静默假提交）。就绪 = 按钮可见 + 非 disabled/aria-disabled，且**连续两次**
+    检查通过（间隔 1.5s）。超时按未提交处理并 dump 现场。"""
+    deadline = time.time() + timeout_s
+    stable = 0
+    while time.time() < deadline:
+        btn = _find_publish_button(page)
+        ok = False
+        if btn is not None:
+            try:
+                dis = btn.get_attribute("disabled")
+                aria = btn.get_attribute("aria-disabled")
+                ok = (dis is None) and (aria not in ("true", "1"))
+            except Exception:
+                ok = False
+        stable = stable + 1 if ok else 0
+        if stable >= 2:
+            return btn
+        page.wait_for_timeout(1500)
+    _dump_publish_fail(page, "publish-button-not-ready")
+    _die(f"发布按钮迟迟未就绪（上传未完成/表单校验未过），已按未提交处理（{timeout_s}s）")
+
+
+def _click_publish(page, content_length: int = 0):
+    """单次提交契约：整个发布流程**唯一一次**点击「发布」。
+    点前等按钮就绪 → 复核/提交双停顿 → 点击。REF publishVideo step8。"""
+    btn = _wait_publish_button_ready(page)
+    human_pace.pause_before_commit(content_length)
     btn.scroll_into_view_if_needed()
     page.wait_for_timeout(300)
     btn.click()
@@ -439,9 +525,17 @@ def _handle_publish_sms_inner(page, code_file: Path, sf, wait_s: int) -> bool:
     login_state.write_status(sf, "sms_required", msg)
     print(f"📩 {msg}——等待回填 {code_file}（≤{wait_s}s，可多次重输）", file=sys.stderr)
     deadline = time.time() + wait_s
+    resend_file = Path(str(code_file) + ".resend")
     while time.time() < deadline:
         if _publish_verified(page):                          # 墙没了/已跳转 = 验证已过（或平台直接放行）
             return True
+        if resend_file.exists():                             # 请求重发信号（一次性）：点「重新发送」再下发
+            try:
+                resend_file.unlink()
+            except OSError:
+                pass
+            if _sms_click_first(page, SMS_SEND_OPTS):
+                print("📨 已按请求重新发送验证码", file=sys.stderr)
         code = login_state.read_sms_code(str(code_file))
         if not code:
             page.wait_for_timeout(1500)
@@ -1014,7 +1108,7 @@ def _plan_lines(kind, title, desc, media, tags):
         f"  2. 切 tab「{tab}」",
         f"  3. {'上传视频等转码(≤5min)+选AI封面' if kind == 'video' else '上传图片'}",
         "  4. 填标题/简介（Ctrl+A 清空再逐字输入）+ # 话题",
-        "  5. 点「发布」→ toast 校验「发布成功」",
+        "  5. 点「发布」→ 发布后读回作品列表对账（标题+时间窗对上才算发布成功）",
     ]
 
 
@@ -1028,12 +1122,14 @@ def cmd_plan(a) -> int:
     return 0
 
 
-def _verify_published(p, a, title: str) -> bool:
-    """重开一个干净 context 查内容管理页，确认标题对应作品是否已发布/审核中（权威判定）。
-    发布收尾偶发渲染进程崩溃（"Page crashed"）但作品其实已提交成功——崩溃后用它核验，避免误报失败。"""
-    key = (title or "").strip()[:12]
-    if not key:
-        return False
+def _readback_verify(p, a, title: str, since_ms: int | None = None,
+                     snapshot_ids: set[str] | None = None):
+    """重开一个干净 context 读回创作者中心作品列表，与本次发布对账（权威判定）。
+
+    发布收尾偶发渲染进程崩溃（"Page crashed"）但作品其实已提交成功——崩溃后用它核验，
+    避免误报失败。对账协议见 platform_readback。
+    返回 platform_readback.ReadbackResult（outcome: verified/unverified/login_required/readback_error）；不抛异常。
+    """
     try:
         ctx = _launch(p, headed=False, base=a.profile_base, proxy=_proxy(a.proxy, a.no_proxy))
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
@@ -1041,20 +1137,18 @@ def _verify_published(p, a, title: str) -> bool:
             page.set_default_timeout(30000)
             page.goto("https://creator.douyin.com/creator-micro/content/manage",
                       wait_until="domcontentloaded")
-            page.wait_for_timeout(6000)     # 作品列表异步渲染
-            body = page.inner_text("body") or ""
-            found = key in body
-            print(f"{'✅ 核验：内容管理页已见该作品' if found else '❌ 核验：内容管理页未见该作品'}（key={key}）",
-                  file=sys.stderr)
-            return found
+            page.wait_for_timeout(3000)     # 页面上下文稳定后再发页内请求
+            return platform_readback.verify_douyin_publish(
+                page, title=title, since_ms=since_ms, limit=20, attempts=3, delay_s=10,
+                snapshot_ids=snapshot_ids)
         finally:
             try:
                 ctx.close()
             except Exception:
                 pass
     except Exception as e:  # noqa: BLE001
-        print(f"⚠️ 重开核验失败：{e}", file=sys.stderr)
-        return False
+        print(f"⚠️ 重开读回核验失败：{e}", file=sys.stderr)
+        return platform_readback.ReadbackResult(outcome="readback_error", error=str(e))
 
 
 def _publish(a, kind: str) -> int:
@@ -1090,27 +1184,41 @@ def _publish(a, kind: str) -> int:
         _die(f"需要 playwright：{e}", 3)
     sf = getattr(a, "status_file", None)
     login_state.write_status(sf, "starting", "发布中…")
-    published = None   # None=未确认（崩溃/超时→重开核验）；True/False=已判定
+    started_ms = int(time.time() * 1000)
+    published = None   # None=未确认（崩溃/超时→重开核验）；True/False=界面层已判定
+    readback = None    # 读回对账（权威判定）：platform_readback.ReadbackResult
+    snapshot_ids: set[str] = set()   # 发前快照（发布前作品 id 集；发布动作前在页面里抓）
     with sync_playwright() as p:
         ctx = _launch(p, headed=a.headed, base=a.profile_base, proxy=_proxy(a.proxy, a.no_proxy))
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
         page.set_default_timeout(300000)
         try:
             page.goto(HOME_URL, wait_until="domcontentloaded")
-            page.wait_for_timeout(1500)
+            _wait_ready(page)
             if not _logged_in(page):
                 _die("未登录，请先 `login` 扫码")
+            # 发前快照：记录当前作品 id 集，读回时用于排除旧作品
+            snapshot_ids = platform_readback.capture_douyin_snapshot(page)
             _go_upload(page)
+            human_pace.pace("task-switch")               # 进编辑器的自然停顿
             _switch_tab(page, "video" if kind == "video" else "imagetext")
             _upload_files(page, media)
+            human_pace.pace("field-switch")              # 上传后到填写前
             if kind == "video":
                 _wait_video_processed(page)
                 _select_ai_cover(page)
             _fill_title_desc(page, a.title, a.content or "", tags)
-            _click_publish(page)
-            page.wait_for_timeout(2500)
+            _click_publish(page, len(a.title) + len(a.content or ""))
+            # 点击后轮询等风控墙浮现（2026-09-12 真机发现：墙的渲染晚于 2.5s，
+            # 单次检查会扑空 → 漏进收尾 → 对着被墙遮挡的按钮空点超时。≤12s 窗口）
+            wall_up = False
+            for _ in range(6):
+                page.wait_for_timeout(2000)
+                if _verify_wall(page):
+                    wall_up = True
+                    break
             # 发布也可能触发风控短信验证墙（真机实测：点发布后弹「接收短信验证码」）
-            if _verify_wall(page):
+            if wall_up:
                 code_file = (Path(a.sms_code_file).expanduser()
                              if getattr(a, "sms_code_file", None)
                              else DEFAULT_QR_OUT.parent / "douyin.code")
@@ -1122,16 +1230,36 @@ def _publish(a, kind: str) -> int:
             if published is None:
                 try:
                     page.wait_for_timeout(1500)
-                    if "post/video" in page.url or "post/image" in page.url:
-                        try:
-                            _click_publish(page)
-                        except SystemExit:
-                            pass
-                    _wait_toast(page, timeout_s=40)
-                    published = True
+                    if _verify_wall(page):
+                        # 收尾阶段才发现墙（渲染更晚）——立即进短信流程，绝不对着墙空点
+                        code_file = (Path(a.sms_code_file).expanduser()
+                                     if getattr(a, "sms_code_file", None)
+                                     else DEFAULT_QR_OUT.parent / "douyin.code")
+                        if not _handle_publish_sms(page, code_file, sf):
+                            _dump_publish_fail(page, "publish-sms-fail")
+                            published = False
+                    if published is None:
+                        if "post/video" in page.url or "post/image" in page.url:
+                            try:
+                                _click_publish(page)
+                            except SystemExit:
+                                pass
+                        _wait_toast(page, timeout_s=40)
+                        published = True
                 except (PWTimeout, PWError, SystemExit) as e:
-                    print(f"⚠️ 收尾阶段异常（{type(e).__name__}）——将重开浏览器核验是否已发布", file=sys.stderr)
+                    print(f"⚠️ 收尾阶段异常（{type(e).__name__}）——将读回作品列表核验", file=sys.stderr)
+                    _dump_publish_fail(page, "tail-anomaly")   # 点击后现场留档（诊断「发布未跳转」）
                     published = None
+            # 读回对账（权威判定）：界面判定只说明「提交动作被接受」，以平台侧作品列表为准。
+            if not a.keep_open and readback is None:
+                try:
+                    readback = platform_readback.verify_douyin_publish(
+                        page, title=a.title, since_ms=started_ms,
+                        limit=20, attempts=3, delay_s=10,
+                        snapshot_ids=snapshot_ids)
+                except Exception as e:  # noqa: BLE001
+                    print(f"⚠️ 就地读回失败（将重开核验）：{e}", file=sys.stderr)
+                    readback = None
         except PWTimeout:
             _dump_publish_fail(page, "publish-timeout")
             published = None
@@ -1144,12 +1272,19 @@ def _publish(a, kind: str) -> int:
                     ctx.close()
             except Exception:
                 pass
-        # 未确认（崩溃/超时）→ 重开一个干净 context 查内容管理页，确认到底发出去没有
-        if published is None:
-            published = _verify_published(p, a, a.title)
-    if published:
-        login_state.write_status(sf, "success", "发布成功")
-        print("✅ 抖音发布成功")
+        # 就地读回没拿到结论（崩溃/超时/通道错）→ 重开干净 context 读回核验
+        if readback is None or readback.outcome == "readback_error":
+            readback = _readback_verify(p, a, a.title, since_ms=started_ms,
+                                        snapshot_ids=snapshot_ids)
+    # 结算：以读回对账为权威（四档），界面判定仅作旁证。
+    outcome = readback.outcome if readback else "readback_error"
+    if outcome == "verified":
+        m = readback.matched
+        _acct = (readback.evidence or {}).get("account") or {}
+        _who = f"；账号：{_acct.get('display_name')}" if _acct.get("display_name") else ""
+        login_state.write_status(sf, "success",
+                                 f"发布成功（读回核验：作品 {m.platform_content_id}，{m.status}{_who}）")
+        print(f"✅ 抖音发布成功（读回核验：{m.platform_content_id}{_who}）")
         # 落统一内容日历（对话页自动；发布页由 web 设 AUTORECORD=0 跳过防重复）
         try:
             import calendar_ops
@@ -1159,8 +1294,18 @@ def _publish(a, kind: str) -> int:
         except Exception:
             pass
         return 0
-    login_state.write_status(sf, "error", "发布未确认成功（见 outputs/_login/douyin-publish-fail.* 或内容管理页）")
-    _die("发布未确认成功（内容管理页未见该作品；见截图/日志）", 5)
+    if outcome == "login_required":
+        login_state.write_status(sf, "error",
+                                 "发布未核验：读回时登录态已失效——请重新登录后到内容管理页核对是否已发出")
+        _die("读回核验时登录态已失效；请重新登录后核对内容管理页", 6)
+    if outcome == "unverified":
+        login_state.write_status(sf, "error",
+                                 "发布未确认：界面已操作完成，但读回作品列表未见本次内容（可能仍在索引/审核，或未真正发出）——请到内容管理页核对")
+        _die("发布未确认：读回作品列表未见本次内容（见内容管理页）", 5)
+    reason = getattr(readback, "error", None) or "读回通道异常"
+    login_state.write_status(sf, "error",
+                             f"发布未确认成功（{reason}；见 outputs/_login/douyin-publish-fail.* 或内容管理页）")
+    _die(f"发布未确认成功（{reason}；见截图/日志）", 5)
 
 
 def cmd_publish(a) -> int:
@@ -1254,12 +1399,36 @@ def cmd_selftest(_a) -> int:
     assert "verifying" in login_state.STATES
     # 短信多步流程常量齐备（选发码方式 / 触发发码 / 码错文案 / 弹窗定位 / 墙判定词）
     assert SMS_RECEIVE_OPTS and SMS_SEND_OPTS and SMS_ERROR_TEXTS and SMS_MODAL_SELS and WALL_KEYWORDS
+    assert any('second_verify' in s or 'second-verify' in s for s in SMS_MODAL_SELS)
     assert any("接收短信" in s for s in SMS_RECEIVE_OPTS)
     assert any("获取验证码" in s for s in SMS_SEND_OPTS)
     assert "验证码错误" in SMS_ERROR_TEXTS and "验证码已过期" in SMS_ERROR_TEXTS
     assert any("modal" in s for s in SMS_MODAL_SELS)
     assert "接收短信" in WALL_KEYWORDS and "身份验证" in WALL_KEYWORDS
-    print("✅ selftest 通过（短信选择器 + 弹窗定位 + 墙判定 + 路径/代理/路由 + plan + 验证码文件协议）")
+    # 读回对账模块（platform_readback）离线冒烟：标题+时间窗匹配语义 + 发前快照排除
+    from platform_readback import WorkItem, find_published_work, capture_douyin_snapshot
+    _now_ms = int(time.time() * 1000)
+    _w = WorkItem("1", "读回对账自检标题十二字", "published", _now_ms - 60_000)
+    assert find_published_work([_w], "读回对账自检", since_ms=_now_ms - 300_000) is _w
+    assert find_published_work([_w], "不相干标题", since_ms=None) is None
+    # 发前快照排除：发布前就存在（在快照里）的同标题作品不认；不在快照里的才认
+    assert find_published_work([_w], "读回对账自检", since_ms=None, exclude_ids={"1"}) is None
+    assert find_published_work([_w], "读回对账自检", since_ms=None, exclude_ids={"9"}) is _w
+    assert callable(capture_douyin_snapshot)
+    # 人类节奏（human_pace）：阶段区间齐备、采样有效、复核按内容加权
+    import human_pace
+    assert set(human_pace.HUMAN_PACE_RANGES) == {"task-switch", "field-switch", "verification", "review", "commit"}
+    for _st in human_pace.HUMAN_PACE_RANGES:
+        for _ in range(20):
+            assert human_pace.sample_ms(_st, 100) >= 0
+    assert human_pace.sample_ms("review", 0) >= 2000
+    assert human_pace.sample_ms("review", 5000) >= 10000     # 内容加权后明显抬升
+    # 单次提交契约（静态检查）：_click_publish 内含就绪等待 + 提交前停顿
+    import inspect as _ins
+    _src = _ins.getsource(_click_publish)
+    assert "_wait_publish_button_ready" in _src and "pause_before_commit" in _src
+    assert callable(_wait_publish_button_ready)
+    print("✅ selftest 通过（短信选择器 + 弹窗定位 + 墙判定 + 路径/代理/路由 + plan + 验证码文件协议 + 读回对账 + 发前快照 + 人类节奏 + 单次提交契约）")
     return 0
 
 

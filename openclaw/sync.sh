@@ -3,18 +3,19 @@ set -euo pipefail
 
 # Easel — 同步 SKILL + workspace 到 OpenClaw 的 easel 隔离 profile
 #
-# --profile easel 的实际路径：
-#   workspace → ~/.openclaw/workspace-easel/
+# --profile easel 的实际路径（以 ~/.openclaw-easel/openclaw.json 里 agents.defaults.workspace 为准）：
+#   workspace → ~/.openclaw-easel/workspace/   （2026.9.x 起 openclaw 用此布局，不再是 ~/.openclaw/workspace-easel）
 #   config    → ~/.openclaw-easel/openclaw.json
 #
 # 用法：bash openclaw/sync.sh
+# 可用 EASEL_OPENCLAW_WORKSPACE 覆盖（若将来 openclaw 布局又变）。
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 PROFILE="easel"
-# --profile easel 的 workspace 在 ~/.openclaw/workspace-easel/
-OPENCLAW_WORKSPACE_DST="$HOME/.openclaw/workspace-${PROFILE}"
+# agent 实际读取的 workspace（openclaw.json 里 workspace 字段），skills/shared/outputs 必须落在这里
+OPENCLAW_WORKSPACE_DST="${EASEL_OPENCLAW_WORKSPACE:-$HOME/.openclaw-${PROFILE}/workspace}"
 OPENCLAW_SKILL_DST="$OPENCLAW_WORKSPACE_DST/skills"
 OPENCLAW_WORKSPACE_SRC="$SCRIPT_DIR/workspace"
 OPENCLAW_SKILL_SRC="$PROJECT_ROOT/skills/openclaw"

@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   fetchPlatforms, startLogin, loginStatus, mediaUrl,
   accountWhoami, logoutAccount, submitLoginSms,
+  saveCredentials, getCredentials, startMpLogin, mpLoginStatus,
 } from '../lib/api';
 import type { AccountWhoami, PlatformItem } from '../lib/api';
 import { getWhoamiCache, setWhoamiCache, verifyStale } from '../lib/whoami';
@@ -92,6 +93,12 @@ export default function AccountsPage({ onNavigate, onNewProfile }: { onNavigate:
   const [filter, setFilter] = useState<Filter>('all');   // 全部 / 待处理 / 已接入
   // whoami 结果缓存到 localStorage：打开页面秒显示昵称/头像，不必每次都起浏览器校验
   const [whoami, setWhoami] = useState<Record<string, AccountWhoami | 'loading'>>(() => getWhoamiCache());
+  // 凭证式登录（微信公众号 AppID/AppSecret）
+  const [cred, setCred] = useState<{ platform: string; name: string } | null>(null);
+  const [credForm, setCredForm] = useState({ appId: '', appSecret: '', author: '' });
+  const [credBusy, setCredBusy] = useState(false);
+  const [credMsg, setCredMsg] = useState('');
+  const [credErr, setCredErr] = useState('');
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const bgPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const aliveRef = useRef(true);
@@ -123,7 +130,7 @@ export default function AccountsPage({ onNavigate, onNewProfile }: { onNavigate:
         const rows = Array.isArray(list) ? list : [];
         setPlatforms(rows);
         const targets = rows
-          .filter((p) => p.supported && p.backend !== 'biliup' && p.authKind === 'qrcode')
+          .filter((p) => p.supported && p.backend !== 'biliup' && p.backend !== 'wechat-oa' && p.authKind === 'qrcode')
           .map((p) => p.id);
         verifyStale(targets, {
           alive: () => aliveRef.current,
@@ -139,6 +146,18 @@ export default function AccountsPage({ onNavigate, onNewProfile }: { onNavigate:
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // 切回本标签页 / 窗口重新获得焦点时自动重拉账号态——登录/退出后即使漏了一次刷新，切回来也是最新的，
+  // 用户无需手动刷新页面。（登录中弹着二维码时不打扰，避免打断轮询。）
+  useEffect(() => {
+    const refresh = () => { if (document.visibilityState === 'visible' && !pollRef.current) load(); };
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', refresh);
+    return () => {
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', refresh);
+    };
+  }, [load]);
 
   const stopPoll = useCallback(() => {
     if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
@@ -195,8 +214,77 @@ export default function AccountsPage({ onNavigate, onNewProfile }: { onNavigate:
     }
   }, [smsCode]);
 
+  const openCred = useCallback((plat: PlatformItem) => {
+    setCred({ platform: plat.id, name: plat.name });
+    setCredForm({ appId: '', appSecret: '', author: '' });
+    setCredMsg(''); setCredErr('');
+    getCredentials(plat.id)
+      .then((c) => { if (aliveRef.current && c.configured) setCredMsg(`已配置：AppID ${c.appIdMasked}`); })
+      .catch(() => { /* 未配置，忽略 */ });
+  }, []);
+
+  const closeCred = useCallback(() => { setCred(null); setCredBusy(false); load(); }, [load]);
+
+  const submitCred = useCallback(async () => {
+    if (!cred) return;
+    const appId = credForm.appId.trim();
+    const appSecret = credForm.appSecret.trim();
+    if (!appId || !appSecret) { setCredErr('AppID 和 AppSecret 都要填'); return; }
+    setCredBusy(true); setCredErr(''); setCredMsg('');
+    try {
+      const r = await saveCredentials(cred.platform, { appId, appSecret, name: cred.name, author: credForm.author.trim() });
+      if (r.ok) {
+        runWhoami(cred.platform);
+        closeCred();
+      } else {
+        setCredErr(r.message || '验证未通过');
+      }
+    } catch (e) {
+      setCredErr(e instanceof Error ? e.message : '保存失败');
+    } finally {
+      setCredBusy(false);
+    }
+  }, [cred, credForm, runWhoami, closeCred]);
+
+  const handleMpLogin = useCallback(async (plat: PlatformItem) => {
+    setBusy(plat.id + ':mp');
+    setSmsCode(''); setSmsErr('');
+    qrPlatformRef.current = plat.id;
+    setQrNonce((n) => n + 1);
+    setWhoamiCache(plat.id, null);
+    setWhoami((w) => { const n = { ...w }; delete n[plat.id]; return n; });
+    stopBgPoll();
+    try {
+      const res = await startMpLogin(plat.id);
+      setQr({ platform: plat.id, name: plat.name, state: res.state || 'starting',
+              message: res.message || '', qr: res.qr || '', qrTs: res.qrTs });
+      stopPoll();
+      pollRef.current = setInterval(async () => {
+        try {
+          const s = await mpLoginStatus(plat.id);
+          setQr((prev) => prev && ({ ...prev, state: s.state, message: s.message, qr: s.qr, qrTs: s.qrTs }));
+          if (['success', 'expired', 'error'].includes(s.state)) {
+            stopPoll();
+            if (s.state === 'success') {
+              setPlatforms((list) => (list || []).map((x) => x.id === plat.id ? { ...x, loggedIn: true } : x));
+              setWhoami((w) => { const n = { ...w }; delete n[plat.id]; return n; });
+              setWhoamiCache(plat.id, null);
+              runWhoami(plat.id);
+              load();
+            }
+          }
+        } catch { /* 忽略单次轮询失败 */ }
+      }, 2000);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : '启动后台登录失败');
+    } finally {
+      setBusy('');
+    }
+  }, [stopPoll, stopBgPoll, runWhoami, load]);
+
   const handleLogin = useCallback(async (p: PlatformItem) => {
     if (!p.supported) return;
+    if (p.backend === 'wechat-oa') { void handleMpLogin(p); return; }
     setTerminalMsg('');
     setBusy(p.id);
     setSmsCode(''); setSmsErr('');
@@ -211,6 +299,7 @@ export default function AccountsPage({ onNavigate, onNewProfile }: { onNavigate:
         setTerminalMsg(res.message || '请在终端登录');
         return;
       }
+      if (res.mode === 'credentials') { openCred(p); return; }
       setQr({ platform: p.id, name: p.name, state: res.state || 'starting',
               message: res.message || '', qr: res.qr || '' });   // qrTs 由随后的轮询填入
       stopPoll();
@@ -229,13 +318,14 @@ export default function AccountsPage({ onNavigate, onNewProfile }: { onNavigate:
     } finally {
       setBusy('');
     }
-  }, [stopPoll, stopBgPoll, runWhoami]);
+  }, [stopPoll, stopBgPoll, runWhoami, handleMpLogin, openCred]);
 
   const handleLogout = useCallback(async (p: PlatformItem) => {
     if (!window.confirm(`确定退出「${p.name}」的登录？登录态将被清除，下次发布需重新扫码。`)) return;
     setLogoutBusy(p.id);
     try {
       await logoutAccount(p.id);
+      setPlatforms((list) => (list || []).map((x) => x.id === p.id ? { ...x, loggedIn: false } : x));
       setWhoami((w) => { const n = { ...w }; delete n[p.id]; return n; });
       setWhoamiCache(p.id, null);
       load();
@@ -246,8 +336,10 @@ export default function AccountsPage({ onNavigate, onNewProfile }: { onNavigate:
     }
   }, [load]);
 
-  // 卡片真实登录态：whoami 权威（已返回则以它为准，自愈假阳性），否则用后端 last-known
+  // 卡片真实登录态：whoami 权威（已返回则以它为准，自愈假阳性），否则用后端 last-known。
+  // 公众号(wechat-oa)例外：后端查 mp 会话即真值(快且权威)，直接用它，避免浏览器里过期的 whoami 缓存把已登录盖成未登录。
   const effLoggedIn = (p: PlatformItem): boolean => {
+    if (p.backend === 'wechat-oa') return p.loggedIn;
     const w = whoami[p.id];
     if (w && w !== 'loading') return w.loggedIn;
     return p.loggedIn;
@@ -267,6 +359,51 @@ export default function AccountsPage({ onNavigate, onNewProfile }: { onNavigate:
 
   // 卡片操作区：有独立工作区 → 进入工作区；有外链 → 打开外部服务；否则走扫码登录 / 校验 / 退出
   const actions = (p: PlatformItem) => {
+    if (p.backend === 'wechat-oa') {
+      const w = whoami[p.id];
+      const logged = effLoggedIn(p);
+      const starting = busy === p.id || busy === p.id + ':mp';
+      return (
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', width: '100%' }}>
+          {logged ? (
+            <>
+              <button className="btn btn-sm" style={{ flex: 1 }}
+                disabled={starting || w === 'loading'}
+                onClick={() => runWhoami(p.id)}>
+                {w === 'loading' ? '校验中…' : '校验账号'}
+              </button>
+              <button className="btn btn-sm btn-ghost" style={{ flex: 1 }}
+                disabled={logoutBusy === p.id}
+                onClick={() => handleLogout(p)}>
+                {logoutBusy === p.id ? '退出中…' : '退出登录'}
+              </button>
+              {p.workspace ? (
+                <button className="btn btn-sm btn-primary btn-block" onClick={() => onNavigate(p.workspace as Page)}>
+                  进入工作区 →
+                </button>
+              ) : null}
+            </>
+          ) : (
+            <>
+              <button
+                className={`btn btn-block ${p.supported ? 'btn-primary' : ''}`}
+                disabled={!p.supported || starting}
+                onClick={() => handleMpLogin(p)}>
+                {starting ? '启动中…' : '登录'}
+              </button>
+              {p.workspace ? (
+                <button className="btn btn-sm btn-ghost btn-block" onClick={() => onNavigate(p.workspace as Page)}>
+                  工作区（官方 API）
+                </button>
+              ) : null}
+              <button className="btn btn-sm btn-ghost btn-block" onClick={() => openCred(p)}>
+                填 AppID（备用）
+              </button>
+            </>
+          )}
+        </div>
+      );
+    }
     if (p.workspace) {
       return (
         <button className="btn btn-sm btn-primary btn-block" onClick={() => onNavigate(p.workspace as Page)}>
@@ -396,11 +533,10 @@ export default function AccountsPage({ onNavigate, onNewProfile }: { onNavigate:
           {/* 引导只在「一个都没接入」时出现（空状态），有账号即收敛为上面的汇总行 */}
           {doneCount === 0 && !err && (
             <div className="notice-hint">
-              还没有接入任何通道。建议从上往下走：先扫码登录内容平台 → 再填公众号凭据 → 最后连 Postiz 中转。
+              还没有接入任何通道。建议从上往下走：先扫码登录内容平台（公众号扫后台二维码）→ 需要官方 API 时再进工作区填凭据 → 最后连 Postiz 中转。
               {firstTodo && <> 也可以直接点下面 <b>{firstTodo.name}</b> 卡片的「登录」开始。</>}
             </div>
           )}
-
           {total > 1 && (
             <div className="chip-row">
               {FILTERS.map(([key, label]) => (
@@ -497,6 +633,41 @@ export default function AccountsPage({ onNavigate, onNewProfile }: { onNavigate:
             )}
             <div style={{ marginTop: 16 }}>
               <button className="btn" onClick={closeQr}>{qr.state === 'success' ? '完成' : '关闭'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {cred && (
+        <div className="overlay" onClick={closeCred}>
+          <div className="modal" style={{ width: 420, maxWidth: '100%' }} onClick={(e) => e.stopPropagation()}>
+            <h3 style={{ margin: '0 0 4px' }}>配置 {cred.name}</h3>
+            <div style={{ fontSize: 12.5, color: 'var(--text-secondary)', marginBottom: 14, lineHeight: 1.6 }}>
+              公众号用官方接口发布，需填开发者凭证（公众平台 → 设置与开发 → 开发接口管理）。<br />
+              ⚠️ 需把本服务器出口 IP 加入公众号「IP 白名单」，否则报 40164。文章发到<b>草稿箱</b>，群发请到 mp 后台确认。
+            </div>
+            {credMsg && <div style={{ fontSize: 12.5, color: 'var(--green)', marginBottom: 10 }}>{credMsg}</div>}
+            <label style={{ fontSize: 12, color: 'var(--text-secondary)' }}>AppID</label>
+            <input value={credForm.appId} autoFocus
+              onChange={(e) => setCredForm((f) => ({ ...f, appId: e.target.value.trim() }))}
+              placeholder="wx..." style={{ width: '100%', boxSizing: 'border-box', padding: '9px 12px',
+                margin: '4px 0 12px', border: '1px solid var(--border)', borderRadius: 8, fontSize: 14 }} />
+            <label style={{ fontSize: 12, color: 'var(--text-secondary)' }}>AppSecret</label>
+            <input value={credForm.appSecret} type="password"
+              onChange={(e) => setCredForm((f) => ({ ...f, appSecret: e.target.value.trim() }))}
+              placeholder="开发者密钥（不会回显）" style={{ width: '100%', boxSizing: 'border-box', padding: '9px 12px',
+                margin: '4px 0 12px', border: '1px solid var(--border)', borderRadius: 8, fontSize: 14 }} />
+            <label style={{ fontSize: 12, color: 'var(--text-secondary)' }}>默认作者（可选）</label>
+            <input value={credForm.author}
+              onChange={(e) => setCredForm((f) => ({ ...f, author: e.target.value }))}
+              placeholder="文章署名" style={{ width: '100%', boxSizing: 'border-box', padding: '9px 12px',
+                margin: '4px 0 4px', border: '1px solid var(--border)', borderRadius: 8, fontSize: 14 }} />
+            {credErr && <div style={{ color: 'var(--red)', fontSize: 12.5, marginTop: 8 }}>{credErr}</div>}
+            <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
+              <button className="btn btn-primary" style={{ flex: 1 }} disabled={credBusy} onClick={submitCred}>
+                {credBusy ? '验证中…' : '保存并验证'}
+              </button>
+              <button className="btn" onClick={closeCred}>关闭</button>
             </div>
           </div>
         </div>

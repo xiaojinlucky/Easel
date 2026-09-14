@@ -19,10 +19,13 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 import sqlite3
+import subprocess
 import sys
 import threading
 import time
+from functools import lru_cache
 from pathlib import Path
 
 # --- path resolution -------------------------------------------------------
@@ -54,6 +57,45 @@ GATEWAY_PROTOCOL_MAX = 4
 CLIENT_ID = "cli"
 CLIENT_VERSION = "2026.9.2"
 
+# The gateway question.* RPC surface (ask_user option cards) was introduced in
+# the 2026.9.x line. On older gateways those methods answer INVALID_REQUEST and,
+# worse, each connect attempt raises a fresh scope-upgrade pairing request. So
+# on <2026.9 we skip the bridge entirely rather than poke the gateway per turn.
+QUESTION_RPC_MIN_VERSION = (2026, 9, 0)
+
+
+@lru_cache(maxsize=1)
+def _openclaw_version() -> tuple[int, int, int] | None:
+    """Best-effort parse of `openclaw --version` → (year, month, patch)."""
+    try:
+        from .openclaw_cmd import openclaw_base_cmd
+
+        result = subprocess.run(
+            openclaw_base_cmd() + ["--version"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode != 0:
+            return None
+        m = re.search(r"(\d+)\.(\d+)\.(\d+)", result.stdout)
+        if not m:
+            return None
+        return (int(m.group(1)), int(m.group(2)), int(m.group(3)))
+    except Exception:
+        return None
+
+
+def question_bridge_supported() -> bool:
+    """Whether this OpenClaw version exposes the question.* RPC.
+
+    Unknown/unparseable version → assume supported (fail open): the caller's
+    runtime circuit breaker still catches a persistently failing connect, so we
+    don't silently disable cards on a version string we merely couldn't parse.
+    """
+    ver = _openclaw_version()
+    if ver is None:
+        return True
+    return ver >= QUESTION_RPC_MIN_VERSION
+
 
 def _client_identity() -> dict:
     """Client metadata tuple, mirroring OpenClaw's own platform mapping.
@@ -82,53 +124,121 @@ class GatewayQuestionError(RuntimeError):
     pass
 
 
+class GatewayUnsupportedError(GatewayQuestionError):
+    """The gateway does not expose the question RPC surface.
+
+    OpenClaw only added the `question.*` RPCs (backing ask_user cards) in the
+    2026.9.x line. On older gateways (e.g. 2026.6.x) those methods answer
+    INVALID_REQUEST; there is simply nothing to poll, so the bridge degrades to
+    a quiet no-op instead of erroring on every turn.
+    """
+
+
 # --- device identity -------------------------------------------------------
+
+# Device identity file written by OpenClaw's loadOrCreateDeviceIdentity
+# (state/identity/device.json): {version, deviceId, publicKeyPem,
+# privateKeyPem, createdAtMs}. This is the authoritative store in current
+# OpenClaw; the legacy `device_identities` DB table is vestigial (present in
+# the DDL but no longer populated), which is why reading it raised
+# "no primary device identity in gateway db" on 2026.9.4.
+DEVICE_IDENTITY_FILE = PROFILE_STATE_DIR / "identity" / "device.json"
 
 _DEVICE_CACHE: dict | None = None
 _DEVICE_LOCK = threading.Lock()
 
 
+def _raw_pubkey_b64url(public_key_pem: str) -> str:
+    """Derive the raw base64url Ed25519 public key from a PEM (the on-wire form
+    the gateway pairing layer stores/compares), mirroring OpenClaw's
+    publicKeyRawBase64UrlFromPem."""
+    from cryptography.hazmat.primitives import serialization
+
+    pub = serialization.load_pem_public_key(public_key_pem.encode())
+    raw = pub.public_bytes(
+        serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+
+def _load_device_from_file() -> dict | None:
+    """Load identity from state/identity/device.json (current OpenClaw store).
+
+    Under Easel's gateway config (auth.mode=none, loopback) the operator token
+    is not required — silent local pairing accepts an empty token — so we do
+    not need the DB's device_auth_tokens row here.
+    """
+    if not DEVICE_IDENTITY_FILE.is_file():
+        return None
+    try:
+        data = json.loads(DEVICE_IDENTITY_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    device_id = data.get("deviceId")
+    private_key_pem = data.get("privateKeyPem")
+    public_key_pem = data.get("publicKeyPem")
+    if not (device_id and private_key_pem and public_key_pem):
+        return None
+    return {
+        "device_id": device_id,
+        "private_key_pem": private_key_pem,
+        "public_key": _raw_pubkey_b64url(public_key_pem),
+        "token": "",
+    }
+
+
+def _load_device_from_db() -> dict | None:
+    """Legacy fallback: read identity from the device_identities DB table.
+
+    Populated by older OpenClaw builds (~2026.9.2) that had not yet moved the
+    identity to a file. Returns None when the table/rows are absent so the file
+    loader stays the primary path.
+    """
+    if not PROFILE_DB.is_file():
+        return None
+    con = sqlite3.connect(f"file:{PROFILE_DB}?mode=ro", uri=True)
+    try:
+        cur = con.cursor()
+        try:
+            cur.execute(
+                "SELECT device_id, public_key_pem, private_key_pem "
+                "FROM device_identities WHERE identity_key='primary'")
+        except sqlite3.OperationalError:
+            return None  # table doesn't exist on this schema
+        row = cur.fetchone()
+        if not row:
+            return None
+        device_id, public_key_pem, private_key_pem = row
+        cur.execute(
+            "SELECT token FROM device_auth_tokens WHERE device_id=? AND role='operator'",
+            (device_id,))
+        tok = cur.fetchone()
+        cur.execute(
+            "SELECT public_key FROM device_pairing_paired WHERE device_id=?",
+            (device_id,))
+        prow = cur.fetchone()
+    finally:
+        con.close()
+    raw_pub = prow[0] if prow else _raw_pubkey_b64url(public_key_pem)
+    return {
+        "device_id": device_id,
+        "private_key_pem": private_key_pem,
+        "public_key": raw_pub,
+        "token": tok[0] if tok else "",
+    }
+
+
 def _load_device() -> dict:
-    """Load the paired CLI device identity + auth token from the state DB."""
+    """Load the CLI device identity (file first, legacy DB table as fallback)."""
     global _DEVICE_CACHE
     with _DEVICE_LOCK:
         if _DEVICE_CACHE is not None:
             return _DEVICE_CACHE
-        if not PROFILE_DB.is_file():
+        dev = _load_device_from_file() or _load_device_from_db()
+        if dev is None:
             raise GatewayQuestionError(
-                f"gateway state db not found: {PROFILE_DB}")
-        con = sqlite3.connect(f"file:{PROFILE_DB}?mode=ro", uri=True)
-        try:
-            cur = con.cursor()
-            cur.execute(
-                "SELECT device_id, public_key_pem, private_key_pem "
-                "FROM device_identities WHERE identity_key='primary'")
-            row = cur.fetchone()
-            if not row:
-                raise GatewayQuestionError("no primary device identity in gateway db")
-            device_id, public_key_pem, private_key_pem = row
-            cur.execute(
-                "SELECT token FROM device_auth_tokens WHERE device_id=? AND role='operator'",
-                (device_id,))
-            tok = cur.fetchone()
-            if not tok:
-                raise GatewayQuestionError("no operator auth token for primary device")
-            # raw base64url public key (as stored in device_pairing_paired)
-            cur.execute(
-                "SELECT public_key FROM device_pairing_paired WHERE device_id=?",
-                (device_id,))
-            prow = cur.fetchone()
-            raw_pub = prow[0] if prow else None
-        finally:
-            con.close()
-        if not raw_pub:
-            raise GatewayQuestionError("paired public key not found")
-        _DEVICE_CACHE = {
-            "device_id": device_id,
-            "private_key_pem": private_key_pem,
-            "public_key": raw_pub,
-            "token": tok[0],
-        }
+                f"no device identity found (looked in {DEVICE_IDENTITY_FILE} "
+                f"and {PROFILE_DB}); run the gateway once to create it")
+        _DEVICE_CACHE = dev
         return _DEVICE_CACHE
 
 
@@ -160,8 +270,12 @@ class GatewayClient:
         import websocket  # noqa: F401
 
         dev = _load_device()
+        # suppress_origin: websocket-client otherwise auto-sends an Origin
+        # header, which the gateway reads as a browser request and refuses to
+        # silent-local-pair (NOT_PAIRED). A CLI operator must present no Origin.
         ws = self._ws_lib.create_connection(
-            f"ws://{GATEWAY_HOST}:{GATEWAY_PORT}", timeout=self.timeout)
+            f"ws://{GATEWAY_HOST}:{GATEWAY_PORT}", timeout=self.timeout,
+            suppress_origin=True)
         try:
             first = json.loads(ws.recv())
             if first.get("event") != "connect.challenge":
@@ -235,8 +349,15 @@ class GatewayClient:
             msg = json.loads(self.ws.recv())
             if msg.get("id") == req_id:
                 if not msg.get("ok", False):
-                    raise GatewayQuestionError(
-                        f"{method} failed: {json.dumps(msg.get('error'))[:200]}")
+                    err = msg.get("error") or {}
+                    detail = json.dumps(err)[:200]
+                    # An unknown method surfaces as INVALID_REQUEST here (the
+                    # question RPCs don't exist pre-2026.9.x). Flag it so callers
+                    # can quietly disable the bridge instead of retrying forever.
+                    if err.get("code") == "INVALID_REQUEST":
+                        raise GatewayUnsupportedError(
+                            f"{method} not supported by this gateway: {detail}")
+                    raise GatewayQuestionError(f"{method} failed: {detail}")
                 return msg.get("payload")
         raise GatewayQuestionError(f"{method} timed out")
 

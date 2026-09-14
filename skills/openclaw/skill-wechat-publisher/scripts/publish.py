@@ -20,6 +20,7 @@ import re
 import json
 import argparse
 import tempfile
+import uuid
 from pathlib import Path
 from typing import Optional
 
@@ -163,6 +164,39 @@ def _default_temp_dir() -> str:
     return tempfile.mkdtemp(prefix="wechat_images_")
 
 
+def _session_publish_html(html_content, cover_path, title, digest="", author="", base_dir=None):
+    """会话式发布：把 HTML 写进 base_dir（让正文相对图能被解析），调
+    shared/scripts/weixin_mp_stats.py publish（走公众号后台会话，免 app_secret/免 IP 白名单，
+    正文内嵌图自动传 mp CDN）。返回 {media_id,...}。"""
+    import subprocess as _sp
+    import os as _os
+    shared = Path(__file__).resolve().parents[3] / "shared" / "scripts"
+    base = Path(base_dir) if base_dir else Path(_default_temp_dir())
+    base.mkdir(parents=True, exist_ok=True)
+    # 只需一个随机文件名，别再调 _default_temp_dir()（它会 mkdtemp 真建目录，
+    # 每次发布遗留一个空的 wechat_images_XXXX/）。用 uuid 取随机名即可。
+    html_tmp = base / f".session_{uuid.uuid4().hex}.html"
+    html_tmp.write_text(html_content, encoding="utf-8")
+    # 默认直连（mp 为国内站）；受限网络可用 EASEL_PROXY / https_proxy 指定正向代理
+    proxy = _os.environ.get("EASEL_PROXY") or _os.environ.get("https_proxy") or ""
+    cmd = [sys.executable, str(shared / "weixin_mp_stats.py"), "publish", "--proxy", proxy,
+           "--html", str(html_tmp), "--cover", str(cover_path), "--title", title,
+           "--digest", digest or "", "--author", author or ""]
+    proc = _sp.run(cmd, capture_output=True, text=True, timeout=300)
+    for line in reversed((proc.stdout or "").strip().splitlines()):
+        line = line.strip()
+        if line.startswith("{"):
+            try:
+                res = json.loads(line)
+            except Exception:
+                continue
+            if res.get("success"):
+                return {"media_id": res.get("media_id", ""), "status": "success",
+                        "via": "session", "thumb_media_id": res.get("thumb_media_id", "")}
+            raise RuntimeError(f"会话式发布失败：{res.get('error') or res}")
+    raise RuntimeError(f"会话式发布无有效返回：{(proc.stderr or proc.stdout or '')[-300:]}")
+
+
 # ============================================================
 # 发布主流程
 # ============================================================
@@ -182,6 +216,7 @@ def publish_from_markdown(
     ai_score_threshold: float = None,  # None → use ai_score.DEFAULT_THRESHOLD
     skip_ai_score: bool = False,
     allow_missing_images: bool = False,
+    session_mode: bool = True,
     debug: bool = False,
 ):
     """
@@ -288,6 +323,30 @@ def publish_from_markdown(
         exec_mode=True,
         label="微信公众号草稿内容",
     )
+
+    # 3.5 会话式发布（默认）：MD→公众号HTML(保留本地图引用) → 后台会话建草稿，免 app_secret / 免 IP 白名单。
+    #      正文内嵌图与封面由会话发布器自行上传 mp CDN；不走官方 API 的 process_article_images / draft_add。
+    if session_mode:
+        print("\n[会话式发布] 走公众号后台会话（免 AppID/IP 白名单）...")
+        styles, highlights, divider_text, list_style = load_theme(theme_name=theme, style_path=style_path)
+        content_md = remove_title_from_content(md_content)
+        html_content = convert_markdown_to_wechat_html(content_md, styles, highlights, divider_text, list_style)
+        cov = cover_path
+        if not cov:
+            imgs = extract_images_from_markdown(content_md)
+            cov = imgs[0]["url"] if imgs else None
+            if cov and not Path(cov).is_absolute():
+                cov = str((md_path.parent / cov))
+        if not cov or not Path(cov).exists():
+            print("  错误：需要封面图（--cover 或正文第一张本地图片）"); sys.exit(1)
+        result = _session_publish_html(html_content, cov, title, digest, author or "",
+                                       base_dir=md_path.parent)
+        print("\n" + "=" * 60)
+        print("发布完成（会话式）！")
+        print(f"  草稿 media_id: {result['media_id']}")
+        print("  请登录微信公众平台查看草稿箱")
+        print("=" * 60)
+        return result
 
     # 4. 验证API连接
     print("\n[步骤1] 验证API连接...")
@@ -725,6 +784,12 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="确认创建微信草稿；默认仅预览将使用的账号、模式和输入文件",
     )
+    parser.add_argument(
+        "--official-api",
+        action="store_true",
+        help="回退到官方 API 发布（需 app_id/app_secret + IP 白名单）；"
+             "默认走公众号后台会话发布（免 secret、免白名单，需先扫码登录后台）",
+    )
     return parser
 
 
@@ -823,14 +888,21 @@ def main():
                 "--html 模式不支持多平台同步(HTML 已是微信专用排版)。"
                 "如需同步请改用 --input <markdown>。"
             )
-        result = publish_from_html(
-            html_path=args.html,
-            title=args.title,
-            cover_path=args.cover,
-            author=args.author,
-            digest=args.digest or "",
-            source_url=args.source_url,
-        )
+        if not args.official_api:
+            # 会话式：直接把已排版 HTML 走后台会话建草稿（免 secret/白名单）
+            html_content = Path(args.html).read_text(encoding="utf-8")
+            result = _session_publish_html(html_content, args.cover, args.title,
+                                           args.digest or "", args.author or "",
+                                           base_dir=Path(args.html).parent)
+        else:
+            result = publish_from_html(
+                html_path=args.html,
+                title=args.title,
+                cover_path=args.cover,
+                author=args.author,
+                digest=args.digest or "",
+                source_url=args.source_url,
+            )
     elif args.input:
         result = publish_from_markdown(
             md_path=args.input,
@@ -846,6 +918,7 @@ def main():
             ai_score_threshold=args.ai_score_threshold,
             skip_ai_score=args.skip_ai_score,
             allow_missing_images=args.allow_missing_images,
+            session_mode=not args.official_api,
             debug=args.debug,
         )
     else:

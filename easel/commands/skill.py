@@ -63,7 +63,13 @@ def _resolve_input(raw_input: str) -> str:
                       ".ogg", ".webm", ".mkv", ".avi", ".pdf", ".zip",
                       ".gz", ".tar", ".7z", ".rar"):
             return f"请处理这个文件：{p.resolve()}"
-        return p.read_text(encoding="utf-8")
+        # 文本类后缀（.csv/.txt/.docx 等）不在上面二进制白名单里，但可能并非 UTF-8
+        # （国内常见 GBK / UTF-16）→ read_text 会抛 UnicodeDecodeError 使整个 skill 崩。
+        # 回退成只传路径，与二进制分支同义，交由上层 SKILL/Agent 自行处理。
+        try:
+            return p.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            return f"请处理这个文件：{p.resolve()}"
     return raw_input
 
 

@@ -79,8 +79,10 @@ export default function DashboardPage({ persona, gatewayStatus, onNavigate, onUs
       const isLog = (p: AnalyticsPlatform) => p.loggedIn || !!cache[p.platform]?.loggedIn;
       const first = ps.find(isLog);
       if (first) setAnaSel((s) => s || first.platform);
-      // 开页后台自愈：对非 B 站的归因平台真校验（whoami），刷新登录态；B 站走 cookie 判定不必。
-      verifyStale(ps.filter((p) => p.platform !== 'bilibili').map((p) => p.platform), {
+      // 开页后台自愈：对非 API 式的归因平台真校验（whoami），刷新登录态；
+      // B 站走 cookie、公众号走凭证/官方 API 判定，都不起浏览器。
+      const API_BASED = new Set(['bilibili', 'wechat-oa']);
+      verifyStale(ps.filter((p) => !API_BASED.has(p.platform)).map((p) => p.platform), {
         onUpdate: (platform, r) => {
           setWhoamiMap((m) => ({ ...m, [platform]: r }));
           if (r.loggedIn) setAnaSel((s) => s || platform);
