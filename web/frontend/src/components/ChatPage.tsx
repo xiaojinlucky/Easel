@@ -2,8 +2,8 @@ import { useState, useRef, useEffect } from 'react';
 import MessageBubble from './MessageBubble';
 import QuestionCards from './QuestionCards';
 import type { ChatSession, ChatMessage, StreamState } from '../lib/store';
-import { uploadFiles } from '../lib/api';
-import type { UploadedFile } from '../lib/api';
+import { uploadFiles, fetchPendingQuestions } from '../lib/api';
+import type { UploadedFile, ChatQuestion } from '../lib/api';
 import { IconArrowUp, IconStop, IconPlus, IconFile } from './icons';
 
 interface ChatPageProps {
@@ -43,8 +43,32 @@ export default function ChatPage({ session, stream, onSend, onStop, onResend, on
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const [restoredQuestions, setRestoredQuestions] = useState<ChatQuestion[]>([]);
   const isStreaming = !!stream;
   const isEmpty = session.messages.length === 0 && !isStreaming;
+
+  useEffect(() => {
+    let alive = true;
+    const load = () => {
+      void fetchPendingQuestions(session.id).then((qs) => {
+        if (alive) setRestoredQuestions(qs);
+      });
+    };
+    load();
+    const timer = window.setInterval(load, 2500);
+    return () => { alive = false; window.clearInterval(timer); };
+  }, [session.id]);
+
+  const visibleQuestions = (() => {
+    const seen = new Set<string>();
+    const out: ChatQuestion[] = [];
+    for (const q of [...(stream?.questions || []), ...restoredQuestions]) {
+      if (!q?.id || seen.has(q.id)) continue;
+      seen.add(q.id);
+      out.push(q);
+    }
+    return out;
+  })();
 
   const doUpload = async (fs: FileList | File[]) => {
     const arr = Array.from(fs);
@@ -139,8 +163,8 @@ export default function ChatPage({ session, stream, onSend, onStop, onResend, on
     </div>
   );
 
-  // ---- 空态：居中欢迎页 ----
-  if (isEmpty) {
+  // ---- 空态：居中欢迎页（有待答卡片时不走空态，否则重启后卡片不可见）----
+  if (isEmpty && visibleQuestions.length === 0) {
     return (
       <div className="chat-page">
         <div className="chat-hero">
@@ -216,8 +240,11 @@ export default function ChatPage({ session, stream, onSend, onStop, onResend, on
               />
             );
           })}
-          {isStreaming && (stream!.questions?.length ?? 0) > 0 && (
-            <QuestionCards questions={stream!.questions || []} onDone={(qid) => onQuestionAnswered?.(qid)} />
+          {visibleQuestions.length > 0 && (
+            <QuestionCards questions={visibleQuestions} onDone={(qid) => {
+              setRestoredQuestions((prev) => prev.filter((q) => q.id !== qid));
+              onQuestionAnswered?.(qid);
+            }} />
           )}
           <div ref={messagesEndRef} />
         </div>

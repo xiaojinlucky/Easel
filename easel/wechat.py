@@ -355,6 +355,28 @@ def analytics(account: str, when: str) -> dict[str, Any]:
 
 
 
+def publish_draft(account: str, media_id: str) -> dict[str, Any]:
+    """Submit an existing draft to the official freepublish API."""
+    account = _safe_account_key(account)
+    media_id = str(media_id or "").strip()
+    if not media_id or len(media_id) > 128:
+        raise WechatError("缺少有效的草稿 media_id。")
+    result = run_worker({"op": "publish", "account": account, "media_id": media_id}, timeout=120)
+    publish_id = result.get("publish_id")
+    receipt = {
+        "account": account,
+        "media_id": media_id,
+        "publish_id": publish_id,
+        "status": "publish_submitted",
+        "created_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+    }
+    with _STATE_LOCK:
+        state = _load_state()
+        state["history"].setdefault(account, []).append(receipt)
+        _write_state(state)
+    return {"ok": True, "account": account, "media_id": media_id, "publish_id": publish_id, "status": "publish_submitted", "receipt": receipt}
+
+
 def onboard(account: str) -> dict[str, Any]:
     account = _safe_account_key(account)
     result = run_worker({"op": "onboard", "account": account}, timeout=180)

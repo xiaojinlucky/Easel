@@ -10,6 +10,22 @@
 
 账号凭据保存在已忽略的 `skills/openclaw/skill-wechat-publisher/wechat-publisher.yaml`，不写入前端本地存储。账号或密钥改变会清除该账号的令牌缓存。
 
+## 账号凭据文件怎么填
+
+两条路，写的是**同一份文件**，改完即生效、无需重启：
+
+1. 界面（推荐）：侧栏「社交媒体平台」→ 微信公众号 → 填 AppID / AppSecret → 「保存并连接账号」。
+2. 直接编辑该 YAML：参考同目录 `wechat-publisher.yaml.example`，把每个账号的 `app_id` / `app_secret` 填上。
+
+`app_id` 与 `app_secret` **两项都填**才算「已配置」，平台卡片才会显示已就绪；留空时卡片提示「账号存在但未填全 AppID / AppSecret」，不会拿空凭据去调接口。
+
+两点已知前提：
+
+- 公众号后台要把本机出口 IP 加进「接口权限 → IP 白名单」，否则取 access_token 报 `40164`。这一步只能人工在公众号后台做。
+- 从界面保存时，后端用 `yaml.safe_dump` 整体重写该文件：**字段会保留（含未知字段），但文件里的注释会被清掉**。所以配置说明写在本文件与 `wechat-publisher.yaml.example` 里，不要只写在 YAML 注释中。
+
+该文件与 `.runtime/wechat-state.json` 同时被 `scripts/backup_accounts.py`（账号态轻量备份）纳入，见 `docs/BACKUP_RESTORE.md`。
+
 ## 排版与草稿箱
 
 无需凭据即可生成本地 Markdown / HTML 排版预览。正文在切页后保留。可以从内容库选择独立封面，插入正文图片；送草稿前验证全部本地图片并上传，复用现有 skill-wechat-publisher。外链图片需要先导入内容库。

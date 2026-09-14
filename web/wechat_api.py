@@ -148,6 +148,19 @@ async def wechat_analytics(request: AnalyticsRequest) -> dict[str, Any]:
 
 
 
+class PublishRequest(BaseModel):
+    account: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
+    media_id: str = Field(min_length=1, max_length=128)
+
+
+@router.post("/publish")
+async def wechat_publish(request: PublishRequest) -> dict[str, Any]:
+    try:
+        return await asyncio.to_thread(wechat.publish_draft, request.account, request.media_id)
+    except wechat.WechatError as exc:
+        raise _safe_http_error(exc, 422) from exc
+
+
 @router.post("/onboard")
 async def wechat_onboard(request: AccountCheck) -> dict[str, Any]:
     try:

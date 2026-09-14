@@ -117,11 +117,15 @@ def test_failed_refresh_preserves_previous_asset(local_state):
 
 
 def test_clipper_pairing_cors_and_persistence(local_state):
-    client=TestClient(web.app,base_url='http://127.0.0.1:7860')
+    client=TestClient(web.app,base_url='http://127.0.0.1:7860',client=('127.0.0.1',51234))
     body={'title':'选区摘录','url':'https://example.com/article','content':'保留来源的用户选区'}
+    local={'Origin':'http://127.0.0.1:7860'}
+    remote=TestClient(web.app,base_url='http://127.0.0.1:7860',client=('192.168.1.9',51234))
     assert client.post('/api/research/clipper-pair',headers={'Origin':'https://evil.example'}).status_code==403
-    assert client.post('/api/clipper',json=body).status_code==401
-    token=client.post('/api/research/clipper-pair').json()['token']
+    assert remote.post('/api/clipper',json=body).status_code==403        # 无 Origin 且非本机 → 守卫拦
+    assert client.post('/api/clipper',json=body).status_code==401        # 无 Origin 但在本机 → 放行，缺扩展令牌故 401
+    assert client.post('/api/clipper',json=body,headers=local).status_code==401
+    token=client.post('/api/research/clipper-pair',headers=local).json()['token']
     origin='chrome-extension://'+'a'*32
     response=client.post('/api/clipper',json=body,headers={'Origin':origin,'Authorization':'Bearer '+token})
     assert response.status_code==200
@@ -163,9 +167,10 @@ def test_postiz_rejects_nonmedia_without_upload(monkeypatch, local_state):
     monkeypatch.setattr(web, 'OUTPUTS_DIR', local_state)
     (local_state / 'document.md').write_text('Local draft', encoding='utf-8')
     monkeypatch.setattr(postiz, 'upload', lambda _: pytest.fail('Nonmedia must not reach Postiz'))
+    origin = {'Origin': 'http://localhost:7860'}
     with TestClient(web.app, base_url='http://localhost') as client:
-        assert client.post('/api/publishing/postiz/media', json={'path': 'document.md'}).status_code == 422
-        assert client.post('/api/publishing/postiz/media', json={'path': '../outside.png'}).status_code == 403
+        assert client.post('/api/publishing/postiz/media', json={'path': 'document.md'}, headers=origin).status_code == 422
+        assert client.post('/api/publishing/postiz/media', json={'path': '../outside.png'}, headers=origin).status_code == 403
 
 
 def test_session_files_do_not_collide(monkeypatch, tmp_path):

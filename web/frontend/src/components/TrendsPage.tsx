@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { fetchTrends, createIdea } from '../lib/api';
+import { fetchTrends, createIdea, fetchTrendSources } from '../lib/api';
 import type { TrendGroup } from '../lib/api';
 import { IconFire, IconRefresh, IconBookmark, IconCheck } from './icons';
 
@@ -7,7 +7,8 @@ interface TrendsPageProps {
   onUseTopic: (title: string) => void;   // 一键做成内容 → 跳 chat
 }
 
-const ALL_PLATFORMS: { key: string; label: string }[] = [
+// 未配置自托管热榜服务时的保底平台（与后端内置公开接口一致）
+const FALLBACK_PLATFORMS: { key: string; label: string }[] = [
   { key: 'weibo', label: '微博' },
   { key: 'douyin', label: '抖音' },
   { key: 'zhihu', label: '知乎' },
@@ -18,12 +19,24 @@ const ALL_PLATFORMS: { key: string; label: string }[] = [
 
 export default function TrendsPage({ onUseTopic }: TrendsPageProps) {
   const [selected, setSelected] = useState<string[]>(['weibo', 'douyin', 'zhihu']);
+  const [platforms, setPlatforms] = useState(FALLBACK_PLATFORMS);
+  const [platformHint, setPlatformHint] = useState('');
   const [groups, setGroups] = useState<TrendGroup[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [updated, setUpdated] = useState(0);
   const [saved, setSaved] = useState<Set<string>>(new Set());
   const loadSeq = useRef(0);
+
+  // 平台清单由后端决定：配置了自托管热榜服务会自动变多
+  useEffect(() => {
+    fetchTrendSources()
+      .then((d) => {
+        if (d.platforms?.length) setPlatforms(d.platforms);
+        setPlatformHint(d.selfHosted ? '' : (d.hint || ''));
+      })
+      .catch(() => { /* 后端不可用时沿用内置平台 */ });
+  }, []);
 
   const save = async (title: string, source: string) => {
     if (saved.has(title)) return;
@@ -85,11 +98,15 @@ export default function TrendsPage({ onUseTopic }: TrendsPageProps) {
       </div>
 
       <div className="trend-platforms">
-        {ALL_PLATFORMS.map((p) => (
+        {platforms.map((p) => (
           <button key={p.key} className={`chip ${selected.includes(p.key) ? 'active' : ''}`}
             onClick={() => toggle(p.key)}>{p.label}</button>
         ))}
       </div>
+
+      {platformHint && (
+        <p style={{ color: 'var(--text-tertiary)', fontSize: 12, margin: '0 0 12px' }}>{platformHint}</p>
+      )}
 
       {error && <div className="notice-error" role="alert">{error}</div>}
 

@@ -257,6 +257,29 @@ class GatewayClient:
         payload = self._rpc("question.get", {"id": question_id})
         return (payload or {}).get("question")
 
+    def request_question(self, session_key: str, questions: list[dict],
+                         timeout_ms: int = 300000) -> dict:
+        """Register a pending ask_user card (question.request). header is required."""
+        items = []
+        for q in questions:
+            item = {
+                "header": str(q.get("header") or "请选择"),
+                "question": str(q.get("question") or "请选择一项"),
+                "questionId": str(q.get("questionId") or q.get("id") or "q1"),
+            }
+            opts = q.get("options") or []
+            item["options"] = [
+                {"label": str(o.get("label") if isinstance(o, dict) else o),
+                 **({"description": o.get("description")} if isinstance(o, dict) and o.get("description") else {})}
+                for o in opts
+            ]
+            items.append(item)
+        return self._rpc("question.request", {
+            "sessionKey": session_key,
+            "questions": items,
+            "timeoutMs": timeout_ms,
+        }) or {}
+
     def resolve(self, question_id: str, answers: dict,
                 resolved_by: str | None = None) -> dict:
         params = {

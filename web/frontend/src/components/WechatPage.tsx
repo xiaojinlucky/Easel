@@ -10,6 +10,7 @@ import {
   mediaUrl,
   onboardWechat,
   prepareWechat,
+  publishWechatDraft,
   saveWechatAccount,
   syncResearchFeeds,
 } from '../lib/api';
@@ -93,6 +94,8 @@ export default function WechatPage({ onCreate }: { onCreate: (prompt: string, ti
   const [coverPath, setCoverPath] = useState(savedArticle.coverPath || '');
   const [drafting, setDrafting] = useState(false);
   const [draftResult, setDraftResult] = useState<Record<string, unknown> | null>(null);
+  const [publishing, setPublishing] = useState(false);
+  const [publishResult, setPublishResult] = useState<Record<string, unknown> | null>(null);
 
   const [analyticsDate, setAnalyticsDate] = useState(today);
   const [analytics, setAnalytics] = useState<WechatAnalyticsResponse | null>(null);
@@ -295,11 +298,36 @@ export default function WechatPage({ onCreate }: { onCreate: (prompt: string, ti
         author: author.trim() || undefined,
       });
       setDraftResult(result);
-      setNotice('草稿已提交到公众号草稿箱；后续群发仍需在公众号后台确认。');
+      setPublishResult(null);
+      setNotice('草稿已提交到公众号草稿箱。确认无误后可在下方正式发布。');
     } catch (e) {
       setError(e instanceof Error ? e.message : '公众号草稿创建失败');
     } finally {
       setDrafting(false);
+    }
+  };
+
+  const sendPublish = async () => {
+    const mediaId = String(draftResult?.media_id || '').trim();
+    if (!accountKey.trim() || !mediaId) {
+      setError('请先成功创建草稿，再正式发布。');
+      return;
+    }
+    const confirmed = window.confirm(
+      '将把这篇草稿正式发布到公众号，粉丝可见。\n\n这是真实发布，不是本地预览。确定继续？',
+    );
+    if (!confirmed) return;
+    setPublishing(true);
+    setError('');
+    setPublishResult(null);
+    try {
+      const result = await publishWechatDraft(accountKey.trim(), mediaId);
+      setPublishResult(result);
+      setNotice('已提交正式发布。发布任务号以接口回执为准，可在公众号后台核对。');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '公众号正式发布失败');
+    } finally {
+      setPublishing(false);
     }
   };
 
@@ -441,7 +469,7 @@ export default function WechatPage({ onCreate }: { onCreate: (prompt: string, ti
           <div><div className="wechat-section-kicker">草稿箱</div><h2>选择封面并送入草稿箱</h2></div>
           <span className="badge">不会群发</span>
         </div>
-        <p className="wechat-help">图片来自现有内容库，支持 JPG、JPEG、PNG、GIF；点击图片选择封面，点击“插入正文”添加文章配图，两个选择互不影响。远程图片请先导入内容库。送入草稿箱前会再次确认，最终发布由你在公众号后台决定。</p>
+        <p className="wechat-help">图片来自现有内容库，支持 JPG、JPEG、PNG、GIF；点击图片选择封面，点击“插入正文”添加文章配图，两个选择互不影响。远程图片请先导入内容库。先送草稿箱，确认回执后再点正式发布；正式发布会调用微信 freepublish 接口，粉丝可见。</p>
         <div className="wechat-cover-grid">
           {covers.length === 0 && <div className="wechat-preview-empty"><IconImage size={24} /><p>内容库暂无可用图片封面。</p></div>}
           {covers.map((file) => (
@@ -462,6 +490,12 @@ export default function WechatPage({ onCreate }: { onCreate: (prompt: string, ti
           </button>
         </div>
         {draftResult && <div className="wechat-result" role="status"><div className="wechat-result-title">草稿接口原始结果</div><pre>{pretty(draftResult)}</pre></div>}
+        <div className="wechat-actions">
+          <button className="btn btn-sm btn-primary" onClick={() => void sendPublish()} disabled={publishing || !draftResult?.media_id}>
+            <IconSend size={14} /> {publishing ? '发布中…' : '确认并正式发布'}
+          </button>
+        </div>
+        {publishResult && <div className="wechat-result" role="status"><div className="wechat-result-title">正式发布回执</div><pre>{pretty(publishResult)}</pre></div>}
       </section>
 
       <section className="wechat-section card">

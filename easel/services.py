@@ -193,8 +193,12 @@ def start(name: str) -> dict:
         if child.poll() is not None:
             break
         time.sleep(0.5)
-    # 超时/提前退出：回滚本次启动的进程树，避免留下孤儿进程，或「界面报失败但服务实际在跑」的矛盾状态。
-    stop_tree(psutil.Process(child.pid))
+    # 超时/提前退出：回滚本次启动的进程树。子进程若已自行退出，
+    # psutil.Process(pid) 会抛 NoSuchProcess，不能再把启动路径打死。
+    try:
+        stop_tree(psutil.Process(child.pid))
+    except psutil.NoSuchProcess:
+        pass
     raise RuntimeError(f'{name} 启动失败或超时，已回滚本次启动；请查看 {logs / (name + ".log")}')
 
 

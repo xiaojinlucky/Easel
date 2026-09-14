@@ -18,7 +18,7 @@ def model_settings(monkeypatch, tmp_path):
     monkeypatch.setattr(settings, '_tested', {})
     monkeypatch.setattr(settings, 'model_catalog', lambda: [{'model': m, 'supportedReasoningEfforts': [{'reasoningEffort': e} for e in ['low', 'high']]} for m in ['model-a', 'model-b']])
     monkeypatch.setattr(settings, 'run_agent_command', lambda *a, **k: pytest.fail('保存配置不应调用模型'))
-    return TestClient(app, base_url='http://127.0.0.1:7860'), profile, old
+    return TestClient(app, base_url='http://127.0.0.1:7860', headers={'Origin': 'http://127.0.0.1:7860'}), profile, old
 
 
 def test_effort_change_reuses_legacy_model_verification(model_settings):

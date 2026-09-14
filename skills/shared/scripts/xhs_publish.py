@@ -447,8 +447,8 @@ def cmd_check(_a) -> int:
 
 
 def cmd_login(a) -> int:
-    """headless 友好登录：把二维码抠成 PNG 供扫码，轮询登录成功后持久化 cookie。
-    REF login.go FetchQrcodeImage/WaitForLogin。远程无桌面环境靠图片扫码，非有头窗口。"""
+    """登录并持久化 cookie。桌面环境默认有头窗口扫码；无桌面时抠二维码 PNG。
+    REF login.go FetchQrcodeImage/WaitForLogin。"""
     try:
         from playwright.sync_api import sync_playwright
     except Exception as e:
@@ -463,7 +463,16 @@ def cmd_login(a) -> int:
         ctx = _launch(p, headed=a.headed, base=a.profile_base, proxy=_proxy(a.proxy, a.no_proxy))
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
         try:
-            page.goto(EXPLORE_URL, wait_until="domcontentloaded")
+            if a.headed:
+                login_state.write_status(sf, "window_login", "请在弹出的浏览器窗口里用小红书 App 扫码，不要关掉那个窗口。")
+            try:
+                page.goto(EXPLORE_URL, wait_until="domcontentloaded", timeout=45000)
+            except Exception as e:
+                login_state.write_status(
+                    sf, "error",
+                    f"打不开小红书页面（{type(e).__name__}）。常见原因：出口 IP 被风控，或与「校验账号」抢同一个登录目录。",
+                )
+                _die(f"打开 {EXPLORE_URL} 失败：{e}", 1)
             page.wait_for_timeout(800)
 
             # 已登录直接返回
@@ -481,32 +490,48 @@ def cmd_login(a) -> int:
                      f"{_profile_dir(a.profile_base)} 整个拷到本机复用。", 4)
 
             # 抠二维码存 PNG（元素截图，不依赖 src 格式，最稳）
+            qr = None
             try:
                 qr = page.wait_for_selector(SELECTORS["qrcode"], timeout=15000)
             except Exception:
-                login_state.write_status(sf, "error", "未找到登录二维码")
-                _die("未找到登录二维码（页面结构可能已变，检查 SELECTORS.qrcode），"
-                     "或已弹别的登录方式——可加 --headed 观察")
-            qr_out.parent.mkdir(parents=True, exist_ok=True)
-            qr.screenshot(path=str(qr_out))
-            login_state.write_status(sf, "qr_ready", "二维码已就绪，请扫码", qr=str(qr_out))
-            print(f"📱 二维码已保存：{qr_out}")
-            print(f"   用小红书 App 扫码登录。若走 Easel Web UI，可在 outputs 里查看这张图。")
-            print(f"   （二维码有时效，约几分钟；过期请重跑 login）")
+                if not a.headed:
+                    login_state.write_status(sf, "error", "未找到登录二维码")
+                    _die("未找到登录二维码（页面结构可能已变，检查 SELECTORS.qrcode），"
+                         "或已弹别的登录方式——可加 --headed 观察")
+                login_state.write_status(
+                    sf, "window_login",
+                    "请在弹出的浏览器窗口里完成登录（扫码或其它方式），不要关掉那个窗口。")
+            if qr:
+                qr_out.parent.mkdir(parents=True, exist_ok=True)
+                qr.screenshot(path=str(qr_out))
+                if a.headed:
+                    login_state.write_status(
+                        sf, "window_login",
+                        "请在弹出的浏览器窗口里扫码，不要关掉那个窗口。也可以扫下面这张图。",
+                        qr=str(qr_out))
+                else:
+                    login_state.write_status(sf, "qr_ready", "二维码已就绪，请扫码", qr=str(qr_out))
+                print(f"📱 二维码已保存：{qr_out}")
+                print(f"   用小红书 App 扫码登录。若走 Easel Web UI，可在 outputs 里查看这张图。")
+                print(f"   （二维码有时效，约几分钟；过期请重跑 login）")
             print(f"⏳ 等待扫码确认（最长 {timeout_s}s）...", file=sys.stderr)
 
             # 轮询登录成功
             deadline = time.time() + timeout_s
             while time.time() < deadline:
-                if page.query_selector(SELECTORS["login_ok"]):
-                    print("✅ 登录成功，cookie 已持久化，下次免登")
-                    login_state.write_status(sf, "success", "登录成功")
-                    try:
-                        qr_out.unlink()  # 登录成功清掉二维码图，避免误扫过期码
-                    except OSError:
-                        pass
-                    return 0
-                page.wait_for_timeout(2000)
+                try:
+                    if page.query_selector(SELECTORS["login_ok"]):
+                        print("✅ 登录成功，cookie 已持久化，下次免登")
+                        login_state.write_status(sf, "success", "登录成功")
+                        try:
+                            qr_out.unlink()  # 登录成功清掉二维码图，避免误扫过期码
+                        except OSError:
+                            pass
+                        return 0
+                    page.wait_for_timeout(2000)
+                except Exception as e:
+                    login_state.write_status(sf, "error", "登录窗口被关闭，请关闭弹窗后重试")
+                    _die(f"登录窗口已关闭：{e}", 1)
             login_state.write_status(sf, "expired", "二维码超时未扫")
             print(f"⏱️ {timeout_s}s 内未检测到登录成功（二维码可能已过期）。请重跑 login 再扫。",
                   file=sys.stderr)

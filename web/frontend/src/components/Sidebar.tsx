@@ -5,7 +5,7 @@ import type { ComponentType } from 'react';
 import {
   IconChat, IconSkills, IconOutputs, IconAccounts, IconProfile,
   IconNewChat, IconEdit, IconArchive, IconUnarchive, IconTrash, IconChevron,
-  IconDashboard, IconSettings, IconBookmark, IconLayout,
+  IconDashboard, IconSettings, IconBookmark,
 } from './icons';
 
 export type Page = 'dashboard' | 'chat' | 'trends' | 'ideas' | 'calendar' | 'publish' | 'breakdown' | 'skills' | 'outputs' | 'accounts' | 'profile' | 'model-settings' | 'research' | 'capabilities' | 'wechat';
@@ -29,14 +29,15 @@ interface SidebarProps {
 }
 
 // 主导航（精简）；热点雷达/选题库/内容日历/发布中心 收进「工作台」，不占侧栏
-const NAV: { page: Page; Icon: ComponentType<{ size?: number }>; label: string }[] = [
+// 「社交媒体平台」是平台总入口，owns 声明它下辖的页面（如公众号工作区），
+// 使子页面打开时父入口仍保持高亮——避免出现「一个入口都不亮」的导航断裂。
+const NAV: { page: Page; Icon: ComponentType<{ size?: number }>; label: string; owns?: Page[] }[] = [
   { page: 'dashboard', Icon: IconDashboard, label: '工作台' },
   { page: 'chat', Icon: IconChat, label: '对话' },
   { page: 'research', Icon: IconBookmark, label: '调研与素材' },
   { page: 'skills', Icon: IconSkills, label: '技能库' },
   { page: 'outputs', Icon: IconOutputs, label: '内容库' },
-  { page: 'accounts', Icon: IconAccounts, label: '账号' },
-  { page: 'wechat', Icon: IconLayout, label: '公众号工作区' },
+  { page: 'accounts', Icon: IconAccounts, label: '社交媒体平台', owns: ['wechat'] },
   { page: 'profile', Icon: IconProfile, label: '画像' },
   { page: 'model-settings', Icon: IconSettings, label: 'AI 模型设置' },
   { page: 'capabilities', Icon: IconSkills, label: '能力与集成' },
@@ -138,10 +139,10 @@ export default function Sidebar({
       </div>
 
       <nav className="sidebar-nav">
-        {NAV.map(({ page, Icon, label }) => (
+        {NAV.map(({ page, Icon, label, owns }) => (
           <button
             key={page}
-            className={`nav-item ${currentPage === page ? 'active' : ''}`}
+            className={`nav-item ${currentPage === page || owns?.includes(currentPage) ? 'active' : ''}`}
             onClick={() => onPageChange(page)}
           >
             <span className="nav-icon"><Icon size={18} /></span>

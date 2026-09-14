@@ -164,7 +164,7 @@ async function startServices() {
   } finally { starting = false; initialReady = true; publishState(); }
 }
 async function showStatus() {
-  await dialog.showMessageBox(mainWindow, { type: errors.size ? 'warning' : 'info', title: 'Easel 运行状态', message: status().status, detail: [...errors.entries()].map(([key, value]) => `${key}: ${value}`).join('\n\n') || '关闭桌面窗口后，后台任务和发布排期继续运行。\n需要全部停止时，使用“应用 → 停止服务并退出”。', buttons: ['知道了'] });
+  await dialog.showMessageBox(mainWindow, { type: errors.size ? 'warning' : 'info', title: 'Easel 运行状态', message: status().status, detail: [...errors.entries()].map(([key, value]) => `${key}: ${value}`).join('\n\n') || '关闭窗口会收起到托盘，任务栏不再显示，后台服务继续跑。\n需要全部停止时，使用托盘或“应用 → 停止服务并退出”。', buttons: ['知道了'] });
 }
 function quitNow() {
   // 「停止服务并退出」= 立即退出，绝不等、绝不弹框，避免 UI 僵死。
@@ -190,8 +190,18 @@ function stopServicesDetached() {
     log(`Detached service-stop started (pid=${child.pid}); quitting now.`);
   } catch (error) { log(`Stop-detach failed: ${error.message}`); }
 }
+function hideToTray() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (!tray) {
+    quitNow();
+    return;
+  }
+  mainWindow.setSkipTaskbar(true);
+  mainWindow.hide();
+}
 function showMainWindow() {
-  if (!mainWindow) return;
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.setSkipTaskbar(false);
   if (mainWindow.isMinimized()) mainWindow.restore();
   mainWindow.show();
   mainWindow.focus();
@@ -204,7 +214,7 @@ function installTray() {
   tray.setToolTip('Easel 自媒体工作台 — 后台运行中');
   const menu = Menu.buildFromTemplate([
     { label: '打开工作台', click: () => showMainWindow() },
-    { label: '最小化到后台（继续运行）', click: () => { if (mainWindow) mainWindow.minimize(); } },
+    { label: '最小化到后台（继续运行）', click: () => hideToTray() },
     { type: 'separator' },
     { label: '停止服务并退出', click: () => quitNow() },
   ]);
@@ -221,7 +231,7 @@ function installMenu() {
       { type: 'separator' },
       { label: '打开成品文件夹', click: () => void shell.openPath(path.join(ROOT, 'outputs')) },
       { type: 'separator' },
-      { label: '最小化到后台（继续运行）', click: () => { if (mainWindow) mainWindow.minimize(); } },
+      { label: '最小化到后台（继续运行）', click: () => hideToTray() },
       { label: '停止服务并退出', click: () => quitNow() },
     ] },
     { label: '编辑', submenu: [{ role: 'undo' }, { role: 'redo' }, { type: 'separator' }, { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }] },
@@ -244,7 +254,11 @@ function installMenu() {
 
 if (!app.requestSingleInstanceLock()) { app.quit(); }
 else {
-  app.on('second-instance', () => { if (mainWindow) { if (mainWindow.isMinimized()) mainWindow.restore(); mainWindow.show(); mainWindow.focus(); } });
+  app.on('second-instance', () => showMainWindow());
+  app.on('before-quit', () => {
+    app.isQuitting = true;
+    try { if (tray) { tray.destroy(); tray = null; } } catch (_) { /* 托盘销毁失败不阻塞退出 */ }
+  });
   app.on('will-quit', () => clearPid());
   app.whenReady().then(async () => {
     if (!fs.existsSync(PYTHON)) throw new Error('未找到本机 Easel Python 环境，请先完成部署。');
@@ -260,13 +274,15 @@ else {
     mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     mainWindow.on('resize', resizeViews);
     mainWindow.on('close', event => {
-      // 「关闭窗口」= 最小化到任务栏继续后台运行（不退出、不杀服务）
-      const size = mainWindow.getNormalBounds();
-      fs.writeFileSync(path.join(STATE, 'desktop-window.json'), JSON.stringify(size));
-      if (process.platform !== 'darwin' && !app.isQuitting) {
-        event.preventDefault();
-        mainWindow.minimize();
-      }
+      // 「关闭窗口」= 收起到托盘：窗口隐藏、任务栏不留图标，后台继续跑。
+      // 完全退出请用托盘或菜单「停止服务并退出」。托盘未装上时才改为真正退出，避免变成幽灵进程。
+      try {
+        const size = mainWindow.getNormalBounds();
+        fs.writeFileSync(path.join(STATE, 'desktop-window.json'), JSON.stringify(size));
+      } catch (_) { /* 窗口尺寸保存失败不阻塞退出 */ }
+      if (app.isQuitting) return;
+      event.preventDefault();
+      hideToTray();
     });
     mainWindow.on('closed', () => { for (const view of views.values()) if (!view.webContents.isDestroyed()) view.webContents.close(); views.clear(); mainWindow = null; });
     ipcMain.handle('desktop:action', async (event, action) => {

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import os
 if os.name == "nt":
     import msvcrt
@@ -20,6 +21,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+from collections import deque
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
@@ -74,6 +76,15 @@ SESSIONS_DIR = OUTPUTS_DIR / "_sessions"   # 每会话最近一轮的完整结�
 SYSTEM_TOPLEVEL_DIRS = {"analytics"}
 LOGIN_TIMEOUT = 240
 LOGIN_PROCESSES: dict[str, subprocess.Popen] = {}
+# whoami 与 login 共用同一 Playwright profile 目录，不能并行，否则后启动的会卡死/超时。
+# 值是「正在跑的 whoami 次数」：两个 whoami 重叠时，先结束的那个不能把标记清成空。
+_WHOAMI_RUNNING: dict[str, int] = {}
+_WHOAMI_RUNNING_LOCK = threading.Lock()
+# 登录已点下、子进程尚未起来时，whoami / 第二次登录 也必须让路。
+_LOGIN_PENDING: set[str] = set()
+_LOGIN_PENDING_LOCK = threading.Lock()
+_IN_PROGRESS_LOGIN_STATES = frozenset(
+    {'starting', 'window_login', 'qr_ready', 'scanned', 'sms_required', 'verifying'})
 
 # whoami 真校验（起 headless 浏览器，数秒）的进程内缓存：避免账号页 + 工作台重复起浏览器。
 WHOAMI_TTL = 600  # 秒
@@ -174,6 +185,25 @@ AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"}
 
 app = FastAPI(title="Easel", docs_url=None, redoc_url=None)
 _LOCAL_ORIGINS = ['http://127.0.0.1:7860', 'http://localhost:7860', 'http://127.0.0.1:5173', 'http://localhost:5173']
+
+
+def _loopback_peer(request: Request) -> bool:
+    """对端是否来自回环地址。只有「没有 Origin 可判」时才用作判据。
+
+    `request.client` 在 ASGI 下可能为 None（部分服务器/测试传输层不提供），
+    此时无从判断，按「不是回环」处理 —— 拿不准就拒绝，而不是猜着放行。
+    """
+    client = request.client
+    if client is None:
+        return False
+    host = client.host or ''
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+# `python -m web.app` 只绑回环。服务管理器另用 uvicorn --host 127.0.0.1，路径保持不变。
+WEB_BIND_HOST = '127.0.0.1'
+_STDOUT_MAX_LINES = 4000
 app.add_middleware(CORSMiddleware, allow_origins=_LOCAL_ORIGINS, allow_methods=["*"], allow_headers=["*"])
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=['localhost', '127.0.0.1'])
 from web.settings_api import router as settings_router
@@ -184,8 +214,12 @@ from web.account_profile_api import router as account_profile_router
 from web.publishing_api import router as publishing_router
 from web.wechat_api import router as wechat_router
 from web.wechat_monitor_api import router as wechat_monitor_router
+from web.auth_guide_api import router as auth_guide_router
+from web.platform_registry import router as platform_registry_router
 app.include_router(wechat_router)
 app.include_router(wechat_monitor_router)
+app.include_router(auth_guide_router)
+app.include_router(platform_registry_router)
 app.include_router(publishing_router)
 app.include_router(settings_router)
 app.include_router(research_router)
@@ -196,6 +230,23 @@ app.include_router(account_profile_router)
 
 @app.middleware('http')
 async def local_write_guard(request: Request, call_next):
+    """拦住「别的网站让浏览器替我改本机状态」的写请求，同时不误伤本机调用。
+
+    两条判据，按请求实际形态二选一：
+
+    ① **带 Origin**（一定是浏览器发的）：Origin 必须在 `_LOCAL_ORIGINS` 里，
+       否则 403。跨站页面驱动的写请求收到的就是这一条 —— 这是守卫的本职。
+    ② **不带 Origin**（curl / 本机脚本 / 桌面壳内部调用 / 测试客户端）：
+       没有 Origin 可判，退化为要求对端来自回环地址。
+
+    为什么不是简单放行：原写法 `origin not in _LOCAL_ORIGINS` 把 `Origin: None`
+    也算非法来源，于是本机命令行与脚本全被 403 —— 而它们恰恰是 CSRF 管不着的
+    （CSRF 依赖浏览器自动附带凭据，本服务根本没有基于 Cookie 的会话）。
+    但对端必须是回环这一条要保留：今天应用只绑 127.0.0.1，看着多余；
+    一旦有人把绑定改成 0.0.0.0，它就是拦住「局域网内无人值守写操作」的那道闸。
+
+    另有 `TrustedHostMiddleware` 兜住 DNS rebinding（伪造 Host 直接 400）。
+    """
     origin = request.headers.get('origin')
     if request.url.path == '/api/clipper' and origin and re.fullmatch(r'chrome-extension://[a-p]{32}', origin):
         headers = {'Access-Control-Allow-Origin': origin, 'Access-Control-Allow-Methods': 'POST', 'Access-Control-Allow-Headers': 'Authorization, Content-Type', 'Vary': 'Origin'}
@@ -204,8 +255,10 @@ async def local_write_guard(request: Request, call_next):
         response = await call_next(request)
         response.headers.update(headers)
         return response
-    if request.method not in ('GET', 'HEAD', 'OPTIONS') and origin and origin not in _LOCAL_ORIGINS:
-        return JSONResponse({'detail': '仅允许从本机工作台操作。'}, status_code=403)
+    if request.method not in ('GET', 'HEAD', 'OPTIONS'):
+        allowed = origin in _LOCAL_ORIGINS if origin else _loopback_peer(request)
+        if not allowed:
+            return JSONResponse({'detail': '仅允许从本机工作台操作。'}, status_code=403)
     return await call_next(request)
 
 
@@ -219,7 +272,7 @@ def list_personas() -> list[dict]:
         desc = ''
         identity = d / 'identity.md'
         if identity.is_file():
-            for line in identity.read_text().splitlines():
+            for line in identity.read_text(encoding='utf-8').splitlines():
                 line = line.strip()
                 if line and not line.startswith('#') and not line.startswith('<!--'):
                     desc = line[:80]
@@ -854,6 +907,7 @@ def _chat_message(req: ChatRequest, turn_context: dict | None = None) -> str:
 # 表现为「答一半停在冒号」），以及会话串味（一个会话读到另一个的 session 文件内容）。
 # 不同会话 key 不同锁 → 不同对话仍可并行；只序列化「同一会话」的重叠请求。
 _session_locks: dict[str, asyncio.Lock] = {}
+_session_lock_waiters: dict[str, int] = {}
 
 
 def _session_lock(sk: str) -> asyncio.Lock:
@@ -862,6 +916,24 @@ def _session_lock(sk: str) -> asyncio.Lock:
         lk = asyncio.Lock()
         _session_locks[sk] = lk
     return lk
+
+
+async def _acquire_session_lock(sk: str) -> asyncio.Lock:
+    lk = _session_lock(sk)
+    _session_lock_waiters[sk] = _session_lock_waiters.get(sk, 0) + 1
+    await lk.acquire()
+    return lk
+
+
+def _release_session_lock(sk: str, lk: asyncio.Lock) -> None:
+    lk.release()
+    n = _session_lock_waiters.get(sk, 1) - 1
+    if n <= 0:
+        _session_lock_waiters.pop(sk, None)
+        if _session_locks.get(sk) is lk:
+            _session_locks.pop(sk, None)
+    else:
+        _session_lock_waiters[sk] = n
 
 
 # 会话续接：把 web 的 sessionId 确定性映射成一个稳定的 OpenClaw --session-id（transcript 文件名）。
@@ -1160,11 +1232,11 @@ async def api_chat_stream(req: ChatRequest):
         xlock = _CrossProcLock(sk)
         if lock.locked():
             to_client("activity", "⏳ 这个会话上一条还在跑，排队等它结束再开始…")
-        await lock.acquire()
+        lock = await _acquire_session_lock(sk)
         # flock 可能阻塞（等另一进程/标签跑完），放线程池避免卡住事件循环
         got = await loop.run_in_executor(None, xlock.acquire, min(TIMEOUT_CHAT, 300))
         if not got:
-            lock.release()
+            _release_session_lock(sk, lock)
             _save_turn(pk, "done", "这个会话正在另一个窗口运行，请稍候再试。", {
                 **turn_context,
                 "turn_id": turn_id, "clean_end": False, "stop_reason": "session_lock_timeout",
@@ -1186,7 +1258,7 @@ async def api_chat_stream(req: ChatRequest):
                 cwd=str(PROJECT_ROOT), text=True, encoding='utf-8', bufsize=1, env=env, creationflags=CREATE_FLAGS,
             )
         except BaseException:
-            lock.release()
+            _release_session_lock(sk, lock)
             xlock.release()
             try:
                 raw_path.unlink()
@@ -1204,7 +1276,7 @@ async def api_chat_stream(req: ChatRequest):
         to_client('activity', '正在调用订阅模型，完成后会保存结果；可以切换页面。')
         q = asyncio.Queue()
         SENTINEL = object()
-        stdout_lines = []
+        stdout_lines: deque[str] = deque(maxlen=_STDOUT_MAX_LINES)
         expected_raw_session_id = _openclaw_session_id(sk)
         run_info: dict = {"stop_reason": None, "last_ev": None, "saw_message_end": False,
                           "fetch_count": 0, "token_chars": 0, "thinking_chars": 0,
@@ -1487,7 +1559,7 @@ async def api_chat_stream(req: ChatRequest):
                 "stop_reason": "user_stopped" if user_stopped else 'timeout' if timed_out else run_info.get("stop_reason"),
             })
             xlock.release()
-            lock.release()
+            _release_session_lock(sk, lock)
             _RUNNING_CHAT.pop(sk, None)
             to_client("done", sessionKey=sk)
             client_q.put_nowait(CLIENT_DONE)
@@ -1577,6 +1649,39 @@ async def api_question_answer(req: QuestionAnswerRequest):
 
 class QuestionStatusRequest(BaseModel):
     questionIds: list[str]
+
+
+@app.get("/api/chat/questions/pending")
+async def api_pending_questions(sessionId: str = ""):
+    """重启后仍能拉回当前会话未回答的 ask_user 卡片（不依赖正在跑的 SSE）。"""
+    sk = (sessionId or "").strip()
+    if not sk:
+        return {"ok": False, "questions": []}
+    if GatewayClient is None:
+        return {"ok": False, "error": "gateway question bridge unavailable", "questions": []}
+
+    def _do() -> dict:
+        client = GatewayClient()
+        try:
+            client.connect()
+            items = client.list_questions(session_key=f"agent:main:{sk}", status="pending")
+            out = []
+            for it in items:
+                qid = it.get("id")
+                if not qid:
+                    continue
+                out.append({
+                    "id": qid,
+                    "questions": it.get("questions") or [],
+                    "expiresAtMs": it.get("expiresAtMs"),
+                })
+            return {"ok": True, "questions": out}
+        except Exception as e:
+            return {"ok": False, "error": str(e), "questions": []}
+        finally:
+            client.close()
+
+    return await asyncio.to_thread(_do)
 
 
 @app.post("/api/chat/question/status")
@@ -1826,7 +1931,7 @@ def _account_logged_in(platform: str, cfg: dict) -> bool:
     浏览器平台的登录态只有启动浏览器才真能知道（profile 里总有 Cookies 文件，存在≠已登录，
     会误报），故这里只信「本流程最近一次登录成功」——即 status.json == success。
     biliup 的 cookies.json 只有登录成功才生成，可直接判。"""
-    backend = cfg['backend']
+    backend = cfg.get('backend', '')   # 缺 backend 的条目视为未登录，不让调用方 500
     if backend == 'unsupported':
         return False
     if backend == 'biliup':
@@ -1838,6 +1943,67 @@ def _account_logged_in(platform: str, cfg: dict) -> bool:
         except Exception:
             return False
     return False
+
+
+def _login_proc_alive(platform: str) -> bool:
+    proc = LOGIN_PROCESSES.get(platform)
+    return proc is not None and proc.poll() is None
+
+
+def _try_begin_login(platform: str) -> bool:
+    """占住「即将启动登录」槽。False = 已有登录在跑，调用方应返回当前状态而不是再起浏览器。"""
+    with _LOGIN_PENDING_LOCK:
+        if platform in _LOGIN_PENDING or _login_proc_alive(platform):
+            return False
+        _LOGIN_PENDING.add(platform)
+        return True
+
+
+def _release_login_claim(platform: str) -> None:
+    with _LOGIN_PENDING_LOCK:
+        _LOGIN_PENDING.discard(platform)
+
+
+def _login_claim_held(platform: str) -> bool:
+    with _LOGIN_PENDING_LOCK:
+        return platform in _LOGIN_PENDING
+
+
+def _whoami_busy(platform: str) -> bool:
+    with _WHOAMI_RUNNING_LOCK:
+        return _WHOAMI_RUNNING.get(platform, 0) > 0
+
+
+def _whoami_begin(platform: str) -> bool:
+    """占住 whoami 浏览器。False = 已有一次校验在跑，不要再起第二个。"""
+    with _WHOAMI_RUNNING_LOCK:
+        if _WHOAMI_RUNNING.get(platform, 0) > 0:
+            return False
+        _WHOAMI_RUNNING[platform] = 1
+        return True
+
+
+def _whoami_end(platform: str) -> None:
+    with _WHOAMI_RUNNING_LOCK:
+        _WHOAMI_RUNNING.pop(platform, None)
+
+
+def _login_log_hint(platform: str) -> str:
+    """登录子进程没写成状态文件时，从日志里抽出最后一条可给用户看的原因。"""
+    log_path = LOGIN_DIR / f'{platform}.log'
+    if not log_path.is_file():
+        return ''
+    try:
+        text = log_path.read_text(encoding='utf-8', errors='replace')
+    except OSError:
+        return ''
+    for line in reversed(text.splitlines()[-80:]):
+        s = line.strip()
+        if (s.startswith('ERROR:') or s.startswith('Error:') or '300012' in s
+                or 'TimeoutError' in s or '打不开小红书' in s or '打不开登录页' in s
+                or '打不开抖音' in s):
+            return s[:400]
+    return ''
 
 
 def _login_status(platform: str) -> dict:
@@ -1853,10 +2019,20 @@ def _login_status(platform: str) -> dict:
     # A runner that exits before writing its status must become an actionable error,
     # never the ambiguous ``unknown`` state shown as an endless spinner in the UI.
     proc = LOGIN_PROCESSES.get(platform)
-    if data['state'] in ('unknown', 'starting') and proc is not None:
+    overlay_error = None
+    if proc is not None:
         code = proc.poll()
-        if code is not None:
-            data = {'state': 'error', 'message': f'登录程序异常退出（退出码 {code}），请查看 outputs/_login/{platform}.log'}
+        if code is not None and data['state'] not in ('success', 'expired', 'error'):
+            hint = _login_log_hint(platform)
+            overlay_error = hint or f'登录程序异常退出（退出码 {code}），请查看 outputs/_login/{platform}.log'
+    elif (st.is_file() and data['state'] in _IN_PROGRESS_LOGIN_STATES
+          and not _login_claim_held(platform)):
+        # 服务重启后内存表是空的，磁盘上却停在 window_login → 弹窗会永远转圈。
+        hint = _login_log_hint(platform)
+        overlay_error = hint or '登录已中断（窗口已关或服务已重启），请关闭后重试'
+    if overlay_error:
+        data = {'state': 'error', 'message': overlay_error}
+        _write_login_marker(platform, 'error', overlay_error)
     qr = LOGIN_DIR / f'{platform}.png'
     if qr.is_file():
         data['qr'] = f'_login/{platform}.png'
@@ -1890,48 +2066,70 @@ async def api_login_start(platform: str):
     backend = cfg['backend']
     if backend == 'unsupported':
         raise HTTPException(400, f"{cfg['name']} 暂不可用：{cfg.get('note', '')}")
-    LOGIN_DIR.mkdir(parents=True, exist_ok=True)
-    qr = LOGIN_DIR / f'{platform}.png'
-    status = LOGIN_DIR / f'{platform}.json'
-    for f in (qr, status):
-        try:
-            f.unlink()
-        except OSError:
-            pass
-    if backend == 'xhs':
-        cmd = [sys.executable, str(SHARED_SCRIPTS / 'xhs_publish.py'), 'login', '--no-proxy',
-               '--qr-out', str(qr), '--status-file', str(status), '--timeout', str(LOGIN_TIMEOUT)]
-    elif backend == 'biliup':
-        # B站：TV 端扫码登录 API 生成二维码 + 写 biliup cookie（biliup login 需真终端，前端用不了）
-        cmd = [sys.executable, str(SHARED_SCRIPTS / 'bili_login.py'), 'login',
-               '--qr-out', str(qr), '--status-file', str(status),
-               '--cookie', str(PROJECT_ROOT / 'cookies.json'), '--timeout', str(LOGIN_TIMEOUT)]
-    elif backend == 'douyin':
-        code_file = LOGIN_DIR / f'{platform}.code'
-        try:
-            code_file.unlink()
-        except OSError:
-            pass
-        cmd = [sys.executable, str(SHARED_SCRIPTS / 'douyin_publish.py'), 'login',
-               '--qr-out', str(qr), '--status-file', str(status),
-               '--sms-code-file', str(code_file), '--timeout', str(LOGIN_TIMEOUT)]
-    else:
-        cmd = [sys.executable, str(SHARED_SCRIPTS / 'web_publisher.py'), 'login-qr',
-               '--platform', cfg['wp'], '--qr-out', str(qr), '--status-file', str(status),
-               '--timeout', str(LOGIN_TIMEOUT)]
-    # 新登录开始 → 清掉旧的 whoami 缓存（登录前可能缓存了「未登录」），避免登录成功后仍读到旧结果
-    with _WHOAMI_LOCK:
-        _WHOAMI_CACHE.pop(platform, None)
-    log_path = LOGIN_DIR / f'{platform}.log'
-    log_file = log_path.open('a', encoding='utf-8')
-    proc = subprocess.Popen(cmd, cwd=str(PROJECT_ROOT), env=_proxy_env(),
-                            stdout=log_file, stderr=subprocess.STDOUT)
-    log_file.close()
-    LOGIN_PROCESSES[platform] = proc
+    if not _try_begin_login(platform):
+        return {'mode': 'qr', **_login_status(platform)}
+    try:
+        LOGIN_DIR.mkdir(parents=True, exist_ok=True)
+        qr = LOGIN_DIR / f'{platform}.png'
+        status = LOGIN_DIR / f'{platform}.json'
+        log_path = LOGIN_DIR / f'{platform}.log'
+        for f in (qr, status, log_path):
+            try:
+                f.unlink()
+            except OSError:
+                pass
+        headed = sys.platform == 'win32'
+        if backend == 'xhs':
+            cmd = [sys.executable, str(SHARED_SCRIPTS / 'xhs_publish.py'), 'login', '--no-proxy',
+                   '--qr-out', str(qr), '--status-file', str(status), '--timeout', str(LOGIN_TIMEOUT)]
+            # 桌面版有屏幕：弹出真实窗口扫码（与 Buffer/Hootsuite 打开系统浏览器同一范式）。
+            # headless 抠码在本机出口 IP 被 300012 时连二维码都出不来。
+            if headed:
+                cmd.append('--headed')
+        elif backend == 'biliup':
+            # B站：TV 端扫码登录 API 生成二维码 + 写 biliup cookie（biliup login 需真终端，前端用不了）
+            cmd = [sys.executable, str(SHARED_SCRIPTS / 'bili_login.py'), 'login',
+                   '--qr-out', str(qr), '--status-file', str(status),
+                   '--cookie', str(PROJECT_ROOT / 'cookies.json'), '--timeout', str(LOGIN_TIMEOUT)]
+        elif backend == 'douyin':
+            code_file = LOGIN_DIR / f'{platform}.code'
+            try:
+                code_file.unlink()
+            except OSError:
+                pass
+            cmd = [sys.executable, str(SHARED_SCRIPTS / 'douyin_publish.py'), 'login',
+                   '--qr-out', str(qr), '--status-file', str(status),
+                   '--sms-code-file', str(code_file), '--timeout', str(LOGIN_TIMEOUT)]
+            if headed:
+                cmd.append('--headed')
+        else:
+            cmd = [sys.executable, str(SHARED_SCRIPTS / 'web_publisher.py'), 'login-qr',
+                   '--platform', cfg['wp'], '--qr-out', str(qr), '--status-file', str(status),
+                   '--timeout', str(LOGIN_TIMEOUT)]
+            if headed:
+                cmd.append('--headed')
+        # 新登录开始 → 清掉旧的 whoami 缓存（登录前可能缓存了「未登录」），避免登录成功后仍读到旧结果
+        with _WHOAMI_LOCK:
+            _WHOAMI_CACHE.pop(platform, None)
+        # 等正在跑的 whoami 释放 Playwright profile，避免两进程抢同一目录导致 TimeoutError
+        deadline = time.time() + 60
+        while time.time() < deadline:
+            if not _whoami_busy(platform):
+                break
+            await asyncio.sleep(0.2)
+        if _whoami_busy(platform):
+            raise HTTPException(409, '账号校验还在占用登录目录，请等几秒后再点登录')
+        log_file = log_path.open('w', encoding='utf-8')
+        proc = subprocess.Popen(cmd, cwd=str(PROJECT_ROOT), env=_proxy_env(),
+                                stdout=log_file, stderr=subprocess.STDOUT)
+        log_file.close()
+        LOGIN_PROCESSES[platform] = proc
+    finally:
+        _release_login_claim(platform)
     for _ in range(50):
         await asyncio.sleep(0.5)
         s = _login_status(platform)
-        if s['qr'] or s['state'] in ('qr_ready', 'success', 'error', 'expired'):
+        if s['qr'] or s['state'] in ('window_login', 'qr_ready', 'success', 'error', 'expired', 'sms_required'):
             return {'mode': 'qr', **s}
     s = _login_status(platform)
     return {'mode': 'qr', **s}
@@ -1982,6 +2180,12 @@ async def api_account_whoami(platform: str):
     backend = cfg['backend']
     if backend == 'unsupported':
         return {'loggedIn': False, 'name': '', 'avatar': ''}
+    if _login_proc_alive(platform):
+        return {'loggedIn': _account_logged_in(platform, cfg), 'name': '', 'avatar': ''}
+    with _LOGIN_PENDING_LOCK:
+        login_pending = platform in _LOGIN_PENDING
+    if login_pending:
+        return {'loggedIn': _account_logged_in(platform, cfg), 'name': '', 'avatar': ''}
     # 命中未过期缓存直接返回
     with _WHOAMI_LOCK:
         hit = _WHOAMI_CACHE.get(platform)
@@ -1997,11 +2201,31 @@ async def api_account_whoami(platform: str):
     else:
         cmd = [sys.executable, str(SHARED_SCRIPTS / 'web_publisher.py'), 'whoami',
                '--platform', cfg['wp']]
+    launched = _whoami_begin(platform)
+    if not launched:
+        deadline = time.time() + 150
+        while time.time() < deadline:
+            with _WHOAMI_LOCK:
+                hit = _WHOAMI_CACHE.get(platform)
+            if hit and (time.time() - hit[0]) < WHOAMI_TTL:
+                return hit[1]
+            if _whoami_begin(platform):
+                launched = True
+                break
+            await asyncio.sleep(0.2)
+        if not launched:
+            with _WHOAMI_LOCK:
+                hit = _WHOAMI_CACHE.get(platform)
+            if hit and (time.time() - hit[0]) < WHOAMI_TTL:
+                return hit[1]
+            return {'loggedIn': _account_logged_in(platform, cfg), 'name': '', 'avatar': ''}
     try:
         proc = await asyncio.to_thread(subprocess.run, cmd, cwd=str(PROJECT_ROOT), env=_proxy_env(),
                                        capture_output=True, text=True, timeout=150)
     except subprocess.TimeoutExpired:
         raise HTTPException(504, '校验超时（浏览器起不来或网络慢）')
+    finally:
+        _whoami_end(platform)
     data = {'loggedIn': False, 'name': '', 'avatar': ''}
     confident = False   # 是否拿到「可信」校验结论（子进程正常跑出 JSON 且无 error 字段）
     for line in reversed((proc.stdout or '').strip().splitlines()):
@@ -2453,6 +2677,13 @@ async def api_delete_session(session_key: str):
         raise HTTPException(503, '暂时无法确认会话删除结果。') from exc
 
 
+# 复用说明（依据工作台根目录 `工具复用台账.md`）：热点数据层优先复用「自托管的
+# DailyHotApi」（github.com/imsyy/DailyHotApi，MIT，40+ 站点，
+# `docker run --restart always -p 6688:6688 -d imsyy/dailyhot-api:latest`）。
+# 配置 EASEL_DAILYHOT_BASE 后热点雷达切换到自托管源并解锁扩展平台；
+# 未配置时完全保持原有行为（原公开接口链 + 原 6 个平台），不改动任何既有结果。
+DAILYHOT_BASE = os.environ.get("EASEL_DAILYHOT_BASE", "").strip().rstrip("/")
+
 TREND_SOURCES: dict[str, tuple[str, str | None]] = {
     "weibo": ("https://60s.viki.moe/v2/weibo", "https://v2.xxapi.cn/api/weibohot"),
     "douyin": ("https://60s.viki.moe/v2/douyin", "https://v2.xxapi.cn/api/douyinhot"),
@@ -2461,6 +2692,31 @@ TREND_SOURCES: dict[str, tuple[str, str | None]] = {
     "baidu": ("https://60s.viki.moe/v2/baidu/hot", "https://v2.xxapi.cn/api/baiduhot"),
     "toutiao": ("https://60s.viki.moe/v2/toutiao", "https://www.toutiao.com/hot-event/hot-board/?origin=toutiao_pc"),
 }
+
+# DailyHotApi 的调用名称（GET {DAILYHOT_BASE}/{name}），仅在配置 EASEL_DAILYHOT_BASE 后启用
+DAILYHOT_SOURCES: dict[str, str] = {
+    "weibo": "weibo",
+    "douyin": "douyin",
+    "zhihu": "zhihu",
+    "bilibili": "bilibili",
+    "baidu": "baidu",
+    "toutiao": "toutiao",
+    "kuaishou": "kuaishou",
+    "36kr": "36kr",
+    "juejin": "juejin",
+    "sspai": "sspai",
+    "ithome": "ithome",
+    "huxiu": "huxiu",
+    "thepaper": "thepaper",
+    "tieba": "tieba",
+    "v2ex": "v2ex",
+    "douban-movie": "douban-movie",
+    "qq-news": "qq-news",
+    "sina-news": "sina-news",
+    "netease-news": "netease-news",
+    "weread": "weread",
+}
+
 TREND_LABELS = {
     "weibo": "微博",
     "douyin": "抖音",
@@ -2468,12 +2724,51 @@ TREND_LABELS = {
     "bilibili": "B站",
     "baidu": "百度",
     "toutiao": "头条",
+    "kuaishou": "快手",
+    "36kr": "36氪",
+    "juejin": "掘金",
+    "sspai": "少数派",
+    "ithome": "IT之家",
+    "huxiu": "虎嗅",
+    "thepaper": "澎湃",
+    "tieba": "贴吧",
+    "v2ex": "V2EX",
+    "douban-movie": "豆瓣电影",
+    "qq-news": "腾讯新闻",
+    "sina-news": "新浪新闻",
+    "netease-news": "网易新闻",
+    "weread": "微信读书",
 }
 _TREND_CACHE: dict[str, tuple[float, list]] = {}
 
 
+def _trend_keys() -> list[str]:
+    """当前可用的热点平台：原有公开接口 6 个 + 配置自托管后解锁的扩展平台。"""
+    keys = list(TREND_SOURCES)
+    if DAILYHOT_BASE:
+        keys += [k for k in DAILYHOT_SOURCES if k not in TREND_SOURCES]
+    return keys
+
+
+def trend_platforms() -> list[dict]:
+    return [{"key": k, "label": TREND_LABELS.get(k, k)} for k in _trend_keys()]
+
+
+def _is_local_url(url: str) -> bool:
+    host = (urllib.parse.urlsplit(url).hostname or "").lower()
+    return host in ("127.0.0.1", "localhost", "::1") or host.startswith("127.")
+
+
+_LOCAL_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
 def _http_get_json(url: str, timeout: int = 8):
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 Easel"})
+    # 本机自托管热榜服务必须绕过代理：环境里配了 http_proxy 时，
+    # 127.0.0.1 会被塞进隧道从而必然失败（实测表现为 tunnel 502）。
+    if _is_local_url(url):
+        with _LOCAL_OPENER.open(req, timeout=timeout) as r:
+            return json.loads(r.read().decode("utf-8", "replace"))
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.loads(r.read().decode("utf-8", "replace"))
 
@@ -2497,14 +2792,20 @@ def _parse_hot(obj: dict) -> list[dict]:
             out.append({
                 "title": str(title),
                 "hot": str(it.get("hot") or it.get("hot_value") or it.get("HotValue") or it.get("num") or ""),
-                "url": it.get("url") or it.get("Url") or it.get("link") or it.get("mobil_url") or "",
+                "url": it.get("url") or it.get("Url") or it.get("link") or it.get("mobileUrl") or it.get("mobil_url") or "",
             })
     return out
 
 
 def _fetch_platform(pf: str) -> list[dict]:
-    primary, backup = TREND_SOURCES.get(pf, (None, None))
-    for url in (primary, backup):
+    # 自托管 DailyHotApi 优先；未配置或取不到时回落原公开接口链
+    candidates: list[str | None] = []
+    if DAILYHOT_BASE:
+        name = DAILYHOT_SOURCES.get(pf)
+        if name:
+            candidates.append(f"{DAILYHOT_BASE}/{name}")
+    candidates.extend(TREND_SOURCES.get(pf, (None, None)))
+    for url in candidates:
         if not url:
             continue
         try:
@@ -2520,9 +2821,20 @@ def _fetch_platform(pf: str) -> list[dict]:
     return []
 
 
+@app.get("/api/trends/sources")
+async def api_trend_sources():
+    """热点雷达当前可用的平台清单（随是否配置自托管 DailyHotApi 动态变化）。"""
+    return {
+        "platforms": trend_platforms(),
+        "selfHosted": bool(DAILYHOT_BASE),
+        "hint": "" if DAILYHOT_BASE else "配置 EASEL_DAILYHOT_BASE 可在本机自托管热榜服务，解锁快手、36氪、掘金等更多平台。",
+    }
+
+
 @app.get("/api/trends")
 async def api_trends(platforms: str = "weibo,douyin,zhihu", limit: int = 12):
-    pfs = list(dict.fromkeys(p.strip() for p in platforms.split(",") if p.strip() in TREND_SOURCES))
+    allowed = set(_trend_keys())
+    pfs = list(dict.fromkeys(p.strip() for p in platforms.split(",") if p.strip() in allowed))
     loop = asyncio.get_event_loop()
     result = []
     for pf in pfs:
@@ -2759,4 +3071,4 @@ if __name__ == "__main__":
     if proxy_url:
         print(f"  {proxy_url}")
     print()
-    uvicorn.run(app, host="0.0.0.0", port=port, log_level="warning")
+    uvicorn.run(app, host=WEB_BIND_HOST, port=port, log_level="warning")

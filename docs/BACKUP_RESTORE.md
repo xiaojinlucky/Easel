@@ -2,7 +2,49 @@
 
 备份包含私有账号信息，目录不要公开。源码、安装运行时和官方 Codex 登录应独立保留；此备份不是完整磁盘镜像。
 
-## 备份
+## 两层备份：先明确用哪一层
+
+| | `scripts/backup_local.py` | `scripts/backup_accounts.py` |
+|---|---|---|
+| 覆盖 | 全量：Docker 数据卷、`research.sqlite`、outputs/profiles/config/deploy | 只覆盖「配一次很费事、丢了必须重来」的账号登录态 |
+| 前提 | 必须先停 Web / 网关 / 容器，备份期间不要重启创作任务 | 不碰 Docker、不停服，随时可跑 |
+| 耗时 | 数分钟 | 秒级 |
+| 产出 | `.runtime/backups/<时间戳>/`（目录 + manifest + ZIP + 卷 tar） | `.runtime/account-backups/<时间戳>.zip`（ZIP + 内嵌 MANIFEST） |
+
+**为什么要单独做轻量那层**：六个平台的浏览器登录态在 `~/.easel-browser-profiles`，
+位于项目目录**之外**，`backup_local.py` 的归档范围覆盖不到；而它恰好是最难重建的部分
+——全靠重新扫码。换机器、清理用户目录、误删都会一次性丢掉。
+
+轻量层覆盖：`~/.easel-browser-profiles/`、`outputs/_login/`、`profiles/`、`cookies.json`（B 站）、
+`skills/openclaw/skill-wechat-publisher/wechat-publisher.yaml`（公众号凭据）、
+`.runtime/{wechat-state.json,postiz-account.json,postiz.env,postiz-bind.yaml}`、`.runtime/postiz-cli-home/`。
+浏览器缓存与日志（`Cache` / `Code Cache` / `*.log`）刻意排除：实测某个平台 profile 的 87 MB 里
+85 MB 是缓存，去掉后同一份登录态只剩不到 1 MB。
+
+刻意**不纳入**：`scripts/.token_cache*.json`（约 2 小时过期的微信令牌缓存，失效自动重取，属可重建产物；
+`.gitignore` 单列它是为了防泄密，与备份覆盖面无关）、`~/.openclaw-easel-studio/`（实测 1.04 GB 的
+agent 运行时与插件缓存，模型认证按本文口径用官方登录重新授权）、Postiz/WeRSS 的 Docker 卷（属全量层）。
+
+```powershell
+.\.venv\Scripts\python.exe -X utf8 scripts\backup_accounts.py status
+.\.venv\Scripts\python.exe -X utf8 scripts\backup_accounts.py backup
+.\.venv\Scripts\python.exe -X utf8 scripts\backup_accounts.py list
+.\.venv\Scripts\python.exe -X utf8 scripts\backup_accounts.py verify .runtime\account-backups\accounts-<时间戳>.zip
+.\.venv\Scripts\python.exe -X utf8 scripts\backup_accounts.py restore --dry-run .runtime\account-backups\accounts-<时间戳>.zip
+.\.venv\Scripts\python.exe -X utf8 scripts\backup_accounts.py restore .runtime\account-backups\accounts-<时间戳>.zip
+```
+
+恢复的注意点：
+
+- 先关闭工作台与浏览器进程。被占用而写不进去的文件会在结尾单独列出，重跑即可补齐。
+- 恢复前脚本会先把**当前状态**快照成一份 `accounts-snapshot-<时间戳>.zip`，后悔可以直接 restore 回去。
+- 只恢复自己产出的归档：`verify` 校验的是**完整性**（内容有没有坏），不是**来源签名**；
+  自己改内容并同步改 MANIFEST 是能对上的。
+- 归档含登录态与密钥，目录只放在本机私有位置。
+- `postiz.env` / `postiz-bind.yaml` 是本机生成的，换机器后仍需按下面的顺序重新初始化发布栈。
+- 手动备份与恢复前快照分开计数（默认各留 10 / 3 份），恢复不会挤掉手动备份。
+
+## 全量备份
 
 等创作完成，关闭工作台页面并停止 Web/模型网关，再运行：
 

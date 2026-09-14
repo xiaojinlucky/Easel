@@ -368,6 +368,38 @@ def test_onboard_evidence_gates_prompt(monkeypatch, has_articles, permission_err
         assert any("48001" in text for text in result["missing"])
 
 
+def test_publish_draft_records_receipt(local_state, monkeypatch):
+    _, state, _ = local_state
+    monkeypatch.setattr(wechat, "run_worker", lambda payload, timeout=120: {"ok": True, "publish_id": "pub-1"})
+    result = wechat.publish_draft("main", "media-1")
+    assert result["status"] == "publish_submitted"
+    assert result["publish_id"] == "pub-1"
+    saved = json.loads(state.read_text(encoding="utf-8"))
+    assert saved["history"]["main"][-1]["media_id"] == "media-1"
+
+
+def test_worker_publish_submits_freepublish(monkeypatch):
+    import scripts.wechat_worker as worker
+    import wechat_token
+
+    monkeypatch.setattr(wechat_token, "get_access_token", lambda **kwargs: "PRIVATE-TOKEN")
+    calls = []
+
+    class Response:
+        status_code = 200
+
+        def json(self):
+            return {"errcode": 0, "publish_id": "pub-9"}
+
+    monkeypatch.setattr(worker.requests, "post", lambda *args, **kwargs: calls.append((args, kwargs)) or Response())
+    result = worker._publish({"account": "main", "media_id": "draft-1"})
+    assert result["ok"] is True
+    assert result["publish_id"] == "pub-9"
+    assert "freepublish/submit" in calls[0][0][0]
+    assert calls[0][1]["json"] == {"media_id": "draft-1"}
+    assert "PRIVATE-TOKEN" not in json.dumps(result)
+
+
 def test_onboard_persists_snapshot(local_state, monkeypatch):
     _, state, _ = local_state
     snapshot = {"account": "main", "collected_at": "now", "articles": [], "analytics": {}, "missing": ["缺数据"], "evidence_count": 0, "prompt": None}

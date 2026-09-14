@@ -182,6 +182,11 @@ export interface TrendGroup {
 export function fetchTrends(platforms: string, limit = 12): Promise<{ trends: TrendGroup[]; updated: number }> {
   return request(`/api/trends?platforms=${encodeURIComponent(platforms)}&limit=${limit}`);
 }
+export interface TrendSource { key: string; label: string; }
+/** 当前可用的热点平台（随是否配置自托管 DailyHotApi 动态变化）。 */
+export function fetchTrendSources(): Promise<{ platforms: TrendSource[]; selfHosted: boolean; hint: string }> {
+  return request('/api/trends/sources');
+}
 
 // ---- 内容排期 ----
 export interface ScheduleItem {
@@ -411,6 +416,18 @@ export interface ChatQuestion {
   questions: ChatQuestionItem[];
   expiresAtMs?: number;
 }
+export async function fetchPendingQuestions(sessionId: string): Promise<ChatQuestion[]> {
+  if (!sessionId) return [];
+  try {
+    const data = await request<{ ok?: boolean; questions?: ChatQuestion[] }>(
+      `/api/chat/questions/pending?sessionId=${encodeURIComponent(sessionId)}`,
+    );
+    return data.questions || [];
+  } catch {
+    return [];
+  }
+}
+
 export async function answerQuestion(
   payload: { questionId: string; answers: Record<string, string[]>; resolvedBy?: string },
 ): Promise<{ ok: boolean; error?: string }> {
@@ -480,6 +497,40 @@ export interface LoginStatus {
 
 export function fetchAccounts(): Promise<AccountItem[]> {
   return request<AccountItem[]>('/api/accounts');
+}
+
+// ---- 社交媒体平台注册表（/api/platforms）----
+// 平台差异由后端注册表声明，前端按键渲染，不写 `if platform === 'xxx'` 分支。
+export interface PlatformPanel {
+  id: string;      // compose | drafts | analytics | monitor
+  label: string;
+}
+
+export interface PlatformItem {
+  id: string;
+  name: string;
+  backend: string;                              // xhs | web | biliup | douyin | official_api | postiz
+  supported: boolean;
+  loggedIn: boolean;
+  note: string;
+  group: string;                                // note | video | longform | article | relay
+  authKind: 'qrcode' | 'credential' | 'service';
+  publishMode: 'direct' | 'draft_then_publish' | 'scheduled';
+  contentKind: string;
+  analyticsSource: string;                      // scrape | official_api
+  workspace: string;                            // 非空 = 该平台有独立工作区页面
+  panels: PlatformPanel[];
+  actionLabel: string;                          // 卡片主按钮文案（service 类通道用）
+  actionUrl: string;                            // 非空 = 主操作是跳到外部服务
+}
+
+export interface PlatformList {
+  platforms: PlatformItem[];
+  hint: string;
+}
+
+export function fetchPlatforms(): Promise<PlatformList> {
+  return request<PlatformList>('/api/platforms');
 }
 
 export interface AccountWhoami {
@@ -745,6 +796,32 @@ export interface WechatOnboardResponse {
   missing: string[];
   evidence_count: number;
   prompt: string | null;
+}
+
+export function publishWechatDraft(account: string, mediaId: string): Promise<Record<string, unknown>> {
+  return request('/api/wechat/publish', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ account, media_id: mediaId }),
+  });
+}
+
+export interface AuthGuidePlatform { key: string; name: string; supported: boolean; loggedIn: boolean; next: string; }
+export interface AuthGuideWechat {
+  config_present: boolean; configured_count: number; account_count: number;
+  accounts: { key: string; name: string; configured: boolean }[];
+  last_draft: { title?: string; media_id?: string; status?: string } | null;
+  can_publish: boolean; next: string;
+}
+export interface AuthGuidePostiz {
+  online: boolean; channels: { id: string; name: string; type: string; disabled: boolean }[];
+  channel_count: number; error: string; url: string; next: string;
+}
+export interface AuthGuideSnapshot {
+  platforms: AuthGuidePlatform[]; platforms_logged: number;
+  wechat: AuthGuideWechat; postiz: AuthGuidePostiz; ready: boolean;
+}
+export function fetchAuthGuide(): Promise<AuthGuideSnapshot> {
+  return request<AuthGuideSnapshot>('/api/auth-guide');
 }
 
 export function onboardWechat(account: string): Promise<WechatOnboardResponse> {

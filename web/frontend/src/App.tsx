@@ -21,6 +21,7 @@ import IdeasPage from './components/IdeasPage';
 import PublishPage from './components/PublishPage';
 import BreakdownPage from './components/BreakdownPage';
 import SubNav from './components/SubNav';
+import { IconLayout } from './components/icons';
 import OnboardingWizard from './components/OnboardingWizard';
 import { fetchStatus, fetchPersonas, streamChat, fetchLastTurn, stopChat } from './lib/api';
 import type { PersonaItem, UploadedFile, ChatQuestion } from './lib/api';
@@ -809,6 +810,15 @@ export default function App() {
       <main className="main-content">
         {(['trends', 'ideas', 'calendar', 'publish', 'breakdown'] as Page[]).includes(currentPage) && (
           <SubNav current={currentPage} onNavigate={setCurrentPage} />
+        )}
+        {currentPage === 'wechat' && (
+          <SubNav
+            current={currentPage}
+            onNavigate={setCurrentPage}
+            backTo="accounts"
+            backLabel="社交媒体平台"
+            tabs={[{ page: 'wechat', Icon: IconLayout, label: '微信公众号' }]}
+          />
         )}
         <div className="page-host">
           {renderPage()}

@@ -720,12 +720,49 @@ textarea.field { resize: vertical; min-height: 90px; }
 @keyframes typingBounce { 0%, 60%, 100% { transform: translateY(0); opacity: 0.4; } 30% { transform: translateY(-6px); opacity: 1; } }
 
 /* ============ Accounts page ============ */
+.auth-guide { margin: 18px 0 8px; padding: 18px 18px 16px; border: 1px solid var(--border); border-radius: 14px; background: #fff; }
+.auth-guide--compact { margin-top: 8px; }
+.auth-guide-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
+.auth-guide-kicker { font-size: 11px; letter-spacing: .04em; color: var(--text-secondary); text-transform: uppercase; }
+.auth-guide h2 { margin: 4px 0 6px; font-size: 18px; }
+.auth-guide-head p { margin: 0; font-size: 13px; color: var(--text-secondary); line-height: 1.6; max-width: 46em; }
+.auth-guide-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 14px; }
+.auth-guide-step { display: flex; gap: 10px; padding: 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg-elev, #fafafa); }
+.auth-guide-step--done { border-color: color-mix(in srgb, var(--accent-start, #4361ee) 35%, var(--border)); }
+.auth-guide-num { width: 24px; height: 24px; border-radius: 50%; background: var(--accent-start, #4361ee); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; flex-shrink: 0; }
+.auth-guide-body h3 { margin: 0 0 6px; font-size: 14px; }
+.auth-guide-status { margin: 0 0 8px; font-size: 13px; color: var(--text); }
+.auth-guide-body ul { margin: 0 0 8px; padding: 0; list-style: none; display: grid; gap: 4px; }
+.auth-guide-body li { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; }
+.auth-guide-next { font-size: 12px; color: var(--text-secondary); line-height: 1.5; margin: 0 0 10px; }
+.auth-guide-body .btn { margin: 0 8px 0 0; }
+@media (max-width: 950px) { .auth-guide-grid { grid-template-columns: 1fr; } }
+
 .accounts-page { padding: 30px 32px 60px; overflow-y: auto; height: 100%; }
+/* ---- 通道总览：筛选芯片 + 分组（说明贴在分组标题旁，取代原先与卡片重复的顶部引导块）---- */
+.chip-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
+.notice-hint {
+  margin-top: 14px; padding: 11px 14px; font-size: 13px; line-height: 1.6;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--bg-elev); color: var(--text-secondary);
+}
+.platform-group { margin-top: 22px; }
+.platform-group-head {
+  display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+  padding-bottom: 7px; border-bottom: 1px solid var(--border);
+}
+.platform-group-title { font-size: 15px; font-weight: 700; }
+.platform-group-note { font-size: 12px; color: var(--text-secondary); flex: 1; min-width: 12em; }
+.platform-group-count { font-size: 12px; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.platform-group-empty { margin-top: 12px; font-size: 12.5px; color: var(--text-secondary); }
+.platform-group .accounts-grid { margin-top: 12px; }
+
 .accounts-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 14px; margin-top: 18px; }
 .account-card { padding: 18px; display: flex; flex-direction: column; gap: 10px; }
 .account-card-head { display: flex; align-items: center; justify-content: space-between; }
 .account-card-name { font-size: 15px; font-weight: 650; }
-.account-card-note { color: var(--text-secondary); font-size: 12px; line-height: 1.5; min-height: 30px; }
+.account-card-note { color: var(--text-secondary); font-size: 12px; line-height: 1.5; min-height: 30px; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.account-card-meta { color: var(--text-tertiary, var(--text-secondary)); font-size: 11px; line-height: 1.5; opacity: .85; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .account-identity { display: flex; align-items: center; gap: 10px; min-height: 44px; }
 .account-avatar { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; flex-shrink: 0; background: var(--bg-subtle, #eee); }
 .account-avatar-fallback { display: flex; align-items: center; justify-content: center; font-size: 18px; font-weight: 650; color: #fff; background: linear-gradient(135deg, #a78bfa, #7c6bd6); }

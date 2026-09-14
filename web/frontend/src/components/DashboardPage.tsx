@@ -8,6 +8,7 @@ import type {
   AnalyticsPlatform, AccountAnalytics, AccountWhoami,
 } from '../lib/api';
 import type { Page } from './Sidebar';
+import AuthGuide from './AuthGuide';
 import { getWhoamiCache, verifyStale } from '../lib/whoami';
 import {
   IconFire, IconCalendar, IconOutputs, IconChat, IconSkills, IconAccounts,
@@ -144,6 +145,7 @@ export default function DashboardPage({ persona, gatewayStatus, onNavigate, onUs
           ))}
         </div>
       </div>
+      <AuthGuide onNavigate={onNavigate} compact />
 
       {/* 概览数字 */}
       <div className="dash-stats">

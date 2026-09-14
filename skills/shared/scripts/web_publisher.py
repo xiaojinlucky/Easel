@@ -1001,13 +1001,25 @@ def cmd_login_qr(a) -> int:
     timeout_s = a.timeout or 180
 
     login_state.write_status(sf, "starting")
+    headed = bool(getattr(a, "headed", False))
+    if headed:
+        login_state.write_status(sf, "window_login",
+                                 "请在弹出的浏览器窗口里扫码，不要关掉那个窗口。登录成功后会保存在本机。")
     with sync_playwright() as p:
         browser = p.chromium.launch_persistent_context(
-            str(profile), headless=True, locale="zh-CN",
+            str(profile), headless=not headed, locale="zh-CN",
             args=LAUNCH_ARGS)
         page = browser.pages[0] if browser.pages else browser.new_page()
         try:
-            page.goto(cfg["login_url"], wait_until="domcontentloaded")
+            try:
+                page.goto(cfg["login_url"], wait_until="domcontentloaded", timeout=45000)
+            except Exception as e:
+                login_state.write_status(
+                    sf, "error",
+                    f"打不开登录页（{type(e).__name__}）。常见原因：网络/风控，或与「校验账号」抢同一个登录目录。",
+                )
+                print(f"❌ {cfg['name']} 打不开登录页：{e}", file=sys.stderr)
+                return 1
             # 给客户端 redirect + 登录态渲染时间：已登录常从入口页跳到 /profile 等，
             # 固定 1.2s 经常不够（快手实测 → 误判未登录去截整页）。等 login_check 出现最多 6s。
             try:
@@ -1034,8 +1046,20 @@ def cmd_login_qr(a) -> int:
             # 截二维码为 PNG。视频号等把码放在跨域 iframe 里（主页面找不到）→ 截 iframe 元素本体；
             # 其余平台在主页面异步渲染（base64/canvas）→ 先等渲染再按打分裁剪。统一走 _capture_qr。
             qr_out.parent.mkdir(parents=True, exist_ok=True)
-            _capture_qr(page, qr_out, cfg)
-            login_state.write_status(sf, "qr_ready", f"扫码登录 {cfg['name']}", qr=str(qr_out))
+            captured = False
+            try:
+                _capture_qr(page, qr_out, cfg)
+                captured = True
+            except Exception:
+                if not headed:
+                    raise
+            if headed:
+                login_state.write_status(
+                    sf, "window_login",
+                    "请在弹出的浏览器窗口里扫码，不要关掉那个窗口。登录成功后会保存在本机。",
+                    qr=str(qr_out) if captured else "")
+            elif captured:
+                login_state.write_status(sf, "qr_ready", f"扫码登录 {cfg['name']}", qr=str(qr_out))
             print(f"📱 {cfg['name']} 登录页/二维码已保存：{qr_out}", file=sys.stderr)
             print(f"⏳ 等待扫码（最长 {timeout_s}s）...", file=sys.stderr)
 
@@ -1295,11 +1319,12 @@ def main() -> int:
     add_common(p)
     p.set_defaults(func=cmd_login)
 
-    p = sub.add_parser("login-qr", help="headless 抠二维码登录（供 Web 前端）")
+    p = sub.add_parser("login-qr", help="抠二维码登录（供 Web 前端；桌面可加 --headed 弹窗扫）")
     add_common(p)
     p.add_argument("--qr-out", help="二维码图片输出路径")
     p.add_argument("--status-file", help="登录状态 JSON 输出路径（供 Web 后端轮询）")
     p.add_argument("--timeout", type=int, help="等待扫码超时秒数（默认 180）")
+    p.add_argument("--headed", action="store_true", help="有头模式（本地有桌面时可窗口内扫）")
     p.set_defaults(func=cmd_login_qr)
 
     p = sub.add_parser("publish", help="网页发布")

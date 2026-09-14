@@ -200,6 +200,45 @@ _ANALYTICS_DIAGNOSTICS = {
 }
 
 
+def _publish(payload: dict[str, Any]) -> dict[str, Any]:
+    account = str(payload.get("account") or "").strip()
+    media_id = str(payload.get("media_id") or "").strip()
+    if not account or not media_id:
+        return _error("invalid_input", "账号和草稿 media_id 不能为空。")
+    from wechat_token import get_access_token
+
+    token = get_access_token(account_name=account)
+    try:
+        response = requests.post(
+            "https://api.weixin.qq.com/cgi-bin/freepublish/submit",
+            params={"access_token": token},
+            json={"media_id": media_id},
+            timeout=30,
+        )
+        status = int(getattr(response, "status_code", 200))
+        try:
+            data = response.json()
+        except (TypeError, ValueError):
+            data = None
+    except requests.exceptions.Timeout:
+        return _error("timeout", "公众号发布接口超时。")
+    except requests.exceptions.RequestException:
+        return _error("network_error", "公众号发布接口暂时不可用。")
+    if status >= 400:
+        return _error(status, f"公众号发布接口 HTTP {status}。")
+    if not isinstance(data, dict):
+        return _error("invalid_response", "公众号发布接口未返回有效 JSON。")
+    if int(data.get("errcode") or 0) != 0:
+        return _error(data.get("errcode"), _sanitize(data.get("errmsg") or "发布失败"))
+    return {
+        "ok": True,
+        "account": account,
+        "media_id": media_id,
+        "publish_id": data.get("publish_id"),
+        "status": "publish_submitted",
+    }
+
+
 def _analytics(payload: dict[str, Any]) -> dict[str, Any]:
     account = str(payload.get("account") or "").strip()
     when = str(payload.get("date") or "").strip()
@@ -335,6 +374,8 @@ def dispatch(payload: dict[str, Any]) -> dict[str, Any]:
         return _draft(payload)
     if op == "analytics":
         return _analytics(payload)
+    if op == "publish":
+        return _publish(payload)
     return _error("invalid_operation", "不支持的公众号操作。")
 
 
