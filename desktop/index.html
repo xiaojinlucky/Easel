@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self';">
+  <title>Easel 自媒体工作台</title>
+  <link rel="stylesheet" href="shell.css">
+</head>
+<body>
+  <header>
+    <span class="brand">Easel <small>桌面工作台</small></span>
+    <nav aria-label="应用切换">
+      <button data-action="home" class="selected">创作工作台</button>
+      <button data-action="publish">发布日历</button>
+      <button data-action="feeds">订阅阅读</button>
+    </nav>
+    <button class="folder" data-action="outputs">打开成品文件夹</button>
+  </header>
+  <main id="loading">
+    <img src="icon.png" width="96" height="96" alt="Easel">
+    <h1>准备你的创作空间</h1>
+    <p id="message">正在连接本机服务…</p>
+    <button data-action="retry">重试连接</button>
+    <button data-action="logs">查看日志</button>
+  </main>
+  <footer><span id="status" role="status">正在启动…</span><button data-action="status">运行状态</button></footer>
+  <script src="shell.js"></script>
+</body>
+</html>

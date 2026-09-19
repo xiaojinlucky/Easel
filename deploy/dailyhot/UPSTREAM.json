@@ -1,0 +1,20 @@
+{
+  "repository": "https://github.com/imsyy/DailyHotApi",
+  "commit": "36c77e3bd891c11642d314cfb229bf31646704de",
+  "latest_release": "v2.0.8",
+  "license": "MIT",
+  "verified_at": "2026-09-14",
+  "verified_via": "api.github.com/repos/imsyy/DailyHotApi (stars 4051, pushed 2026-03-11, license MIT, archived false)",
+  "role": "热点雷达数据层：web/app.py /api/trends 可选的自托管数据源",
+  "reuse_depth": "直接依赖（官方镜像原样运行，HTTP 只读消费，未内联源码、未打补丁）",
+  "adaptations": [
+    "Compose 服务限定为 easel-dailyhot，端口 6688 仅绑定 127.0.0.1",
+    "CACHE_TTL 由上游默认 3600 秒下调为 900 秒",
+    "本机启用微博热搜广告过滤（FILTER_WEIBO_ADVERTISEMENT）",
+    "Easel 侧通过 EASEL_DAILYHOT_BASE 读取；未配置时热度雷达行为与改造前完全一致"
+  ],
+  "notes": [
+    "上游最近一次提交为 2026-03-11，已满 6 个月无更新 —— 属 P0-② 的边界情况，故仅在配置后启用，且保留原公开接口链作为兜底",
+    "上游自带免责声明：接口数据来自公开渠道，仅供技术研究；使用时自行评估合规性"
+  ]
+}

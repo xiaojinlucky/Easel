@@ -1,0 +1,20 @@
+[
+  {
+    "id": "magazine-personal-ip",
+    "prompt": "我是做品牌表达诊断的个人 IP，目标用户是有真实产品但在小红书讲不清楚的创业者。帮我把账号当成一本杂志来办，定母题、设栏目，做一座选题库。",
+    "must": ["母题", "栏目", "信任", "喜欢", "选题"],
+    "must_not": ["涨粉", "爆款", "第三方背书"]
+  },
+  {
+    "id": "magazine-product-account",
+    "prompt": "我是一个做家庭收纳工具的产品号，用 xiaohongshu-magazine 帮我搭选题库。请先判断这个账号是围绕业务还是围绕个人。",
+    "must": ["围绕业务", "母题", "栏目", "选题"],
+    "must_not": ["保证成交", "外部案例"]
+  },
+  {
+    "id": "magazine-handoff-to-planner",
+    "prompt": "母题和栏目我已经想好了，现在我想要一个 14 天的发布日历。",
+    "must": ["xiaohongshu-topic-planner"],
+    "must_not": ["编造数据", "承诺爆款"]
+  }
+]

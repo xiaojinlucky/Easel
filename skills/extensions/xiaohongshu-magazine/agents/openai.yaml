@@ -1,0 +1,7 @@
+interface:
+  display_name: "AI工作台 · 杂志感选题库"
+  short_description: "《小红书运营手册 · AI工作台》母题、栏目和开枝散叶选题库"
+  default_prompt: "Use $xiaohongshu-magazine from 《小红书运营手册 · AI工作台》 to build a magazine-style topic library: define the account's core theme, columns, and a branching topic library."
+
+policy:
+  allow_implicit_invocation: true

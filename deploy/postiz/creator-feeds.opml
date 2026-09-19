@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0"><head><title>Easel 创作者参考订阅</title></head><body>
+  <outline text="创作工具与社区" title="创作工具与社区">
+    <outline type="rss" text="宝玉的分享" title="宝玉的分享" xmlUrl="https://baoyu.io/feed.xml" htmlUrl="https://baoyu.io/"/>
+    <outline type="rss" text="Hacker News" title="Hacker News" xmlUrl="https://news.ycombinator.com/rss" htmlUrl="https://news.ycombinator.com/"/>
+  </outline>
+</body></opml>
