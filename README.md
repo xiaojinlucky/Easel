@@ -365,6 +365,15 @@ Easel 使用独立的 `easel` OpenClaw profile，不会覆盖你本机已有的 
 - [已知问题](docs/known-issues.md)
 - [完整致谢](docs/ACKNOWLEDGMENTS.md)
 
+## 🗺️ 开发计划（Roadmap）
+
+按优先级排列，欢迎在 Issue / PR 中认领或补充：
+
+- [ ] **1. 适配 Windows 系统** —— 完善原生 Windows 下安装、路径与编码、浏览器发布等全链路兼容。
+- [ ] **2. 安装简易化** —— 降低上手门槛，减少手动步骤，提供更顺滑的一键安装体验。
+- [ ] **3. 优化页面 Agent 交互** —— 改进 Web 工作台的对话交互、加载逻辑与流式反馈等体验细节。
+- [ ] **4. 适配更多 Agent Harness** —— 支持 OpenClaw 之外的更多 Agent 运行框架，例如 Claude Code、DeepSeek harness、Codex 等。
+
 ## 🙏 致谢
 
 Easel 的技能体系和工作流受益于许多优秀的开源项目、工具与内容方法论。感谢所有原作者和社区贡献者；

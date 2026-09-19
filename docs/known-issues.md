@@ -36,4 +36,26 @@
   npm i -g openclaw@latest
   ```
 
-- Easel 安装的是 OpenClaw 全局 CLI（预构建产物），因此我们**不在 Easel 仓库内内置该补丁**，而是跟随上游最新版本；后续会在 `easel doctor` 中加入 OpenClaw 最低版本检查。
+- Easel 安装的是 OpenClaw 全局 CLI（预构建产物），因此我们**不在 Easel 仓库内内置该补丁**，而是跟随上游最新版本。`easel doctor` 已加入 OpenClaw 最低版本检查（≥ 2026.6.11），版本过旧会直接提示升级。
+
+---
+
+## 第三方代理 / 兼容端点 LLM 一直超时（#9、#11）
+
+- **影响范围**：配置第三方代理或 Anthropic/OpenAI-compatible 端点的安装。
+- **表现**：`easel ping` 或小请求可能正常，但稍大、带思考的请求持续超时；部分版本上 `setup.sh` 还会报 `baseUrl: expected string, received undefined` 或 `Unrecognized key: "timeoutSeconds"`。
+
+### 根因（已修复）
+
+- 旧版 OpenClaw（如 2026.3.x）的 provider schema 要求 anthropic 配置**原子写入**；逐字段写入时中间态缺 `baseUrl`，整份校验失败。`setup.sh` 已改为整块一次性写入。
+- 旧版本不认识 `timeoutSeconds` 字段，单次请求 600 秒空闲超时写不进去，回落到默认短超时，首个 token 稍慢即超时。该写入在老版本上已降级为尽力而为，不再中断安装。
+
+### 建议
+
+```bash
+npm i -g openclaw@latest
+git pull
+bash setup.sh
+```
+
+升级后 `easel doctor` 会校验 OpenClaw ≥ 2026.6.11。不升级时安装不再报错，但请求超时受旧版默认超时限制；请确认模型名带 provider 前缀（如 `anthropic/claude-sonnet-4-6`），具体卡在哪一步可看 `easel gateway logs`。

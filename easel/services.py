@@ -9,7 +9,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 import psutil
-from easel.runtime import ROOT, STATE, PROFILE, CREATE_FLAGS, openclaw_command, runtime_env
+from easel.runtime import ROOT, STATE, PROFILE, CREATE_FLAGS, SHARED_RAW_STREAM, openclaw_command, runtime_env
 
 CLOAK_PORT = 9344
 CLOAK_PROFILE = STATE / 'cloak-research-profile'
@@ -179,6 +179,22 @@ def start(name: str) -> dict:
     logs = STATE / 'logs'
     logs.mkdir(parents=True, exist_ok=True)
     env = runtime_env()
+    if name == 'gateway':
+        # 上游 v0.2.0 的逐字流式 / 思考面板改成「常驻 gateway 写单个共享 raw 文件，
+        # web 侧 tail」。POSIX 由 scripts/gateway.sh 导出这两个变量；本机走这里起 gateway，
+        # 不补齐的话 _tail() 永远等不到文件 —— 表现为回答整块蹦出来、「💭 思考过程」空面板。
+        env['OPENCLAW_RAW_STREAM'] = '1'
+        env['OPENCLAW_RAW_STREAM_PATH'] = str(SHARED_RAW_STREAM)
+        env['EASEL_RAW_STREAM_PATH'] = str(SHARED_RAW_STREAM)
+        SHARED_RAW_STREAM.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            # 每次起 gateway 清空：防文件无限增长，也防读到上一轮残留事件。
+            SHARED_RAW_STREAM.write_text('', encoding='utf-8')
+        except OSError:
+            pass
+    elif name == 'web':
+        # 与 gateway 指向同一个文件；app.py 在 Windows 上也有同样的兜底默认值。
+        env['EASEL_RAW_STREAM_PATH'] = str(SHARED_RAW_STREAM)
     if name == 'platform-proxy':
         # This proxy only reaches private WSL services; never route it through an Internet proxy.
         for key in list(env):
