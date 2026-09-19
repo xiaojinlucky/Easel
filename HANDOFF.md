@@ -342,6 +342,10 @@ Cloak 可执行文件：`C:\Users\Administrator\.cloakbrowser\chromium-146.0.768
 - **OpenClaw / 嵌入页会把中文显示成乱码**：以会话文件和 `outputs/` 为准。
 - **SM 里有 skill ≠ Cursor 看得到**：本机全局看 `active-global-skills` + `skill-scope.json`。
 - **官方 `setup.ps1` 会动全机 Node/openclaw**，禁止在这台机器跑。
+- **`encoding="utf-8"` 解码子进程 ≠ 子进程真的写 UTF-8**：中文 Windows 上 Python 子进程默认按
+  cp936 写 stdout，父进程按 utf-8 解出的是坏字节 → JSON 解析失败，异常又被 `except Exception` 吞掉，
+  表现是「配方表读空」而不是报错。本机带 `PYTHONUTF8=1` 跑测试会**恰好掩盖**它（09-19 就是这样，
+  只有 CI 的 windows runner 炸）。写这类桥接要给子进程 `env` 显式塞 `PYTHONUTF8` + `PYTHONIOENCODING`。
 
 ### 8.2 旧坑（仍有效）
 
