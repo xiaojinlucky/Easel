@@ -180,7 +180,7 @@ export default function PublishPage({ persona, onNavigate }: PublishPageProps) {
     if (empty || publishing || checking) return;
     const targets = PLATFORMS.filter((p) => platforms.includes(p.key) && PUBLISHABLE.has(p.key));
     if (targets.length === 0) {
-      showToast('所选平台暂不支持一键发布（公众号请进入工作区，B站请用「复制」或终端 biliup）');
+      showToast('请先勾选至少其中一个可直接发布的平台（小红书、抖音、快手、视频号、知乎、B站、公众号）');
       return;
     }
     setChecking(true);
@@ -324,7 +324,7 @@ export default function PublishPage({ persona, onNavigate }: PublishPageProps) {
             <button className="btn btn-sm btn-primary" onClick={() => onNavigate('wechat')}>
               打开公众号工作区 →
             </button>
-            <span>公众号支持适配、复制和排期；排版、封面与送草稿箱在工作区完成，不会进入一键群发。</span>
+            <span>公众号支持适配、复制和排期；一键发布会把图文送进草稿箱（需先扫后台码并附封面），群发仍要到公众号后台确认。</span>
           </div>
         )}
 

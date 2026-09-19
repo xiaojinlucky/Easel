@@ -158,3 +158,54 @@ def test_whoami_begin_is_exclusive():
         assert web._whoami_begin("xiaohongshu") is True
     finally:
         web._whoami_end("xiaohongshu")
+
+
+def test_login_status_wechat_oa_reads_mp_files(tmp_path, monkeypatch):
+    monkeypatch.setattr(web, "LOGIN_DIR", tmp_path)
+    monkeypatch.setattr(web, "LOGIN_PROCESSES", {
+        "wechat-oa-mp": SimpleNamespace(poll=lambda: None),
+    })
+    monkeypatch.setattr(web, "_LOGIN_PENDING", set())
+    (tmp_path / "wechat-oa-mp.json").write_text(
+        json.dumps({"state": "window_login", "message": "请扫码"}), encoding="utf-8")
+    (tmp_path / "wechat-oa-mp.png").write_bytes(b"png")
+    data = web._login_status("wechat-oa")
+    assert data["state"] == "window_login"
+    assert data["qr"] == "_login/wechat-oa-mp.png"
+
+
+def test_mp_login_stale_window_login_after_restart_is_error(tmp_path, monkeypatch):
+    monkeypatch.setattr(web, "LOGIN_DIR", tmp_path)
+    monkeypatch.setattr(web, "LOGIN_PROCESSES", {})
+    monkeypatch.setattr(web, "_LOGIN_PENDING", set())
+    (tmp_path / "wechat-oa-mp.json").write_text(
+        json.dumps({"state": "window_login", "message": "请扫码"}), encoding="utf-8")
+    data = web._mp_login_status()
+    assert data["state"] == "error"
+    assert "中断" in data["message"]
+
+
+def test_wechat_oa_logged_in_is_mp_session_not_appid(monkeypatch):
+    """只填 AppID 不能把账号页/发布页标成已登录，否则会藏掉扫码入口，发布再 400。"""
+    cfg = web.LOGIN_RUNNERS["wechat-oa"]
+    monkeypatch.setattr(web, "_wechat_has_credentials", lambda: True)
+    monkeypatch.setattr(web, "_mp_login_status", lambda: {"state": "unknown"})
+    assert web._account_logged_in("wechat-oa", cfg) is False
+    monkeypatch.setattr(web, "_mp_login_status", lambda: {"state": "success"})
+    assert web._account_logged_in("wechat-oa", cfg) is True
+    monkeypatch.setattr(web, "_wechat_has_credentials", lambda: False)
+    assert web._account_logged_in("wechat-oa", cfg) is True
+
+
+def test_platforms_list_has_wechat_oa_not_duplicate_wechat():
+    from fastapi.testclient import TestClient
+    client = TestClient(web.app, base_url="http://127.0.0.1:7860", client=("127.0.0.1", 9))
+    body = client.get("/api/platforms").json()
+    rows = body["platforms"]
+    ids = [x.get("id") for x in rows]
+    assert "wechat-oa" in ids
+    assert ids.count("wechat") == 0
+    assert "postiz" in ids
+    oa = next(x for x in rows if x["id"] == "wechat-oa")
+    assert oa["backend"] == "wechat-oa"
+    assert oa["authKind"] == "qrcode"

@@ -1251,7 +1251,8 @@ def _publish(a, kind: str) -> int:
                     _dump_publish_fail(page, "tail-anomaly")   # 点击后现场留档（诊断「发布未跳转」）
                     published = None
             # 读回对账（权威判定）：界面判定只说明「提交动作被接受」，以平台侧作品列表为准。
-            if not a.keep_open and readback is None:
+            # keep_open 也必须就地读回：同一 user-data-dir 不能再开第二个 context。
+            if readback is None:
                 try:
                     readback = platform_readback.verify_douyin_publish(
                         page, title=a.title, since_ms=started_ms,
@@ -1272,8 +1273,10 @@ def _publish(a, kind: str) -> int:
                     ctx.close()
             except Exception:
                 pass
-        # 就地读回没拿到结论（崩溃/超时/通道错）→ 重开干净 context 读回核验
-        if readback is None or readback.outcome == "readback_error":
+        # 就地读回没拿到结论（崩溃/超时/通道错）→ 重开干净 context。
+        # --keep-open 时窗口还占着 profile，禁止再 launch_persistent_context。
+        if (not a.keep_open
+                and (readback is None or readback.outcome == "readback_error")):
             readback = _readback_verify(p, a, a.title, since_ms=started_ms,
                                         snapshot_ids=snapshot_ids)
     # 结算：以读回对账为权威（四档），界面判定仅作旁证。

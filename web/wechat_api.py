@@ -55,6 +55,7 @@ class DraftRequest(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     digest: str = Field(default="", max_length=120)
     author: str | None = Field(default=None, max_length=120)
+    html_path: str = Field(default="", max_length=1000)
 
 
 class AnalyticsRequest(BaseModel):
@@ -124,7 +125,28 @@ async def wechat_prepare(request: PrepareRequest) -> dict[str, str]:
 
 @router.post("/draft")
 async def wechat_draft(request: DraftRequest) -> dict[str, Any]:
+    session = False
     try:
+        from web.app import _mp_login_status
+        session = _mp_login_status().get("state") == "success"
+    except Exception:
+        session = False
+    try:
+        if session:
+            return await asyncio.to_thread(
+                wechat.create_session_draft,
+                request.account,
+                request.markdown_path,
+                request.cover_path,
+                request.title,
+                request.digest,
+                request.author,
+                request.html_path or None,
+            )
+        if not wechat.account_configured(request.account):
+            raise wechat.WechatError(
+                "公众号后台未登录：请先到账号页扫码。也可以在本页填写 AppID 走官方接口备用。"
+            )
         return await asyncio.to_thread(
             wechat.create_draft,
             request.account,

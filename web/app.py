@@ -2144,13 +2144,11 @@ def _account_logged_in(platform: str, cfg: dict) -> bool:
     if backend == 'biliup':
         return (PROJECT_ROOT / 'cookies.json').is_file()
     if backend == 'wechat-oa':
-        # 发布+数据都走「后台会话」→ 以 mp 后台登录成功为准；AppID 凭证作为兜底（旧配置）
+        # 账号页/发布页「已登录」= 已扫公众号后台码。AppID 只给工作区官方 API 用，不能冒充扫码会话。
         try:
-            if _mp_login_status().get('state') == 'success':
-                return True
+            return _mp_login_status().get('state') == 'success'
         except Exception:
-            pass
-        return _wechat_has_credentials()
+            return False
     st = LOGIN_DIR / f'{platform}.json'
     if st.is_file():
         try:
@@ -2223,6 +2221,8 @@ def _login_log_hint(platform: str) -> str:
 
 def _login_status(platform: str) -> dict:
     """读登录状态文件 + 二维码是否就绪。"""
+    if platform == 'wechat-oa':
+        return _mp_login_status()
     st = LOGIN_DIR / f'{platform}.json'
     data = {'state': 'unknown', 'message': ''}
     if st.is_file():
@@ -2300,10 +2300,7 @@ async def api_login_start(platform: str):
         if backend == 'xhs':
             cmd = [sys.executable, str(SHARED_SCRIPTS / 'xhs_publish.py'), 'login', '--no-proxy',
                    '--qr-out', str(qr), '--status-file', str(status), '--timeout', str(LOGIN_TIMEOUT)]
-            # 桌面版有屏幕：弹出真实窗口扫码（与 Buffer/Hootsuite 打开系统浏览器同一范式）。
-            # headless 抠码在本机出口 IP 被 300012 时连二维码都出不来。
-            if headed:
-                cmd.append('--headed')
+            # 登录内核走本机 CloakBrowser（无头也能过 300012），二维码仍抠到本页。
         elif backend == 'biliup':
             # B站：TV 端扫码登录 API 生成二维码 + 写 biliup cookie（biliup login 需真终端，前端用不了）
             cmd = [sys.executable, str(SHARED_SCRIPTS / 'bili_login.py'), 'login',
@@ -2426,8 +2423,7 @@ async def api_save_credentials(platform: str, req: WechatCredentials):
     with _WHOAMI_LOCK:
         _WHOAMI_CACHE.pop(platform, None)
     if ok:
-        _write_login_marker(platform, 'success', req.name.strip() or '微信公众号')
-        return {'ok': True, 'message': '公众号凭证已保存并验证通过'}
+        return {'ok': True, 'message': '公众号凭证已保存并验证通过。发布仍需在账号页扫公众号后台码。'}
     # 校验失败：凭证已存（下次改正后可直接重试），但明确告知失败原因（常见 40164 IP 白名单 / 40125 密钥错误）
     return {'ok': False, 'message': f'凭证已保存但验证未通过：{msg}。若是 40164 请把服务器出口 IP 加入公众号 IP 白名单。'}
 
@@ -2443,8 +2439,13 @@ def _mp_login_status() -> dict:
         except Exception:
             pass
     proc = LOGIN_PROCESSES.get("wechat-oa-mp")
-    if data["state"] in ("unknown", "starting") and proc is not None and proc.poll() is not None:
-        data = {"state": "error", "message": f"登录程序退出（码 {proc.poll()}），见 outputs/_login/wechat-oa-mp.log"}
+    if proc is not None:
+        code = proc.poll()
+        if code is not None and data["state"] not in ("success", "expired", "error"):
+            data = {"state": "error",
+                    "message": f"登录程序退出（码 {code}），见 outputs/_login/wechat-oa-mp.log"}
+    elif data["state"] in _IN_PROGRESS_LOGIN_STATES and not _login_claim_held("wechat-oa"):
+        data = {"state": "error", "message": "登录已中断（窗口已关或服务已重启），请关闭后重试"}
     qr = LOGIN_DIR / "wechat-oa-mp.png"
     if qr.is_file():
         data["qr"] = "_login/wechat-oa-mp.png"
@@ -2465,23 +2466,28 @@ async def api_mp_login_start(platform: str):
     cfg = LOGIN_RUNNERS.get(platform)
     if not cfg or cfg.get("backend") != "wechat-oa":
         raise HTTPException(404, "该平台不使用公众号后台登录")
-    LOGIN_DIR.mkdir(parents=True, exist_ok=True)
-    for f in (LOGIN_DIR / "wechat-oa-mp.png", LOGIN_DIR / "wechat-oa-mp.json"):
-        try:
-            f.unlink()
-        except OSError:
-            pass
-    wx_proxy = os.environ.get("EASEL_PROXY") or os.environ.get("https_proxy") or ""
-    cmd = [sys.executable, str(SHARED_SCRIPTS / "weixin_mp_stats.py"), "login",
-           "--proxy", wx_proxy, "--qr-out", str(LOGIN_DIR / "wechat-oa-mp.png"),
-           "--status-file", str(LOGIN_DIR / "wechat-oa-mp.json"), "--timeout", "240"]
-    if sys.platform == "win32":
-        cmd.append("--headed")
-    log_file = (LOGIN_DIR / "wechat-oa-mp.log").open("w", encoding="utf-8")
-    proc = subprocess.Popen(cmd, cwd=str(PROJECT_ROOT), env=_proxy_env(),
-                            stdout=log_file, stderr=subprocess.STDOUT)
-    log_file.close()
-    LOGIN_PROCESSES["wechat-oa-mp"] = proc
+    if _login_proc_alive("wechat-oa-mp") or not _try_begin_login("wechat-oa"):
+        return {"mode": "qr", **_mp_login_status()}
+    try:
+        LOGIN_DIR.mkdir(parents=True, exist_ok=True)
+        for f in (LOGIN_DIR / "wechat-oa-mp.png", LOGIN_DIR / "wechat-oa-mp.json"):
+            try:
+                f.unlink()
+            except OSError:
+                pass
+        wx_proxy = os.environ.get("EASEL_PROXY") or os.environ.get("https_proxy") or ""
+        cmd = [sys.executable, str(SHARED_SCRIPTS / "weixin_mp_stats.py"), "login",
+               "--proxy", wx_proxy, "--qr-out", str(LOGIN_DIR / "wechat-oa-mp.png"),
+               "--status-file", str(LOGIN_DIR / "wechat-oa-mp.json"), "--timeout", "240"]
+        if sys.platform == "win32":
+            cmd.append("--headed")
+        log_file = (LOGIN_DIR / "wechat-oa-mp.log").open("w", encoding="utf-8")
+        proc = subprocess.Popen(cmd, cwd=str(PROJECT_ROOT), env=_proxy_env(),
+                                stdout=log_file, stderr=subprocess.STDOUT)
+        log_file.close()
+        LOGIN_PROCESSES["wechat-oa-mp"] = proc
+    finally:
+        _release_login_claim("wechat-oa")
     for _ in range(60):
         await asyncio.sleep(0.5)
         s = _mp_login_status()
@@ -2509,7 +2515,7 @@ async def api_account_whoami(platform: str):
     if backend == 'unsupported':
         return {'loggedIn': False, 'name': '', 'avatar': ''}
     if backend == 'wechat-oa':
-        # 不起浏览器：以 mp 后台会话/AppID 配置判断（见 _account_logged_in），名字取配置账号名
+        # 不起浏览器：以 mp 后台会话为准（与发布闸门一致）。AppID 不计入 loggedIn。
         acc = _wechat_web_account()
         return {'loggedIn': _account_logged_in(platform, cfg),
                 'name': acc.get('name', '') or '微信公众号', 'avatar': ''}

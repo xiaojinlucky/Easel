@@ -13,11 +13,13 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from datetime import date as date_type
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote
 
 import yaml
 
@@ -27,13 +29,20 @@ from easel.runtime import CREATE_FLAGS, ROOT, runtime_env
 SKILL_ROOT = ROOT / "skills" / "openclaw" / "skill-wechat-publisher"
 SKILL_CONFIG = SKILL_ROOT / "wechat-publisher.yaml"
 WORKER = ROOT / "scripts" / "wechat_worker.py"
+WEIXIN_MP = ROOT / "skills" / "shared" / "scripts" / "weixin_mp_stats.py"
 OUTPUTS_DIR = ROOT / "outputs"
+LOGIN_DIR = OUTPUTS_DIR / "_login"
 STATE_FILE = ROOT / ".runtime" / "wechat-state.json"
 _STATE_LOCK = threading.Lock()
 
 _ACCOUNT_KEY = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _PUBLIC_MEDIA_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
+_IMG_SRC = re.compile(r'(<img\b[^>]*\bsrc=["\'])([^"\']+)(["\'])', re.IGNORECASE)
+_API_MEDIA = re.compile(
+    r"^(?:https?://(?:127\.0\.0\.1|localhost)(?::\d+)?)?/api/media/",
+    re.IGNORECASE,
+)
 
 
 class WechatError(RuntimeError):
@@ -139,6 +148,67 @@ def safe_output_file(value: str, suffixes: set[str] | None = None) -> Path:
     return candidate
 
 
+def _local_image_for_session_html(src: str) -> str | None:
+    """Map a preview img src to a disk path weixin_mp_stats can upload, or reject."""
+    raw = unquote(str(src or "").strip())
+    if not raw:
+        return None
+    media = _API_MEDIA.match(raw)
+    if media:
+        return str(safe_output_file(raw[media.end():], _PUBLIC_MEDIA_SUFFIXES))
+    lowered = raw.lower()
+    if lowered.startswith("http://") or lowered.startswith("https://") or raw.startswith("//"):
+        raise WechatError("正文图片必须来自内容库；请先将远程图片导入内容库，不支持外部地址。")
+    if lowered.startswith("data:"):
+        raise WechatError("正文不支持内嵌 data 图片，请改从内容库插入。")
+    return None
+
+
+def _session_html_path(html: Path) -> tuple[Path, Path | None]:
+    """Rewrite /api/media/ preview URLs to local files. Temp path must be deleted by caller."""
+    text = html.read_text(encoding="utf-8")
+    changed = False
+
+    def repl(match: re.Match[str]) -> str:
+        nonlocal changed
+        local = _local_image_for_session_html(match.group(2))
+        if not local:
+            return match.group(0)
+        changed = True
+        return f"{match.group(1)}{Path(local).as_posix()}{match.group(3)}"
+
+    rewritten = _IMG_SRC.sub(repl, text)
+    if not changed:
+        return html, None
+    handle, name = tempfile.mkstemp(suffix=".html", prefix="easel-mp-draft-")
+    os.close(handle)
+    tmp = Path(name)
+    tmp.write_text(rewritten, encoding="utf-8")
+    return tmp, tmp
+
+
+def _history_via_for_media(media_id: str) -> str | None:
+    """Latest matching receipt via, preferring mp-session if any copy exists."""
+    media_id = str(media_id or "").strip()
+    if not media_id:
+        return None
+    found: str | None = None
+    with _STATE_LOCK:
+        state = _load_state()
+        for items in (state.get("history") or {}).values():
+            if not isinstance(items, list):
+                continue
+            for rec in items:
+                if not isinstance(rec, dict):
+                    continue
+                if str(rec.get("media_id") or "").strip() != media_id:
+                    continue
+                found = str(rec.get("via") or "") or found
+                if found == "mp-session":
+                    return found
+    return found
+
+
 def _worker_error(result: dict[str, Any]) -> WechatError:
     error = result.get("error")
     if isinstance(error, dict):
@@ -224,9 +294,27 @@ def dashboard() -> dict[str, Any]:
         "accounts": accounts,
         "default_account": str(default) if isinstance(default, str) and default in account_keys else None,
         "config_present": SKILL_CONFIG.is_file(),
+        "mp_logged_in": mp_session_logged_in(),
         "history": history[:100],
         "analytics": analytics[:100],
     }
+
+
+def mp_session_logged_in() -> bool:
+    """账号页扫码成功后留下的 mp 会话标记（与发布中心同一份文件）。"""
+    marker = LOGIN_DIR / "wechat-oa-mp.json"
+    if not marker.is_file():
+        return False
+    try:
+        data = json.loads(marker.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return isinstance(data, dict) and data.get("state") == "success"
+
+
+def account_configured(key: str) -> bool:
+    account = _account_map(_load_config()).get(_safe_account_key(key)) or {}
+    return bool(str(account.get("app_id") or "") and str(account.get("app_secret") or ""))
 
 
 def save_account(
@@ -293,6 +381,116 @@ def check_account(account: str) -> dict[str, Any]:
     return run_worker({"op": "check", "account": account})
 
 
+def _record_draft(
+    account: str,
+    title: str,
+    digest: str,
+    author: str,
+    media_id: str,
+    md: Path,
+    cover: Path,
+    via: str,
+) -> dict[str, Any]:
+    receipt = {
+        "account": account,
+        "title": str(title),
+        "digest": str(digest or "")[:120],
+        "author": str(author or ""),
+        "media_id": media_id,
+        "markdown_path": _public_output_path(md),
+        "cover_path": _public_output_path(cover),
+        "status": "draft_created",
+        "via": via,
+        "created_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+    }
+    with _STATE_LOCK:
+        state = _load_state()
+        state["history"].setdefault(account, []).append(receipt)
+        _write_state(state)
+    return {
+        "media_id": media_id,
+        "status": "draft_created",
+        "account": account,
+        "via": via,
+        "receipt": receipt,
+    }
+
+
+def create_session_draft(
+    account: str,
+    markdown_path: str,
+    cover_path: str,
+    title: str,
+    digest: str = "",
+    author: str | None = None,
+    html_path: str | None = None,
+) -> dict[str, Any]:
+    """用已扫码的 mp 后台会话建草稿（与发布中心 wechat-oa 同一引擎）。"""
+    account = _safe_account_key(account)
+    md = safe_output_file(markdown_path, {".md", ".markdown"})
+    cover = safe_output_file(cover_path, _PUBLIC_MEDIA_SUFFIXES)
+    title = str(title or "").strip()
+    if not title:
+        raise WechatError("草稿标题不能为空。")
+    if html_path:
+        html = safe_output_file(html_path, {".html", ".htm"})
+    else:
+        html = md.with_suffix(".html")
+        if not html.is_file():
+            raise WechatError("请先生成排版预览，再送草稿箱。")
+        html = safe_output_file(_public_output_path(html), {".html", ".htm"})
+    if not WEIXIN_MP.is_file():
+        raise WechatError("公众号后台发布组件缺失。")
+    html_for_mp, html_tmp = _session_html_path(html)
+    wx_proxy = os.environ.get("EASEL_PROXY") or os.environ.get("https_proxy") or ""
+    cmd = [
+        sys.executable, str(WEIXIN_MP), "publish", "--proxy", wx_proxy,
+        "--html", str(html_for_mp), "--cover", str(cover), "--title", title,
+        "--digest", str(digest or "")[:120], "--author", str(author or ""),
+    ]
+    env = runtime_env()
+    env["PYTHONUTF8"] = "1"
+    try:
+        try:
+            completed = subprocess.run(
+                cmd,
+                cwd=str(ROOT),
+                env=env,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                timeout=600,
+                creationflags=CREATE_FLAGS,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise WechatError("公众号后台送草稿超时，请稍后重试。") from exc
+        except OSError as exc:
+            raise WechatError("公众号后台发布组件启动失败：" + sanitize_error(exc)) from exc
+    finally:
+        if html_tmp is not None:
+            html_tmp.unlink(missing_ok=True)
+    payload: dict[str, Any] | None = None
+    for line in reversed((completed.stdout or "").splitlines()):
+        try:
+            candidate = json.loads(line)
+        except (TypeError, ValueError):
+            continue
+        if isinstance(candidate, dict):
+            payload = candidate
+            break
+    if payload is None:
+        raise WechatError(sanitize_error((completed.stderr or completed.stdout or "公众号后台未返回结果。")[-300:]))
+    if completed.returncode != 0 or payload.get("success") is not True:
+        raise WechatError(sanitize_error(payload.get("error") or "公众号后台建草稿失败。"))
+    media_id = str(
+        payload.get("media_id") or payload.get("appMsgId") or payload.get("appmsgid") or ""
+    ).strip()
+    if not media_id:
+        raise WechatError("微信未返回有效的草稿 media_id。")
+    return _record_draft(account, title, digest or "", str(author or ""), media_id, md, cover, "mp-session")
+
+
 def create_draft(
     account: str,
     markdown_path: str,
@@ -318,22 +516,9 @@ def create_draft(
     media_id = result.get("media_id")
     if not isinstance(media_id, str) or not media_id.strip():
         raise WechatError("微信未返回有效的草稿 media_id。")
-    receipt = {
-        "account": account,
-        "title": str(title),
-        "digest": str(digest or "")[:120],
-        "author": str(author or ""),
-        "media_id": media_id,
-        "markdown_path": _public_output_path(md),
-        "cover_path": _public_output_path(cover),
-        "status": "draft_created",
-        "created_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-    }
-    with _STATE_LOCK:
-        state = _load_state()
-        state["history"].setdefault(account, []).append(receipt)
-        _write_state(state)
-    return {"media_id": media_id, "status": "draft_created", "account": account, "receipt": receipt}
+    return _record_draft(
+        account, str(title), digest or "", str(author or ""), media_id, md, cover, "official-api",
+    )
 
 
 def analytics(account: str, when: str) -> dict[str, Any]:
@@ -361,6 +546,8 @@ def publish_draft(account: str, media_id: str) -> dict[str, Any]:
     media_id = str(media_id or "").strip()
     if not media_id or len(media_id) > 128:
         raise WechatError("缺少有效的草稿 media_id。")
+    if _history_via_for_media(media_id) == "mp-session":
+        raise WechatError("扫码草稿请到公众号后台群发，不能走本页官方发布接口。")
     result = run_worker({"op": "publish", "account": account, "media_id": media_id}, timeout=120)
     publish_id = result.get("publish_id")
     receipt = {

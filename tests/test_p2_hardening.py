@@ -118,6 +118,7 @@ def test_auth_guide_get_without_origin_is_allowed():
     assert response.status_code == 200
     body = response.json()
     assert 'platforms' in body and 'wechat' in body and 'postiz' in body
+    assert 'mp_logged_in' in body['wechat']
 
 
 def test_stdout_buffer_is_bounded():

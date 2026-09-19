@@ -22,6 +22,8 @@ def snapshot() -> dict:
             'next': '已登录，可去发布中心发内容' if logged else '打开账号页扫码登录',
         })
     logged_n = sum(1 for p in platforms if p['loggedIn'])
+    oa_cfg = LOGIN_RUNNERS.get('wechat-oa') or {}
+    mp_logged = _account_logged_in('wechat-oa', oa_cfg) if oa_cfg else False
 
     try:
         dash = wechat.dashboard()
@@ -29,20 +31,21 @@ def snapshot() -> dict:
         configured = [a for a in wechat_accounts if a.get('configured')]
         history = dash.get('history') or []
         last_draft = history[0] if history else None
+        if mp_logged:
+            next_step = '已扫码，去公众号工作区排版并送草稿箱'
+        elif configured:
+            next_step = '已填 AppID 备用通道；日常发稿请先到账号页扫公众号后台码'
+        else:
+            next_step = '去账号页扫公众号后台码（AppID 仅备用）'
         wechat_state = {
             'config_present': bool(dash.get('config_present')),
             'configured_count': len(configured),
             'account_count': len(wechat_accounts),
             'accounts': [{'key': a.get('key'), 'name': a.get('name'), 'configured': bool(a.get('configured'))} for a in wechat_accounts],
             'last_draft': ({'title': last_draft.get('title'), 'media_id': last_draft.get('media_id'), 'status': last_draft.get('status')} if isinstance(last_draft, dict) else None),
-            'can_publish': bool(configured and last_draft and last_draft.get('media_id')),
-            'next': (
-                '已有草稿，可在公众号工作区点正式发布'
-                if configured and last_draft and last_draft.get('media_id')
-                else '已配置，去公众号工作区排版并送草稿箱'
-                if configured
-                else '去公众号工作区填写 AppID / AppSecret 并校验'
-            ),
+            'mp_logged_in': mp_logged,
+            'can_publish': bool(mp_logged or (configured and last_draft and last_draft.get('media_id'))),
+            'next': next_step,
         }
     except Exception as exc:
         wechat_state = {
@@ -51,7 +54,8 @@ def snapshot() -> dict:
             'account_count': 0,
             'accounts': [],
             'last_draft': None,
-            'can_publish': False,
+            'mp_logged_in': mp_logged,
+            'can_publish': mp_logged,
             'next': '公众号状态读失败：' + str(exc)[:120],
         }
 
@@ -65,7 +69,7 @@ def snapshot() -> dict:
     postiz_online = bool(postiz['online'])
     postiz_error = '' if postiz_online else str(postiz['note'])
 
-    ready = bool(logged_n or wechat_state.get('configured_count') or channels)
+    ready = bool(logged_n or wechat_state.get('mp_logged_in') or wechat_state.get('configured_count') or channels)
     return {
         'platforms': platforms,
         'platforms_logged': logged_n,

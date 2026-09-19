@@ -22,6 +22,7 @@ import type {
   WechatPrepareResponse,
   WechatState,
   WechatOnboardResponse,
+  WechatDraftResult,
 } from '../lib/api';
 import { IconCheck, IconFile, IconImage, IconLayout, IconRefresh, IconSend } from './icons';
 
@@ -93,7 +94,7 @@ export default function WechatPage({ onCreate }: { onCreate: (prompt: string, ti
   const [preparing, setPreparing] = useState(false);
   const [coverPath, setCoverPath] = useState(savedArticle.coverPath || '');
   const [drafting, setDrafting] = useState(false);
-  const [draftResult, setDraftResult] = useState<Record<string, unknown> | null>(null);
+  const [draftResult, setDraftResult] = useState<WechatDraftResult | null>(null);
   const [publishing, setPublishing] = useState(false);
   const [publishResult, setPublishResult] = useState<Record<string, unknown> | null>(null);
 
@@ -280,8 +281,13 @@ export default function WechatPage({ onCreate }: { onCreate: (prompt: string, ti
   };
 
   const sendDraft = async () => {
-    if (!prepared || !coverPath || !hasArticle || !accountKey.trim()) {
-      setError('请先完成账号、标题正文、排版预览和封面选择。');
+    if (!prepared || !coverPath || !hasArticle) {
+      setError('请先完成标题正文、排版预览和封面选择。');
+      return;
+    }
+    const draftAccount = accountKey.trim() || (state?.mp_logged_in ? 'mp' : '');
+    if (!draftAccount) {
+      setError('请先选择账号，或到账号页扫公众号后台码。');
       return;
     }
     const confirmed = window.confirm(
@@ -293,13 +299,17 @@ export default function WechatPage({ onCreate }: { onCreate: (prompt: string, ti
     setDraftResult(null);
     try {
       const result = await createWechatDraft({
-        account: accountKey.trim(), markdown_path: prepared.markdown_path,
+        account: draftAccount,
+        markdown_path: prepared.markdown_path,
+        html_path: prepared.html_path,
         cover_path: coverPath, title: title.trim(), digest: digest.trim() || undefined,
         author: author.trim() || undefined,
       });
       setDraftResult(result);
       setPublishResult(null);
-      setNotice('草稿已提交到公众号草稿箱。确认无误后可在下方正式发布。');
+      setNotice(result.via === 'mp-session'
+        ? '草稿已提交到公众号后台草稿箱。群发请到 mp 后台确认；本页「正式发布」只适用于 AppID 官方接口草稿。'
+        : '草稿已提交到公众号草稿箱。确认无误后可在下方正式发布。');
     } catch (e) {
       setError(e instanceof Error ? e.message : '公众号草稿创建失败');
     } finally {
@@ -309,6 +319,10 @@ export default function WechatPage({ onCreate }: { onCreate: (prompt: string, ti
 
   const sendPublish = async () => {
     const mediaId = String(draftResult?.media_id || '').trim();
+    if (draftResult?.via === 'mp-session') {
+      setError('扫码草稿请到公众号后台群发，不能走本页官方发布接口。');
+      return;
+    }
     if (!accountKey.trim() || !mediaId) {
       setError('请先成功创建草稿，再正式发布。');
       return;
@@ -380,7 +394,7 @@ export default function WechatPage({ onCreate }: { onCreate: (prompt: string, ti
         <div>
           <div className="wechat-eyebrow">公众号工作区</div>
           <h1 className="page-title"><IconLayout size={22} /> 公众号内容与数据</h1>
-          <p className="page-subtitle">配置公众号、把 Markdown 排成可读文章、送入草稿箱，再按日期读取官方原始数据。</p>
+          <p className="page-subtitle">扫码登录后把 Markdown 排成可读文章并送进草稿箱；AppID 只给官方接口备用。</p>
         </div>
         <button className="btn btn-sm" onClick={() => void load()} disabled={loading}>
           <IconRefresh size={14} /> {loading ? '读取中…' : '刷新状态'}
@@ -394,13 +408,13 @@ export default function WechatPage({ onCreate }: { onCreate: (prompt: string, ti
         <div className="wechat-section-head">
           <div>
             <div className="wechat-section-kicker">连接状态</div>
-            <h2>公众号账号配置</h2>
+            <h2>公众号账号配置（官方 API 备用）</h2>
           </div>
-          <span className={`badge ${state?.config_present ? 'badge-ok' : ''}`}>
-            {loading ? '状态读取中…' : state?.config_present ? `已配置 ${configuredCount}/${state.accounts.length}` : '待配置'}
+          <span className={`badge ${state?.mp_logged_in || state?.config_present ? 'badge-ok' : ''}`}>
+            {loading ? '状态读取中…' : state?.mp_logged_in ? '已扫后台码' : state?.config_present ? `AppID 备用 ${configuredCount}/${state.accounts.length}` : '待扫码'}
           </span>
         </div>
-        <p className="wechat-help">这里使用 AppID / AppSecret 配置官方接口，不走扫码登录。AppSecret 不会从状态接口回填；留空保存会保留已有值。</p>
+        <p className="wechat-help">日常发稿请先到账号页扫公众号后台码。下面的 AppID / AppSecret 只给官方接口（按日取数、正式群发）用，不走扫码登录。AppSecret 不会从状态接口回填；留空保存会保留已有值。</p>
 
         <div className="wechat-account-tabs">
           {(state?.accounts || []).map((account) => (
@@ -469,7 +483,7 @@ export default function WechatPage({ onCreate }: { onCreate: (prompt: string, ti
           <div><div className="wechat-section-kicker">草稿箱</div><h2>选择封面并送入草稿箱</h2></div>
           <span className="badge">不会群发</span>
         </div>
-        <p className="wechat-help">图片来自现有内容库，支持 JPG、JPEG、PNG、GIF；点击图片选择封面，点击“插入正文”添加文章配图，两个选择互不影响。远程图片请先导入内容库。先送草稿箱，确认回执后再点正式发布；正式发布会调用微信 freepublish 接口，粉丝可见。</p>
+        <p className="wechat-help">图片来自现有内容库，支持 JPG、JPEG、PNG、GIF；点击图片选择封面，点击“插入正文”添加文章配图。送草稿箱默认走账号页已扫的后台会话，不需要 AppID。正式发布会调用微信 freepublish 接口（需 AppID），粉丝可见；扫码会话建的草稿请到公众号后台确认群发。</p>
         <div className="wechat-cover-grid">
           {covers.length === 0 && <div className="wechat-preview-empty"><IconImage size={24} /><p>内容库暂无可用图片封面。</p></div>}
           {covers.map((file) => (
@@ -491,7 +505,7 @@ export default function WechatPage({ onCreate }: { onCreate: (prompt: string, ti
         </div>
         {draftResult && <div className="wechat-result" role="status"><div className="wechat-result-title">草稿接口原始结果</div><pre>{pretty(draftResult)}</pre></div>}
         <div className="wechat-actions">
-          <button className="btn btn-sm btn-primary" onClick={() => void sendPublish()} disabled={publishing || !draftResult?.media_id}>
+          <button className="btn btn-sm btn-primary" onClick={() => void sendPublish()} disabled={publishing || !draftResult?.media_id || draftResult.via === 'mp-session'}>
             <IconSend size={14} /> {publishing ? '发布中…' : '确认并正式发布'}
           </button>
         </div>

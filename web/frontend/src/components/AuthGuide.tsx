@@ -27,7 +27,7 @@ export default function AuthGuide({ onNavigate, compact = false }: { onNavigate:
         <div>
           <div className="auth-guide-kicker">授权引导</div>
           <h2>把能发的通道接上</h2>
-          <p>按这三步走：国内平台扫码 → 公众号接口发布 → Postiz 频道授权。每一步都能看到当前状态和下一步。</p>
+          <p>按这三步走：国内平台扫码 → 公众号后台扫码（官方 API 备用）→ Postiz 频道授权。每一步都能看到当前状态和下一步。</p>
         </div>
         <button className="btn btn-sm" disabled={busy} onClick={load}>{busy ? '刷新中…' : '刷新状态'}</button>
       </div>
@@ -52,21 +52,24 @@ export default function AuthGuide({ onNavigate, compact = false }: { onNavigate:
               <button className="btn btn-sm" onClick={() => onNavigate('publish')}>打开发布中心</button>
             </div>
           </article>
-          <article className={stepClass(data.wechat.configured_count > 0)}>
+          <article className={stepClass(data.wechat.mp_logged_in)}>
             <div className="auth-guide-num">2</div>
             <div className="auth-guide-body">
-              <h3>公众号真实发布</h3>
+              <h3>公众号后台扫码</h3>
               <p className="auth-guide-status">
-                {data.wechat.configured_count > 0
-                  ? `已配置 ${data.wechat.configured_count} 个账号`
-                  : '还没填 AppID / AppSecret'}
+                {data.wechat.mp_logged_in
+                  ? '已扫公众号后台码，可送草稿箱'
+                  : '还没扫公众号后台码'}
               </p>
               {data.wechat.last_draft && (
                 <p>最近草稿：{data.wechat.last_draft.title || data.wechat.last_draft.media_id}（{data.wechat.last_draft.status}）</p>
               )}
+              {data.wechat.configured_count > 0 && !data.wechat.mp_logged_in && (
+                <p>已填 {data.wechat.configured_count} 个 AppID，仅作官方接口备用。</p>
+              )}
               <p className="auth-guide-next">{data.wechat.next}</p>
-              <button className="btn btn-sm btn-primary" onClick={() => onNavigate('wechat')}>
-                {data.wechat.can_publish ? '去正式发布' : '去配置并发布'}
+              <button className="btn btn-sm btn-primary" onClick={() => onNavigate(data.wechat.mp_logged_in ? 'wechat' : 'accounts')}>
+                {data.wechat.mp_logged_in ? '去工作区写稿' : '去扫码登录'}
               </button>
             </div>
           </article>

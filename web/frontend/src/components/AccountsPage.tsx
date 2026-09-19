@@ -120,7 +120,7 @@ export default function AccountsPage({ onNavigate, onNewProfile }: { onNavigate:
   }, []);
 
   // 打开页面：拉平台注册表（含各平台实时状态），随后后台自愈——对缓存缺失/过期的
-  // 扫码平台逐个真校验（whoami）。凭据型平台（公众号）不走扫码通道，不参与 whoami。
+  // 扫码平台逐个真校验（whoami）。公众号登录态由后端读 mp 会话，不走浏览器 whoami。
   const load = useCallback(() => {
     setErr('');
     fetchPlatforms()
@@ -643,8 +643,8 @@ export default function AccountsPage({ onNavigate, onNewProfile }: { onNavigate:
           <div className="modal" style={{ width: 420, maxWidth: '100%' }} onClick={(e) => e.stopPropagation()}>
             <h3 style={{ margin: '0 0 4px' }}>配置 {cred.name}</h3>
             <div style={{ fontSize: 12.5, color: 'var(--text-secondary)', marginBottom: 14, lineHeight: 1.6 }}>
-              公众号用官方接口发布，需填开发者凭证（公众平台 → 设置与开发 → 开发接口管理）。<br />
-              ⚠️ 需把本服务器出口 IP 加入公众号「IP 白名单」，否则报 40164。文章发到<b>草稿箱</b>，群发请到 mp 后台确认。
+              这是工作区「官方 API」备用通道（排版/草稿/按日期取数），不能代替账号页扫公众号后台码。<br />
+              ⚠️ 需把本机出口 IP 加入公众号「IP 白名单」，否则报 40164。发布中心发图文仍走扫码会话。
             </div>
             {credMsg && <div style={{ fontSize: 12.5, color: 'var(--green)', marginBottom: 10 }}>{credMsg}</div>}
             <label style={{ fontSize: 12, color: 'var(--text-secondary)' }}>AppID</label>

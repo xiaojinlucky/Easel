@@ -322,6 +322,7 @@ export interface WechatState {
   accounts: WechatAccount[];
   default_account: string | null;
   config_present: boolean;
+  mp_logged_in?: boolean;
   history: unknown[];
   analytics: unknown[];
 }
@@ -335,6 +336,13 @@ export interface WechatAccountInput {
 }
 
 export interface WechatPrepareResponse { markdown_path: string; html_path: string; }
+export interface WechatDraftResult {
+  media_id: string;
+  status: string;
+  account: string;
+  via?: 'mp-session' | 'official-api';
+  receipt?: Record<string, unknown>;
+}
 export interface WechatAnalyticsEndpoint { ok: boolean; data?: unknown; error?: string; }
 export interface WechatAnalyticsResponse {
   account: string;
@@ -373,9 +381,9 @@ export function prepareWechat(input: { title: string; body: string; author?: str
 }
 
 export function createWechatDraft(input: {
-  account: string; markdown_path: string; cover_path: string; title: string; digest?: string; author?: string;
-}): Promise<Record<string, unknown>> {
-  return request('/api/wechat/draft', {
+  account: string; markdown_path: string; cover_path: string; title: string; digest?: string; author?: string; html_path?: string;
+}): Promise<WechatDraftResult> {
+  return request<WechatDraftResult>('/api/wechat/draft', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input),
   });
 }
@@ -848,7 +856,7 @@ export interface AuthGuideWechat {
   config_present: boolean; configured_count: number; account_count: number;
   accounts: { key: string; name: string; configured: boolean }[];
   last_draft: { title?: string; media_id?: string; status?: string } | null;
-  can_publish: boolean; next: string;
+  mp_logged_in: boolean; can_publish: boolean; next: string;
 }
 export interface AuthGuidePostiz {
   online: boolean; channels: { id: string; name: string; type: string; disabled: boolean }[];

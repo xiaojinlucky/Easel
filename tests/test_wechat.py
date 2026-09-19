@@ -1,3 +1,4 @@
+import importlib.util
 import json
 from pathlib import Path
 
@@ -44,6 +45,7 @@ def local_state(monkeypatch, tmp_path):
     monkeypatch.setattr(wechat, "SKILL_CONFIG", config)
     monkeypatch.setattr(wechat, "STATE_FILE", state)
     monkeypatch.setattr(wechat, "OUTPUTS_DIR", outputs)
+    monkeypatch.setattr(wechat, "LOGIN_DIR", outputs / "_login")
     return config, state, outputs
 
 
@@ -51,6 +53,7 @@ def test_dashboard_has_account_metadata_but_no_secret(local_state):
     result = wechat.dashboard()
     assert result["default_account"] == "main"
     assert result["config_present"] is True
+    assert result["mp_logged_in"] is False
     assert {account["key"] for account in result["accounts"]} == {"main", "peer"}
     assert result["accounts"][0]["app_id"] == "wx-old"
     assert result["accounts"][0]["configured"] is True
@@ -107,6 +110,7 @@ def test_prepare_and_draft_keep_paths_safe_and_save_receipt(local_state, monkeyp
     assert prepared == {"markdown_path": "公众号/prepared.md", "html_path": "公众号/prepared.html"}
     result = wechat.create_draft("main", prepared["markdown_path"], "公众号/cover.png", "标题")
     assert result["media_id"] == "media-real"
+    assert result["via"] == "official-api"
     saved = json.loads(state.read_text(encoding="utf-8"))
     assert saved["history"]["main"][0]["media_id"] == "media-real"
     assert "secret-old" not in state.read_text(encoding="utf-8")
@@ -368,6 +372,219 @@ def test_onboard_evidence_gates_prompt(monkeypatch, has_articles, permission_err
         assert any("48001" in text for text in result["missing"])
 
 
+def test_mp_session_logged_in_reads_success_marker(local_state):
+    _, _, outputs = local_state
+    login = outputs / "_login"
+    login.mkdir(parents=True)
+    (login / "wechat-oa-mp.json").write_text(
+        json.dumps({"state": "success"}), encoding="utf-8")
+    assert wechat.mp_session_logged_in() is True
+    (login / "wechat-oa-mp.json").write_text(
+        json.dumps({"state": "window_login"}), encoding="utf-8")
+    assert wechat.mp_session_logged_in() is False
+
+
+def test_create_session_draft_runs_weixin_mp_and_records_via(local_state, monkeypatch):
+    _, state, outputs = local_state
+    article = outputs / "公众号"
+    article.mkdir(parents=True)
+    md = article / "prepared.md"
+    html = article / "prepared.html"
+    cover = article / "cover.png"
+    md.write_text("# 标题", encoding="utf-8")
+    html.write_text("<p>内容</p>", encoding="utf-8")
+    cover.write_bytes(b"png")
+    seen = {}
+
+    class Completed:
+        returncode = 0
+        stdout = json.dumps({"success": True, "media_id": "mp-draft-1"}, ensure_ascii=False) + "\n"
+        stderr = ""
+
+    def fake_run(command, **kwargs):
+        seen["command"] = command
+        return Completed()
+
+    monkeypatch.setattr(wechat.subprocess, "run", fake_run)
+    result = wechat.create_session_draft(
+        "main", "公众号/prepared.md", "公众号/cover.png", "标题",
+        html_path="公众号/prepared.html",
+    )
+    assert result["via"] == "mp-session"
+    assert result["media_id"] == "mp-draft-1"
+    assert "weixin_mp_stats.py" in " ".join(str(part) for part in seen["command"])
+    assert "publish" in seen["command"]
+    saved = json.loads(state.read_text(encoding="utf-8"))
+    assert saved["history"]["main"][0]["via"] == "mp-session"
+
+
+def test_api_draft_uses_session_when_mp_logged_in(monkeypatch):
+    app = FastAPI()
+    app.include_router(router)
+    calls = []
+    monkeypatch.setattr("web.app._mp_login_status", lambda: {"state": "success"})
+    monkeypatch.setattr(
+        wechat,
+        "create_session_draft",
+        lambda *args, **kwargs: calls.append((args, kwargs)) or {
+            "media_id": "sid", "via": "mp-session", "status": "draft_created", "account": "main",
+        },
+    )
+    monkeypatch.setattr(
+        wechat,
+        "create_draft",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not use official API")),
+    )
+    with TestClient(app) as client:
+        body = client.post("/api/wechat/draft", json={
+            "account": "main",
+            "markdown_path": "公众号/a.md",
+            "cover_path": "公众号/c.png",
+            "title": "标题",
+            "html_path": "公众号/a.html",
+        }).json()
+    assert body["via"] == "mp-session"
+    assert calls
+
+
+def test_api_draft_without_session_or_appid_asks_to_scan(monkeypatch):
+    app = FastAPI()
+    app.include_router(router)
+    monkeypatch.setattr("web.app._mp_login_status", lambda: {"state": "unknown"})
+    monkeypatch.setattr(wechat, "account_configured", lambda account: False)
+    with TestClient(app) as client:
+        response = client.post("/api/wechat/draft", json={
+            "account": "main",
+            "markdown_path": "公众号/a.md",
+            "cover_path": "公众号/c.png",
+            "title": "标题",
+        })
+    assert response.status_code == 422
+    assert "扫码" in response.text
+
+
+def test_api_draft_uses_official_when_configured_without_session(monkeypatch):
+    app = FastAPI()
+    app.include_router(router)
+    calls = []
+    monkeypatch.setattr("web.app._mp_login_status", lambda: {"state": "unknown"})
+    monkeypatch.setattr(wechat, "account_configured", lambda account: True)
+    monkeypatch.setattr(
+        wechat,
+        "create_draft",
+        lambda *args, **kwargs: calls.append((args, kwargs)) or {
+            "media_id": "oid", "via": "official-api", "status": "draft_created", "account": "main",
+        },
+    )
+    monkeypatch.setattr(
+        wechat,
+        "create_session_draft",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not use mp session")),
+    )
+    with TestClient(app) as client:
+        body = client.post("/api/wechat/draft", json={
+            "account": "main",
+            "markdown_path": "公众号/a.md",
+            "cover_path": "公众号/c.png",
+            "title": "标题",
+        }).json()
+    assert body["via"] == "official-api"
+    assert calls
+
+
+def _session_article(outputs: Path, html: str = "<p>内容</p>"):
+    article = outputs / "公众号"
+    article.mkdir(parents=True, exist_ok=True)
+    md = article / "prepared.md"
+    html_path = article / "prepared.html"
+    cover = article / "cover.png"
+    md.write_text("# 标题", encoding="utf-8")
+    html_path.write_text(html, encoding="utf-8")
+    cover.write_bytes(b"png")
+    return md, html_path, cover
+
+
+def test_create_session_draft_rewrites_api_media_html(local_state, monkeypatch):
+    _, _, outputs = local_state
+    photo = outputs / "相册"
+    photo.mkdir(parents=True)
+    image = photo / "a.png"
+    image.write_bytes(b"png")
+    _session_article(outputs, '<p><img src="/api/media/%E7%9B%B8%E5%86%8C/a.png"></p>')
+    seen = {}
+
+    class Completed:
+        returncode = 0
+        stdout = json.dumps({"success": True, "media_id": "mp-img-1"}, ensure_ascii=False) + "\n"
+        stderr = ""
+
+    def fake_run(command, **kwargs):
+        html_arg = Path(command[command.index("--html") + 1])
+        seen["html"] = html_arg.read_text(encoding="utf-8")
+        return Completed()
+
+    monkeypatch.setattr(wechat.subprocess, "run", fake_run)
+    result = wechat.create_session_draft(
+        "main", "公众号/prepared.md", "公众号/cover.png", "标题",
+        html_path="公众号/prepared.html",
+    )
+    assert result["media_id"] == "mp-img-1"
+    assert "/api/media/" not in seen["html"]
+    assert image.resolve().as_posix() in seen["html"]
+
+
+def test_create_session_draft_rejects_remote_body_image(local_state, monkeypatch):
+    _, _, outputs = local_state
+    _session_article(outputs, '<p><img src="https://cdn.example/x.png"></p>')
+    monkeypatch.setattr(
+        wechat.subprocess, "run",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not spawn")),
+    )
+    with pytest.raises(wechat.WechatError, match="内容库"):
+        wechat.create_session_draft(
+            "main", "公众号/prepared.md", "公众号/cover.png", "标题",
+            html_path="公众号/prepared.html",
+        )
+
+
+def test_create_session_draft_rejects_empty_media_id(local_state, monkeypatch):
+    _, state, outputs = local_state
+    _session_article(outputs)
+
+    class Completed:
+        returncode = 0
+        stdout = json.dumps({"success": True, "media_id": "  "}, ensure_ascii=False) + "\n"
+        stderr = ""
+
+    monkeypatch.setattr(wechat.subprocess, "run", lambda *a, **k: Completed())
+    with pytest.raises(wechat.WechatError, match="media_id"):
+        wechat.create_session_draft(
+            "main", "公众号/prepared.md", "公众号/cover.png", "标题",
+            html_path="公众号/prepared.html",
+        )
+    assert not state.is_file() or "draft_created" not in state.read_text(encoding="utf-8")
+
+
+def test_publish_draft_rejects_mp_session_media_id(local_state, monkeypatch):
+    _, _, outputs = local_state
+    _session_article(outputs)
+
+    class Completed:
+        returncode = 0
+        stdout = json.dumps({"success": True, "media_id": "mp-draft-1"}, ensure_ascii=False) + "\n"
+        stderr = ""
+
+    monkeypatch.setattr(wechat.subprocess, "run", lambda *a, **k: Completed())
+    wechat.create_session_draft(
+        "main", "公众号/prepared.md", "公众号/cover.png", "标题",
+        html_path="公众号/prepared.html",
+    )
+    with pytest.raises(wechat.WechatError, match="后台群发"):
+        wechat.publish_draft("main", "mp-draft-1")
+    with pytest.raises(wechat.WechatError, match="后台群发"):
+        wechat.publish_draft("peer", "mp-draft-1")
+
+
 def test_publish_draft_records_receipt(local_state, monkeypatch):
     _, state, _ = local_state
     monkeypatch.setattr(wechat, "run_worker", lambda payload, timeout=120: {"ok": True, "publish_id": "pub-1"})
@@ -406,3 +623,38 @@ def test_onboard_persists_snapshot(local_state, monkeypatch):
     monkeypatch.setattr(wechat, "run_worker", lambda payload, timeout: {"ok": True, **snapshot})
     assert wechat.onboard("main") == snapshot
     assert json.loads(state.read_text(encoding="utf-8"))["onboarding"]["main"] == snapshot
+
+
+def _load_weixin_mp():
+    path = Path(__file__).resolve().parents[1] / "skills" / "shared" / "scripts" / "weixin_mp_stats.py"
+    spec = importlib.util.spec_from_file_location("weixin_mp_stats_under_test", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_weixin_resolve_content_image_maps_api_media(tmp_path):
+    module = _load_weixin_mp()
+    module.PROJECT_ROOT = tmp_path
+    image = tmp_path / "outputs" / "相册" / "a.png"
+    image.parent.mkdir(parents=True)
+    image.write_bytes(b"png")
+    html = tmp_path / "outputs" / "公众号" / "a.html"
+    html.parent.mkdir(parents=True)
+    html.write_text("<p></p>", encoding="utf-8")
+    assert module.resolve_content_image("/api/media/相册/a.png", html) == image.resolve()
+    assert module.resolve_content_image("https://127.0.0.1:7860/api/media/相册/a.png", html) == image.resolve()
+    assert module.resolve_content_image("https://cdn.example/x.png", html) is None
+    assert module.resolve_content_image("/api/media/_login/secret.png", html) is None
+
+
+def test_weixin_profile_lock_rejects_second_holder(tmp_path):
+    module = _load_weixin_mp()
+    prof = tmp_path / "WeixinMpProfile"
+    holder = module._lock_profile(prof)
+    try:
+        with pytest.raises(RuntimeError, match="占用"):
+            module._lock_profile(prof)
+    finally:
+        module._unlock_profile(holder)
+
