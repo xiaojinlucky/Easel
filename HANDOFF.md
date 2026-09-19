@@ -11,12 +11,12 @@
 
 | 项 | 现役事实（2026-09-15 15:50 核对） |
 |---|---|
-| 长期开发树 | `F:\科研大师兄\自媒体工作台\Easel`（二次开发）。本地 `main` = `5ab86a0`，跟踪 **`origin/workbench`**（远端同点） |
+| 长期开发树 | `F:\科研大师兄\自媒体工作台\Easel`（二次开发）。本地 `main` = `origin/workbench` = **`89a828a`**（含上游 v0.2.0 合并） |
 | 上手/原版树 | `F:\科研大师兄\自媒体工作台\Easel-official`。detached **v0.1.1** `23d0f7c`，**不要当长期开发树** |
 | 用户现在在用 | 原版 Web **`127.0.0.1:7870`**（pid 65120）+ 网关 **`127.0.0.1:18789`**（pid 46380） |
 | 二次开发 Web | **7860 空**。桌面快捷方式「Easel 自媒体工作台」仍指向 7860，**此时不要和 7870 抢网关** |
 | GitHub | `origin` = `git@github.com:xiaojinlucky/Easel.git`（用户 fork）。`upstream` = `https://github.com/ZJU-REAL/Easel.git`。`gh` 默认仓库 = `xiaojinlucky/Easel` |
-| 相对上游 | 上游 v0.2.0（`ed3bf27`）**已合进** `merge/upstream-v020`，CI 全绿但**未落到 `main`**，见 §5.9 / §13 |
+| 相对上游 | 上游 v0.2.0（`ed3bf27`）**已合进并落地**：`main` = `origin/workbench` = `89a828a`（PR #1），CI 全绿。真机四条链仍未做，见 §5.9 / §13 |
 | 未提交 | 只剩根目录 `_*.py` 草稿脚本 —— 它们**本就不该提交**（§11 Don't） |
 | 原版未提交补丁 | `openclaw_cmd.py`、`scripts/gateway.ps1`、`xhs_publish.py`、`web/app.py`、`AccountsPage.tsx`；另有独立 `.venv`、启动脚本、show-me HTML |
 | 对话模型 | 7870 对话 = OpenClaw → Codex 插件 → **`openai/gpt-6-astra`**（官方 Codex 订阅）。**不是** Cursor 里的 Grok 4.6 |
@@ -246,7 +246,7 @@ Cloak 可执行文件：`C:\Users\Administrator\.cloakbrowser\chromium-146.0.768
 1. **`5ab86a0`（已在 `main` 且已推 `origin/workbench`）**：09-15 那批未提交胶水入库（公众号登录态只认
    `outputs/_login/wechat-oa-mp.json` 的 `state==success`、`POST /api/wechat/draft` 三分支降级、
    CloakBrowser 内核、`_ProfileLock`、抖音 `--keep-open`）。仍排除根目录 `_*.py`。
-2. **`91945f0`（在分支 `merge/upstream-v020`，**未并进 `main`、未推送**）**：合并 `upstream/main` v0.2.0，
+2. **`91945f0` → 经 PR #1 于 09-19 落地**：合并 `upstream/main` v0.2.0，
    149 文件 / +18,598 / −219。父提交 `5ab86a0` + `ed3bf27`。回退点 `backup/pre-upstream-merge` = `5ab86a0`。
 
 **合并时定下的、后续不要再改回去的三条不变量：**
@@ -284,7 +284,7 @@ Cloak 可执行文件：`C:\Users\Administrator\.cloakbrowser\chromium-146.0.768
 | 2 | 公众号真实送草稿未跑通 | 不要代用户点「登录」或送草稿。扫码会开有头 Chromium |
 | 3 | 7870 对话页中文乱码 | 会话 jsonl 正常。未修前端/网关编码 |
 | 4 | ~~二次开发 09-15 胶水未提交~~ 已做 | `5ab86a0` → `main` 已推 `origin/workbench`，见 §5.9。根目录 `_*.py` 仍未提交，且**不该**提交 |
-| 5 | ~~本地落后上游 11 个提交~~ 已合，未落地 | 合并提交 `91945f0` 只在 `merge/upstream-v020`，**未进 `main`、未推送**；推不推由用户定 |
+| 5 | ~~本地落后上游 11 个提交~~ 已合并已落地 | `main` = `origin/workbench` = `89a828a`（PR #1，CI 全绿）。**只剩真机四条链未验** |
 | 6 | 两套网关互斥 | 用户在用 7870。不要擅自起 7860 桌面版去抢 18789 |
 | 7 | 原版官方补丁只在 detached HEAD | 长期开发请回到 `Easel/` + fork `workbench` |
 
@@ -320,7 +320,7 @@ Cloak 可执行文件：`C:\Users\Administrator\.cloakbrowser\chromium-146.0.768
 
 > 请先读 `F:\科研大师兄\自媒体工作台\Easel\HANDOFF.md`。只提交二次开发树里与公众号登录态、Cloak 登录、发布页相关的源码和测试，不要 `_*.py`、`.env`、`.runtime`。提交前再跑 `tests/`。需要我先口头确认再 commit。
 
-**路线 C — 把落后的 11 个上游提交合进本地**
+**路线 C — 把落后的 11 个上游提交合进本地（09-19 已完成 → 落地 `89a828a`，见 §13）**
 
 > 本地 `main`（`f44b3b2`）落后 `upstream/main`（`71de7f9`）11 个提交。先读 HANDOFF §2.3，评估 wechat-oa ticket 与 CI 提交和未提交胶水的冲突，给出合入方案，未经我同意不要 merge。
 
@@ -438,20 +438,17 @@ Cloak 可执行文件：`C:\Users\Administrator\.cloakbrowser\chromium-146.0.768
 
 ## 13. 09-19 收尾：合并结果怎么落地（下一步真源）
 
-当前分支 `merge/upstream-v020`（代码头 = `cab8712` 编码修复，其后只有文档提交）。
-`main` 与远端 `workbench` 都仍停在 `5ab86a0`。
+**09-19 已落地**：[PR #1](https://github.com/xiaojinlucky/Easel/pull/1)（base `workbench`）以 merge commit
+`89a828a` 合入，本地 `main` 已 `--ff-only` 跟上同点，工作区干净。CI 三个 job 全绿
+（Skill contracts / pytest ubuntu / pytest windows）；首跑 windows 红过一次，抓出上游 `install_tool`
+桥接的 cp936 编码 bug，见 `cab8712` 与 §8.1。
 
-**09-19 已做完「先推分支让 CI 验」这一步**：分支已推 fork，开了 [PR #1](https://github.com/xiaojinlucky/Easel/pull/1)
-（base `workbench`）→ `MERGEABLE`，三个 job 全绿（Skill contracts / pytest ubuntu / pytest windows）。
-首跑 windows 红过一次，抓出上游 `install_tool` 桥接的 cp936 编码 bug，见 `cab8712` 与 §8.1。
-**合并本身还没落地**（`workbench` 没前进，`main` 没动）。下一步等用户选：
-
-1. **就地验收再落地**（推荐）：用户允许起服务后，真机跑四条链 —— 小红书 Cloak 扫码出码、
-   公众号真送草稿、对话逐字流式不乱码、桌面壳托盘完全退出。全绿再：
-   `git checkout main && git merge --ff-only merge/upstream-v020`，然后推 `origin/workbench`。
-2. **先合 PR 再长验**：直接 `gh pr merge 1`，让远端 `workbench` 前进；本地 `main` 需要
-   `git fetch && git merge --ff-only origin/workbench` 跟上。CI 已绿，风险只剩真机四条链。
-3. **放弃合并**：`git checkout main && git branch -D merge/upstream-v020`。`5ab86a0` 就是干净基线。
+- 回退：`git reset --hard backup/pre-upstream-merge`（= `5ab86a0`，合并前的干净基线）。
+  远端回退要强推 `workbench`，**必须先问用户**。
+- 临时分支 `merge/upstream-v020` 已完成使命，可 `git branch -d` 本地与远端一起删。
+- 仍待办：① 真机四条链（小红书 Cloak 扫码出码、公众号真送草稿、对话逐字流式不乱码、
+  桌面壳托盘完全退出）——要起服务，会抢用户在用的 18789，必须等用户让跑；
+  ② 上游 `SettingsPanel`/`EnvBoard` 与本机 `ModelSettingsPage` 两套模型设置 UI 的去重决定。
 
 复现验证命令（只读，不起服务、不碰 18789/7870）：
 
