@@ -1,0 +1,50 @@
+{
+  "id": "wf-1789467686-d81d44",
+  "name": "发现后写文案",
+  "updated": 1789479417,
+  "persona": "",
+  "nodes": [
+    {
+      "id": "start",
+      "type": "input",
+      "title": "起点",
+      "skill": "",
+      "prompt": "",
+      "layer": "",
+      "x": 80.0,
+      "y": 180.0
+    },
+    {
+      "id": "step1",
+      "type": "skill",
+      "title": "技能节点",
+      "skill": "skill-trending-topics",
+      "prompt": "",
+      "layer": "",
+      "x": 320.0,
+      "y": 180.0
+    },
+    {
+      "id": "smu2ptthaw3l",
+      "type": "skill",
+      "title": "制作",
+      "skill": "xhs-note-creator",
+      "prompt": "",
+      "layer": "produce",
+      "x": 560.0,
+      "y": 180.0
+    }
+  ],
+  "edges": [
+    {
+      "id": "e-start-step1",
+      "source": "start",
+      "target": "step1"
+    },
+    {
+      "id": "e-step1-smu2ptthaw3l",
+      "source": "step1",
+      "target": "smu2ptthaw3l"
+    }
+  ]
+}

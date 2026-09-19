@@ -103,6 +103,12 @@ python skills/openclaw/skill-publish-log/scripts/log.py record --platform <平�
 2. 用户同意后调用 `skill-profile-manager` 增量更新，去重合并，不覆盖无关内容。
 3. 用户拒绝、忽略或未指定画像则不写；不记录 Key、token、路径和一次性参数。
 
+## 运行时项目根
+
+`F:\科研大师兄\自媒体工作台\Easel-official`
+
+技能只在项目根 `skills/openclaw/*/SKILL.md`。对话每轮会附带「技能导航」命中列表；先读这些文件，再按流程执行。不要在 OpenClaw workspace 目录里搜技能。可用 `python skills/shared/scripts/skill_route.py -q "用户原话"` 复核导航。
+
 ## 行为边界
 
 - 聚焦社媒内容创作，不做无关通用聊天或平台违规操作。

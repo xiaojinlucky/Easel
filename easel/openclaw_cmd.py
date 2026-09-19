@@ -15,9 +15,32 @@ back to the PATH `openclaw` executable rather than hard-failing.
 
 from __future__ import annotations
 
+import os
 import shutil
 from functools import lru_cache
 from pathlib import Path
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _isolated_openclaw_cmd() -> list[str] | None:
+    """Prefer a local OpenClaw 2026.9.x, never PATH ``openclaw-cn`` 0.2.0.
+
+    This machine cannot ``npm i -g openclaw@latest`` (system Node is 24.15,
+    upstream wants 24.16+). Reuse the already-installed isolated runtime from
+    the sibling fork, or a project-local ``.runtime`` if present.
+    """
+    node_name = "node.exe" if os.name == "nt" else "node"
+    candidates = (
+        _PROJECT_ROOT / ".runtime",
+        _PROJECT_ROOT.parent / "Easel" / ".runtime",
+    )
+    for state in candidates:
+        entry = state / "node_modules" / "openclaw" / "openclaw.mjs"
+        node_bin = state / "node_modules" / "node" / "bin" / node_name
+        if entry.is_file() and node_bin.is_file():
+            return [str(node_bin), str(entry)]
+    return None
 
 
 @lru_cache(maxsize=1)
@@ -27,6 +50,10 @@ def openclaw_base_cmd() -> list[str]:
     Prefers ``[node, /path/to/openclaw.mjs]``; falls back to ``[openclaw]`` on
     PATH. Raises FileNotFoundError only when openclaw cannot be located at all.
     """
+    isolated = _isolated_openclaw_cmd()
+    if isolated:
+        return isolated
+
     node = shutil.which("node")
     oc = shutil.which("openclaw")
 

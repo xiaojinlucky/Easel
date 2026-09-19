@@ -6,6 +6,7 @@ import {
 } from '../lib/api';
 import type { AccountItem, AccountWhoami } from '../lib/api';
 import { getWhoamiCache, setWhoamiCache, verifyStale } from '../lib/whoami';
+import WorkflowDraftBar from './WorkflowDraftBar';
 
 type QRState = {
   platform: string;
@@ -18,6 +19,7 @@ type QRState = {
 
 const STATE_LABEL: Record<string, string> = {
   starting: '启动中…',
+  window_login: '请在弹出的窗口里扫码',
   qr_ready: '请扫码',
   scanned: '扫码成功',
   sms_required: '需短信验证',
@@ -39,7 +41,11 @@ function Avatar({ url, name }: { url?: string; name: string }) {
   return <div className="account-avatar account-avatar-fallback">{initial}</div>;
 }
 
-export default function AccountsPage() {
+export default function AccountsPage({
+  onDraftToChat,
+}: {
+  onDraftToChat?: (text: string, stage?: string, skill?: string, workflowId?: string) => void;
+}) {
   const [accounts, setAccounts] = useState<AccountItem[]>([]);
   const [err, setErr] = useState('');
   const [qr, setQr] = useState<QRState | null>(null);
@@ -286,12 +292,18 @@ export default function AccountsPage() {
             ⚠️ 平台可能对机房/代理 IP 判风险导致二维码弹不出，需干净/家宽 IP，或在正常网络登录后拷贝登录态目录。
           </p>
         </div>
-        <button className="btn btn-sm" onClick={load}>⟳ 刷新</button>
+        <div className="gallery-head-actions">
+          <WorkflowDraftBar
+            context="针对我已登录的账号，按这条配方执行；先核对登录态，再做发布或数据相关步骤。"
+            onDraftToChat={onDraftToChat}
+          />
+          <button className="btn btn-sm" onClick={load}>⟳ 刷新</button>
+        </div>
       </div>
 
-      {err && <div style={{ color: 'var(--red)', fontSize: 13, marginTop: 12 }}>{err}</div>}
+      {err && <div style={{ color: 'var(--red)', fontSize: 14, marginTop: 12 }}>{err}</div>}
       {terminalMsg && (
-        <div className="card" style={{ padding: 13, fontSize: 13, marginTop: 14 }}>{terminalMsg}</div>
+        <div className="card" style={{ padding: 13, fontSize: 14, marginTop: 14 }}>{terminalMsg}</div>
       )}
 
       <div className="accounts-grid">
@@ -350,14 +362,14 @@ export default function AccountsPage() {
           <div className="modal" style={{ width: 360, maxWidth: '100%', textAlign: 'center' }}
             onClick={(e) => e.stopPropagation()}>
             <h3 style={{ margin: '0 0 4px' }}>登录 {qr.name}</h3>
-            <div style={{ fontSize: 13, marginBottom: 14,
+            <div style={{ fontSize: 14, marginBottom: 14,
               color: qr.state === 'success' ? 'var(--green)'
                 : ['error', 'expired'].includes(qr.state) ? 'var(--red)' : 'var(--text-secondary)' }}>
               {STATE_LABEL[qr.state] || qr.state}{qr.message ? ` — ${qr.message}` : ''}
             </div>
             {qr.state === 'sms_required' ? (
               <div style={{ padding: '6px 4px 2px' }}>
-                <div style={{ fontSize: 13, marginBottom: 10,
+                <div style={{ fontSize: 14, marginBottom: 10,
                   color: /错误|过期|失败|重新|未找到|未完成|不正确|失效/.test(qr.message || '')
                     ? 'var(--red)' : 'var(--text-secondary)' }}>
                   {qr.message || '平台风控要求短信验证，验证码已发到你手机，请输入：'}
@@ -370,11 +382,19 @@ export default function AccountsPage() {
                   style={{ width: '100%', boxSizing: 'border-box', textAlign: 'center',
                     letterSpacing: 6, fontSize: 20, padding: '10px 12px',
                     border: '1px solid var(--border)', borderRadius: 8 }} />
-                {smsErr && <div style={{ color: 'var(--red)', fontSize: 12, marginTop: 6 }}>{smsErr}</div>}
+                {smsErr && <div style={{ color: 'var(--red)', fontSize: 14, marginTop: 6 }}>{smsErr}</div>}
                 <button className="btn btn-primary btn-block" style={{ marginTop: 12 }}
                   disabled={smsBusy} onClick={submitSms}>
                   {smsBusy ? '提交中…' : '提交验证码'}
                 </button>
+              </div>
+            ) : qr.state === 'window_login' ? (
+              <div style={{ fontSize: 14, color: 'var(--text-secondary)', padding: '20px 8px', lineHeight: 1.6 }}>
+                {qr.message || '已弹出 CloakBrowser 窗口。请在那个窗口里扫码，不要关掉那个窗口。'}
+                {qr.qr ? (
+                  <img className="qr-img" style={{ marginTop: 12 }}
+                    src={`${mediaUrl(qr.qr)}?v=${qr.qrTs || qrNonce}`} alt="登录二维码" />
+                ) : null}
               </div>
             ) : qr.state === 'qr_ready' && qr.qr ? (
               <img className="qr-img" src={`${mediaUrl(qr.qr)}?v=${qr.qrTs || qrNonce}`} alt="登录二维码" />
@@ -385,7 +405,7 @@ export default function AccountsPage() {
             ) : qr.state === 'success' ? (
               <div style={{ fontSize: 48, padding: 40 }}>✅</div>
             ) : ['error', 'expired'].includes(qr.state) ? (
-              <div style={{ fontSize: 13, color: 'var(--red)', padding: 30 }}>
+              <div style={{ fontSize: 14, color: 'var(--red)', padding: 30 }}>
                 {qr.message || '登录失败'}<br />可关闭后重试（或换干净 IP）。
               </div>
             ) : (
@@ -402,27 +422,27 @@ export default function AccountsPage() {
         <div className="overlay" onClick={closeCred}>
           <div className="modal" style={{ width: 420, maxWidth: '100%' }} onClick={(e) => e.stopPropagation()}>
             <h3 style={{ margin: '0 0 4px' }}>配置 {cred.name}</h3>
-            <div style={{ fontSize: 12.5, color: 'var(--text-secondary)', marginBottom: 14, lineHeight: 1.6 }}>
+            <div style={{ fontSize: 14, color: 'var(--text-secondary)', marginBottom: 14, lineHeight: 1.6 }}>
               公众号用官方接口发布，需填开发者凭证（公众平台 → 设置与开发 → 开发接口管理）。<br />
               ⚠️ 需把本服务器出口 IP 加入公众号「IP 白名单」，否则报 40164。文章发到<b>草稿箱</b>，群发请到 mp 后台确认。
             </div>
-            {credMsg && <div style={{ fontSize: 12.5, color: 'var(--green)', marginBottom: 10 }}>{credMsg}</div>}
-            <label style={{ fontSize: 12, color: 'var(--text-secondary)' }}>AppID</label>
+            {credMsg && <div style={{ fontSize: 14, color: 'var(--green)', marginBottom: 10 }}>{credMsg}</div>}
+            <label style={{ fontSize: 14, color: 'var(--text-secondary)' }}>AppID</label>
             <input value={credForm.appId} autoFocus
               onChange={(e) => setCredForm((f) => ({ ...f, appId: e.target.value.trim() }))}
               placeholder="wx..." style={{ width: '100%', boxSizing: 'border-box', padding: '9px 12px',
                 margin: '4px 0 12px', border: '1px solid var(--border)', borderRadius: 8, fontSize: 14 }} />
-            <label style={{ fontSize: 12, color: 'var(--text-secondary)' }}>AppSecret</label>
+            <label style={{ fontSize: 14, color: 'var(--text-secondary)' }}>AppSecret</label>
             <input value={credForm.appSecret} type="password"
               onChange={(e) => setCredForm((f) => ({ ...f, appSecret: e.target.value.trim() }))}
               placeholder="开发者密钥（不会回显）" style={{ width: '100%', boxSizing: 'border-box', padding: '9px 12px',
                 margin: '4px 0 12px', border: '1px solid var(--border)', borderRadius: 8, fontSize: 14 }} />
-            <label style={{ fontSize: 12, color: 'var(--text-secondary)' }}>默认作者（可选）</label>
+            <label style={{ fontSize: 14, color: 'var(--text-secondary)' }}>默认作者（可选）</label>
             <input value={credForm.author}
               onChange={(e) => setCredForm((f) => ({ ...f, author: e.target.value }))}
               placeholder="文章署名" style={{ width: '100%', boxSizing: 'border-box', padding: '9px 12px',
                 margin: '4px 0 4px', border: '1px solid var(--border)', borderRadius: 8, fontSize: 14 }} />
-            {credErr && <div style={{ color: 'var(--red)', fontSize: 12.5, marginTop: 8 }}>{credErr}</div>}
+            {credErr && <div style={{ color: 'var(--red)', fontSize: 14, marginTop: 8 }}>{credErr}</div>}
             <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
               <button className="btn btn-primary" style={{ flex: 1 }} disabled={credBusy} onClick={submitCred}>
                 {credBusy ? '验证中…' : '保存并验证'}

@@ -208,7 +208,7 @@ export default function ProfilePage({ persona, onNewProfile, onDeleted }: Profil
               {editing ? (
                 <textarea
                   className="field"
-                  style={{ minHeight: 150, fontFamily: "'SF Mono','Consolas',monospace", fontSize: 13 }}
+                  style={{ minHeight: 150, fontFamily: "'SF Mono','Consolas',monospace", fontSize: 14 }}
                   value={drafts[f.filename] ?? ''}
                   onChange={(e) => setDrafts((p) => ({ ...p, [f.filename]: e.target.value }))}
                 />

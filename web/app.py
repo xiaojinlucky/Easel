@@ -35,7 +35,11 @@ if str(PROJECT_ROOT / "scripts") not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
 
 from easel.openclaw_cmd import openclaw_base_cmd
+from easel.model_runtime import agent_options
+from easel.model_settings_api import router as settings_router
 from easel.persona import load_profile_text, persona_prefix, chat_turn_message, profile_exists, _FILE_ORDER
+from easel.skill_route import route as route_skills, suggest_recipe, summarize as skill_summarize
+from easel import workflow as wfstore
 from easel.timeouts import TIMEOUT_CHAT, TIMEOUT_DIRECT, TIMEOUT_PRODUCE
 try:
     from easel.gateway_questions import (
@@ -73,10 +77,8 @@ OPENCLAW_WORKSPACE = Path.home() / ".openclaw" / f"workspace-{OPENCLAW_PROFILE}"
 # OpenClaw 会话历史（transcript）目录：<profile 配置目录>/agents/main/sessions/<session-id>.jsonl
 OPENCLAW_SESSIONS_DIR = Path.home() / f".openclaw-{OPENCLAW_PROFILE}" / "agents" / "main" / "sessions"
 
-# 思考档位（每轮 --thinking）。实测：内网 codewiz 网关**不回传** extended-thinking 内容
-# （会话记录 & SSE 流里 thinking 命中恒为 0），故调高只增加延迟/开销、前端思考面板却永远为空。
-# 默认用 low 保证生成速度；仍可用 EASEL_THINKING_LEVEL 覆盖（若将来换了支持思考的网关再调 medium/high）。
-THINKING_LEVEL = (os.environ.get("EASEL_THINKING_LEVEL", "").strip() or "low")
+# 每轮模型/思考档位由 easel.model_runtime.agent_options() 注入（默认 gpt-5.6-luna / low）。
+# EASEL_THINKING_LEVEL 仍可覆盖思考档位。
 
 
 def _heal_openclaw_session(sk: str) -> None:
@@ -326,6 +328,7 @@ AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"}
 
 app = FastAPI(title="Easel", docs_url=None, redoc_url=None)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+app.include_router(settings_router)
 
 
 def list_personas() -> list[dict]:
@@ -416,6 +419,7 @@ def get_skills() -> list[dict]:
                 result.append({
                     'name': d.name,
                     'description': desc,
+                    'summary': skill_summarize(desc, d.name),
                     'layer': layer,
                     'needsApi': needs_api,
                     'apiConfigured': _skill_api_configured(d.name, env) if needs_api else True,
@@ -600,8 +604,7 @@ def run_agent_sync(msg: str, timeout: int = TIMEOUT_DIRECT, session_id: str | No
     # 钉死 --session-id 让 OpenClaw 每轮续同一 transcript（防跨天空闲后新起空会话丢历史，见 _openclaw_session_id）
     cmd = openclaw_base_cmd() + ['--profile', OPENCLAW_PROFILE, 'agent', '--agent', 'main',
            '--session-key', f'agent:main:{sk}', '--session-id', _openclaw_session_id(sk),
-           '--thinking', THINKING_LEVEL,
-           '--timeout', str(timeout), '--message', msg]
+           ] + agent_options() + ['--timeout', str(timeout), '--message', msg]
     # 跨进程锁：同一会话同时刻只跑一个 openclaw，防并发 takeover 崩溃（rc=1）
     xlock = _CrossProcLock(sk)
     if not xlock.acquire(timeout=min(timeout, 300)):
@@ -857,6 +860,31 @@ async def api_skills():
     return get_skills()
 
 
+@app.get("/api/skills/route")
+async def api_skills_route(q: str = "", stage: str | None = None, pin: str | None = None, limit: int = 3):
+    """对话/各环节共用的技能导航。只读现有 SKILL.md，不新建技能。"""
+    query = (q or "").strip()
+    if len(query) > 4000:
+        raise HTTPException(400, "查询过长")
+    hits = route_skills(query, stage=stage, limit=min(max(limit, 1), 8), pin=pin)
+    return {
+        "root": str(PROJECT_ROOT),
+        "stage": stage or "",
+        "pin": pin or "",
+        "matches": [
+            {
+                "name": item["name"],
+                "layer": item["layer"],
+                "layerLabel": item.get("layerLabel") or item["layer"],
+                "description": item.get("description") or "",
+                "summary": item.get("summary") or skill_summarize(item.get("description") or "", item["name"]),
+                "path": item["path"],
+            }
+            for item in hits
+        ],
+    }
+
+
 @app.get("/api/skill/{name}")
 async def api_skill_detail(name: str):
     """单个 SKILL 详情：描述 + 正文 + API 需求与当前配置状态（脱敏）。"""
@@ -870,6 +898,7 @@ async def api_skill_detail(name: str):
         "name": full,
         "layer": layer,
         "description": desc,
+        "summary": skill_summarize(desc, full),
         "body": body,
         "needsApi": needs_api,
         "apiConfigured": _skill_api_configured(full, env) if needs_api else True,
@@ -906,6 +935,8 @@ class ChatRequest(BaseModel):
     persona: str | None = None
     sessionId: str | None = None
     turnId: str | None = None
+    stage: str | None = None
+    skill: str | None = None
     attachments: list[AttachmentRef] = Field(default_factory=list)
 
 
@@ -964,7 +995,9 @@ def _chat_message(req: ChatRequest) -> str:
         message = f"{message}\n\n{context}" if message else context
     if not message:
         raise HTTPException(400, "消息不能为空")
-    return chat_turn_message(message, req.persona)
+    return chat_turn_message(
+        message, req.persona, stage=req.stage, route_query=req.message.strip(), pin=req.skill,
+    )
 
 
 # 每个会话（session-key）一把锁：防止同一会话被两个并发的 openclaw agent 进程同时处理。
@@ -1195,6 +1228,10 @@ async def api_chat_stream(req: ChatRequest):
     """
     # 每轮末尾追加「先查技能库」提醒，抗长对话指令衰减（对用户不可见）
     message = _chat_message(req)
+    skill_hits = route_skills(req.message, stage=req.stage, pin=req.skill)
+    skill_nav = "、".join(
+        f"{hit['name']}（{hit.get('layerLabel') or hit['layer']}）" for hit in skill_hits
+    )
 
     # supervisor（跑 openclaw run）与 forward（转发 SSE 给浏览器）之间的事件通道。
     # 关键：run 跑在独立后台任务里，客户端断开只结束 forward，不取消 supervisor →
@@ -1242,7 +1279,7 @@ async def api_chat_stream(req: ChatRequest):
         cmd = openclaw_base_cmd() + [
             "--profile", OPENCLAW_PROFILE, "agent", "--agent", "main",
             "--session-key", f"agent:main:{sk}", "--session-id", _openclaw_session_id(sk),
-            "--thinking", THINKING_LEVEL,
+        ] + agent_options() + [
             "--timeout", str(TIMEOUT_CHAT), "--message", message,
         ]
         env = _proxy_env()
@@ -1259,6 +1296,10 @@ async def api_chat_stream(req: ChatRequest):
         # 双层锁：asyncio 锁管同 web 进程内并发；flock 跨进程锁管两个标签/gateway/cron 撞同一会话。
         lock = _session_lock(sk)
         xlock = _CrossProcLock(sk)
+        to_client(
+            "activity",
+            f"🧭 本轮技能：{skill_nav}" if skill_nav else "🧭 本轮没有高置信技能，按通用能力做",
+        )
         if lock.locked():
             to_client("activity", "⏳ 这个会话上一条还在跑，排队等它结束再开始…")
         await lock.acquire()
@@ -1754,6 +1795,147 @@ async def api_skill(req: SkillRequest):
     return {"response": result}
 
 
+class WorkflowSaveRequest(BaseModel):
+    id: str | None = None
+    name: str = "未命名工作流"
+    persona: str | None = None
+    nodes: list[dict] = Field(default_factory=list)
+    edges: list[dict] = Field(default_factory=list)
+
+
+class WorkflowRunRequest(BaseModel):
+    input: str = ""
+    persona: str | None = None
+
+
+def _wf_http_error(exc: Exception):
+    if isinstance(exc, FileNotFoundError):
+        raise HTTPException(404, "工作流不存在") from exc
+    if isinstance(exc, ValueError):
+        raise HTTPException(400, str(exc)) from exc
+    raise exc
+
+
+@app.get("/api/workflows")
+async def api_workflows():
+    return wfstore.list_workflows()
+
+
+class WorkflowSuggestRequest(BaseModel):
+    message: str = ""
+
+
+@app.post("/api/workflows/suggest")
+async def api_workflows_suggest(req: WorkflowSuggestRequest):
+    """按目的从现有 SKILL 拼配方。不跑技能、不新建 SKILL.md。必须写在 /{wf_id} 之前。"""
+    query = (req.message or "").strip()
+    if len(query) > 4000:
+        raise HTTPException(400, "查询过长")
+    return suggest_recipe(query)
+
+
+@app.post("/api/workflows")
+async def api_workflows_create(req: WorkflowSaveRequest):
+    payload = req.model_dump()
+    if not payload.get("id"):
+        payload["id"] = wfstore.new_id()
+    if not payload.get("nodes"):
+        payload = wfstore.default_graph(payload.get("name") or "未命名工作流")
+        payload["id"] = req.id or payload["id"]
+        if req.name:
+            payload["name"] = req.name
+    try:
+        return wfstore.save(payload)
+    except (ValueError, FileNotFoundError) as exc:
+        _wf_http_error(exc)
+
+
+@app.get("/api/workflows/{wf_id}")
+async def api_workflow_get(wf_id: str):
+    try:
+        return wfstore.load(wf_id)
+    except (ValueError, FileNotFoundError) as exc:
+        _wf_http_error(exc)
+
+
+@app.put("/api/workflows/{wf_id}")
+async def api_workflow_put(wf_id: str, req: WorkflowSaveRequest):
+    payload = req.model_dump()
+    payload["id"] = wf_id
+    try:
+        return wfstore.save(payload)
+    except (ValueError, FileNotFoundError) as exc:
+        _wf_http_error(exc)
+
+
+@app.delete("/api/workflows/{wf_id}")
+async def api_workflow_delete(wf_id: str):
+    try:
+        wfstore.delete(wf_id)
+    except (ValueError, FileNotFoundError) as exc:
+        _wf_http_error(exc)
+    return {"ok": True, "deleted": wf_id}
+
+
+async def _run_skill_node(node: dict, text: str, persona: str | None, session_id: str) -> dict:
+    skill = (node.get("skill") or "").strip()
+    skill_full = find_skill(skill) if skill else None
+    title = node.get("title") or skill or node.get("id")
+    if not skill_full:
+        return {"id": node["id"], "title": title, "skill": skill, "ok": False, "output": "", "error": f"技能 {skill or '（空）'} 不存在"}
+    message = f"{_persona_prefix(persona)}请执行 /{skill_full}，内容如下：\n\n{text}"
+    loop = asyncio.get_event_loop()
+    try:
+        output = await loop.run_in_executor(None, run_agent_sync, message, TIMEOUT_PRODUCE, session_id)
+        return {"id": node["id"], "title": title, "skill": skill_full, "ok": True, "output": output, "error": ""}
+    except Exception as exc:
+        return {"id": node["id"], "title": title, "skill": skill_full, "ok": False, "output": "", "error": str(exc)}
+
+
+@app.post("/api/workflows/{wf_id}/run")
+async def api_workflow_run(wf_id: str, req: WorkflowRunRequest):
+    try:
+        graph = wfstore.load(wf_id)
+    except (ValueError, FileNotFoundError) as exc:
+        _wf_http_error(exc)
+        return
+    errors = wfstore.validate(graph, for_run=True)
+    if errors:
+        raise HTTPException(400, "；".join(errors))
+    nodes = graph["nodes"]
+    edges = graph["edges"]
+    by_id = {n["id"]: n for n in nodes}
+    try:
+        groups = wfstore.waves([n["id"] for n in nodes], edges)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    user_input = (req.input or "").strip()
+    results: dict[str, str] = {}
+    steps: list[dict] = []
+    for group in groups:
+        async def run_one(nid: str) -> dict:
+            node = by_id[nid]
+            parents = wfstore.parents_of(nid, edges)
+            text = wfstore.compose_input(node, user_input, results, parents, by_id)
+            if node["type"] == "input":
+                out = text or user_input or "（空输入）"
+                return {"id": nid, "title": node.get("title") or "起点", "skill": "", "ok": True, "output": out, "error": ""}
+            sid = f"wf-{wf_id}-{nid}-{int(time.time() * 1000)}"
+            return await _run_skill_node(node, text, req.persona, sid)
+
+        wave_out = await asyncio.gather(*(run_one(nid) for nid in group))
+        for step in wave_out:
+            results[step["id"]] = step.get("output") or step.get("error") or ""
+            steps.append(step)
+    return {
+        "id": graph["id"],
+        "name": graph["name"],
+        "ok": all(s.get("ok") for s in steps if by_id.get(s["id"], {}).get("type") == "skill"),
+        "waves": groups,
+        "steps": steps,
+    }
+
+
 @app.get("/api/outputs")
 async def api_outputs():
     return get_output_tree()
@@ -1977,6 +2159,7 @@ async def api_login_start(platform: str):
     if backend == 'xhs':
         cmd = [sys.executable, str(SHARED_SCRIPTS / 'xhs_publish.py'), 'login', '--no-proxy',
                '--qr-out', str(qr), '--status-file', str(status), '--timeout', str(LOGIN_TIMEOUT)]
+        # 登录内核走本机 CloakBrowser（无头也能过 300012），二维码仍抠到本页。不要 --headed，避免再弹本机 Chrome。
     elif backend == 'biliup':
         # B站：TV 端扫码登录 API 生成二维码 + 写 biliup cookie（biliup login 需真终端，前端用不了）
         cmd = [sys.executable, str(SHARED_SCRIPTS / 'bili_login.py'), 'login',
@@ -2171,6 +2354,9 @@ async def api_account_whoami(platform: str):
         acc = _wechat_web_account()
         return {'loggedIn': _account_logged_in(platform, cfg),
                 'name': acc.get('name', '') or '微信公众号', 'avatar': ''}
+    proc = LOGIN_PROCESSES.get(platform)
+    if proc is not None and proc.poll() is None:
+        return {'loggedIn': _account_logged_in(platform, cfg), 'name': '', 'avatar': ''}
     # 命中未过期缓存直接返回
     with _WHOAMI_LOCK:
         hit = _WHOAMI_CACHE.get(platform)
@@ -2327,9 +2513,12 @@ async def api_analytics(platform: str):
         line = line.strip()
         if line.startswith("{"):
             try:
-                return json.loads(line)
+                payload = json.loads(line)
             except Exception:
                 continue
+            if payload.get("loggedIn") or payload.get("logged_in"):
+                _write_login_marker(platform, "success", "创作数据抓取确认已登录")
+            return payload
     detail = (proc.stderr or "").strip().splitlines()[-1:] or ["未取到数据"]
     raise HTTPException(502, f"未取到数据（可能未登录或平台改版）：{detail[0][:120]}")
 

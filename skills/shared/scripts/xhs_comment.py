@@ -274,12 +274,9 @@ def _parse_targets(json_str: str | None, nickname: str | None, content: str | No
 # 浏览器
 # --------------------------------------------------------------------------- #
 def _launch(p, headed: bool, base: str | None, proxy: str | None):
-    profile = _profile_dir(base)
-    profile.mkdir(parents=True, exist_ok=True)
-    kwargs = dict(headless=not headed, locale="zh-CN", args=LAUNCH_ARGS)
-    if proxy:
-        kwargs["proxy"] = {"server": proxy}
-    return p.chromium.launch_persistent_context(str(profile), **kwargs)
+    from xhs_publish import _launch as _xhs_launch, _clear_stale_chrome_locks
+    _clear_stale_chrome_locks(_profile_dir(base))
+    return _xhs_launch(p, headed, base, proxy)
 
 
 def _open_note(page, note_id: str, token: str):
@@ -551,15 +548,21 @@ def cmd_notes(a) -> int:
             if not _logged_in(page):
                 print("⚠️ 疑似未登录（登录态与 xhs_publish 共用，先 xhs_publish.py login）", file=sys.stderr)
             try:
-                page.wait_for_selector(".note-card", timeout=8000)
+                page.wait_for_selector(".note-card, [role='tab']", timeout=8000)
             except Exception:
                 page.wait_for_timeout(1500)
+            from account_stats import _xhs_open_published_notes, is_public_xhs_note
+            _xhs_open_published_notes(page)
+            try:
+                page.wait_for_selector(".note-card", timeout=4000)
+            except Exception:
+                page.wait_for_timeout(800)
             # 滚动触发懒加载：多拉几篇的列表接口（token 随接口返回）
             for _ in range(max(1, a.scroll)):
                 page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
                 page.wait_for_timeout(900)
             page.wait_for_timeout(800)
-            raw = page.evaluate(_XHS_MY_NOTES_JS) or []
+            raw = [n for n in (page.evaluate(_XHS_MY_NOTES_JS) or []) if is_public_xhs_note(n)]
             _shot(page, "notes")
             if _debug_on():
                 try:

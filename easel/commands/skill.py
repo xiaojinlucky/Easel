@@ -20,6 +20,7 @@ import time
 from pathlib import Path
 
 from easel.openclaw_cmd import openclaw_base_cmd
+from easel.model_runtime import agent_options
 from easel.persona import persona_prefix, profile_exists
 from easel.timeouts import TIMEOUT_PRODUCE
 
@@ -103,6 +104,7 @@ def _run_via_openclaw(message: str, timeout: int = 300) -> int:
         "--profile", OPENCLAW_PROFILE,
         "agent", "--agent", "main",
         "--session-key", f"agent:main:{session_key}",
+    ] + agent_options() + [
         "--timeout", str(timeout),
         "--message", message,
     ]

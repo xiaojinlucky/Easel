@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from easel.skill_route import format_assemble_block, format_route_block, route as route_skills
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PROFILES_DIR = PROJECT_ROOT / "profiles"
 
@@ -75,7 +77,7 @@ def persona_prefix(name: str | None) -> str:
 # 把最关键的反射每轮在消息末尾重申一次（放末尾借近因效应），成本极低，
 # 显著提升后续轮次的 SKILL 命中率。仅用于对话入口；单跑某个 SKILL 不必加。
 TURN_REMINDER = (
-    "〔内部提醒·非用户所说，勿复述、勿回显〕本轮动手前先查技能库："
+    "〔内部提醒·非用户所说，勿复述、勿回显〕本轮动手前先按下面的「技能导航」打开 SKILL.md："
     "有对应或相邻的 SKILL 就读进来、按它的流程/数据源/工具做，别凭记忆或通用知识裸做；"
     "五层（含制作层：图文/图/视频/成片/长稿等）都由你自己按对应 SKILL 产出成品文件到 outputs/；"
     "问「我的账号/帖子/粉丝/最近发了啥」先查已登录账号、别回问用户要账号名；"
@@ -88,12 +90,28 @@ def turn_reminder() -> str:
     return TURN_REMINDER
 
 
-def chat_turn_message(user_message: str, name: str | None) -> str:
+def chat_turn_message(
+    user_message: str,
+    name: str | None,
+    stage: str | None = None,
+    *,
+    route_query: str | None = None,
+    pin: str | None = None,
+) -> str:
     """构造发给 OpenClaw 的一轮对话消息：画像前缀（如有）+ 用户原文 + 末尾行为提醒。
 
     末尾提醒对抗长对话里「忘记先查 SKILL」的指令衰减（见 TURN_REMINDER）。
     对用户不可见（前端只显示用户原文），只进 OpenClaw 上下文。
+    导航只看 route_query（默认用户原话），避免附件清单路径污染命中。
     """
     prefix = persona_prefix(name)
     head = f"{prefix}\n\n" if prefix else ""
-    return f"{head}{user_message}\n\n{turn_reminder()}"
+    assemble = (stage or "").strip().lower() == "assemble"
+    matches = route_skills(
+        route_query if route_query is not None else user_message,
+        stage=None if assemble else stage,
+        pin=pin,
+    )
+    if assemble:
+        return f"{head}{user_message}\n\n{format_assemble_block(matches)}"
+    return f"{head}{user_message}\n\n{turn_reminder()}\n\n{format_route_block(matches)}"

@@ -164,6 +164,14 @@ export const IconFolder = ({ size, className, strokeWidth }: P) => (
   </svg>
 );
 
+export const IconWorkflow = ({ size, className, strokeWidth }: P) => (
+  <svg {...svg(size, strokeWidth)} className={className}>
+    <rect x="3" y="3" width="7" height="7" rx="1.5" />
+    <rect x="14" y="3" width="7" height="7" rx="1.5" />
+    <rect x="8.5" y="14" width="7" height="7" rx="1.5" />
+    <path d="M10 10v2.5M17 10v1.2c0 1.3-1 2.3-2.3 2.3H12" />
+  </svg>
+);
 export const IconDashboard = ({ size, className, strokeWidth }: P) => (
   <svg {...svg(size, strokeWidth)} className={className}>
     <rect x="3" y="3" width="7" height="9" rx="1.5" /><rect x="14" y="3" width="7" height="5" rx="1.5" />
@@ -194,5 +202,10 @@ export const IconBookmark = ({ size, className, strokeWidth }: P) => (
 export const IconPublish = ({ size, className, strokeWidth }: P) => (
   <svg {...svg(size, strokeWidth)} className={className}>
     <path d="m3 11 18-5v12L3 14v-3z" /><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6" />
+  </svg>
+);
+export const IconSettings = ({ size, className, strokeWidth }: P) => (
+  <svg {...svg(size, strokeWidth)} className={className}>
+    <path d="M4 7h16M4 17h16" /><circle cx="8" cy="7" r="3" fill="currentColor" /><circle cx="16" cy="17" r="3" fill="currentColor" />
   </svg>
 );

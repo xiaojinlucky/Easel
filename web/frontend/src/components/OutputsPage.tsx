@@ -4,6 +4,7 @@ import { fetchOutputs, fetchOutputContent, mediaUrl, deleteOutput } from '../lib
 import type { OutputNode, OutputMeta } from '../lib/api';
 import { renderMarkdown } from '../lib/sanitize';
 import { IconOutputs, IconImage, IconVideo, IconMusic, IconFile, IconFolder, IconRefresh, IconChevron, IconTrash } from './icons';
+import WorkflowDraftBar from './WorkflowDraftBar';
 
 const FILTERS: { key: string; label: string }[] = [
   { key: 'all', label: '全部' },
@@ -21,7 +22,7 @@ const STATUS_LABEL: Record<string, string> = { draft: '草稿', ready: '待发',
 const STATUS_COLOR: Record<string, string> = { draft: '#94a3b8', ready: '#d97706', published: '#16a34a' };
 
 const badge: CSSProperties = {
-  fontSize: 11, padding: '1px 7px', borderRadius: 999,
+  fontSize: 14, padding: '1px 7px', borderRadius: 999,
   background: 'rgba(0,0,0,0.05)', color: 'var(--text-secondary)', whiteSpace: 'nowrap',
 };
 const statusBadge = (s: string): CSSProperties => ({
@@ -73,7 +74,11 @@ function Thumb({ f, big }: { f: OutputNode | null; big?: boolean }) {
   return <div className="gcard-ph">{kindIcon(f?.kind, big ? 34 : 30)}</div>;
 }
 
-export default function OutputsPage() {
+export default function OutputsPage({
+  onDraftToChat,
+}: {
+  onDraftToChat?: (text: string, stage?: string, skill?: string, workflowId?: string) => void;
+}) {
   const [roots, setRoots] = useState<OutputNode[]>([]);
   const [treeError, setTreeError] = useState('');
   const [stack, setStack] = useState<string[]>([]);   // 当前所在的文件夹名称路径
@@ -154,7 +159,7 @@ export default function OutputsPage() {
       <>
         <iframe src={url} title={selected.name} sandbox=""
           style={{ width: '100%', height: '68vh', border: '1px solid var(--border)', borderRadius: 'var(--radius)', background: '#fff' }} />
-        <div style={{ marginTop: 8 }}><a href={url} target="_blank" rel="noreferrer" style={{ color: 'var(--accent-start)', fontSize: 13 }}>在新标签打开 ↗</a></div>
+        <div style={{ marginTop: 8 }}><a href={url} target="_blank" rel="noreferrer" style={{ color: 'var(--accent-start)', fontSize: 14 }}>在新标签打开 ↗</a></div>
       </>
     );
     if (selected.kind === 'text') {
@@ -226,7 +231,15 @@ export default function OutputsPage() {
               : `${dirs.length} 个文件夹 · ${files.length} 个文件（可继续点开子文件夹）`}
           </p>
         </div>
-        <button className="btn btn-sm" onClick={load}><IconRefresh size={14} /> 刷新</button>
+        <div className="gallery-head-actions">
+          {stack.length > 0 && (
+            <WorkflowDraftBar
+              context={`处理内容库项目「${projectMeta?.title || stack[0] || '当前目录'}」。`}
+              onDraftToChat={onDraftToChat}
+            />
+          )}
+          <button className="btn btn-sm" onClick={load}><IconRefresh size={14} /> 刷新</button>
+        </div>
       </div>
 
       {treeError && <div className="notice-error">{treeError}</div>}
@@ -260,7 +273,7 @@ export default function OutputsPage() {
           {/* 成品区 */}
           {deliverableFiles.length > 0 && (
             <>
-              <div className="section-label" style={{ margin: '6px 0 8px', fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)' }}>
+              <div className="section-label" style={{ margin: '6px 0 8px', fontSize: 14, fontWeight: 600, color: 'var(--text-secondary)' }}>
                 成品 · {deliverableFiles.length}
               </div>
               <div className="gallery-grid">{deliverableFiles.map(renderFile)}</div>
@@ -269,7 +282,7 @@ export default function OutputsPage() {
           {/* 素材 / 过程文件区 */}
           {(dirs.length > 0 || restFiles.length > 0) && (
             <>
-              <div className="section-label" style={{ margin: '18px 0 8px', fontSize: 13, fontWeight: 600, color: 'var(--text-tertiary)' }}>
+              <div className="section-label" style={{ margin: '18px 0 8px', fontSize: 14, fontWeight: 600, color: 'var(--text-tertiary)' }}>
                 素材 / 过程文件
               </div>
               <div className="gallery-grid">
@@ -292,7 +305,7 @@ export default function OutputsPage() {
             <div className="drawer-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <div style={{ minWidth: 0 }}>
                 <div className="skill-detail-title" style={{ fontSize: 16 }}>{selected.name}</div>
-                <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 3, fontFamily: "'SF Mono','Consolas',monospace" }}>{selected.path}</div>
+                <div style={{ fontSize: 14, color: 'var(--text-tertiary)', marginTop: 3, fontFamily: "'SF Mono','Consolas',monospace" }}>{selected.path}</div>
               </div>
               <button className="icon-btn" onClick={() => setSelected(null)}>×</button>
             </div>

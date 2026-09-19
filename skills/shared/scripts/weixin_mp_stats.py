@@ -35,9 +35,10 @@ TOKEN_RE = re.compile(r"[?&]token=(\d+)")
 
 EMPTY = {
     "platform": "wechat-oa", "name": "微信公众号", "nickname": "",
-    "loggedIn": False, "followers": 0, "likes": 0, "following": 0, "posts": 0,
-    "metrics": [], "notes": [],
-    "growth": {"last": {}, "day": {}, "week": {}, "month": {}, "year": {}},
+    "loggedIn": False, "followers": None, "likes": None, "following": None, "posts": None,
+    "reads": None, "metrics": [], "notes": [], "overview": [],
+    "period_metrics": {},
+    "growth": {"last": None, "day": None, "week": None, "month": None, "year": None},
     "fetched_at": "",
 }
 
@@ -221,6 +222,10 @@ def cmd_stats(a):
                         Path(a.dump_dir, f"{k}.json").write_text(v, encoding="utf-8")
             _parse_publish(cap["publish"], result)
             _parse_analytics(cap, result)
+            if result.get("followers") is None:
+                _fetch_followers(page, token, result)
+            _apply_nickname(page, result)
+            _attach_growth(result)
             print(json.dumps(result, ensure_ascii=False))
             return 0
         finally:
@@ -251,7 +256,7 @@ def _parse_publish(raw, result):
         total = int(page.get("total_count", 0) or 0)
         pub_cnt = int(page.get("publish_count", 0) or 0)
         mass_cnt = int(page.get("masssend_count", 0) or 0)
-        notes, total_read = [], 0
+        notes, total_read, like_sum = [], 0, 0
         for it in (page.get("publish_list") or []):
             info = it.get("publish_info")
             info = json.loads(info) if isinstance(info, str) else (info or {})
@@ -263,56 +268,84 @@ def _parse_publish(raw, result):
                     arts = [found]
             for am in arts:
                 rn = int(am.get("read_num", 0) or 0)
+                ln = int(am.get("like_num", 0) or 0)
                 total_read += rn
+                like_sum += ln
                 notes.append({
                     "title": am.get("title", ""),
                     "url": am.get("link") or am.get("content_url", ""),
                     "cover": am.get("cover", ""),
-                    "stat": (f"阅读 {rn} · 赞 {am.get('like_num', 0)}" if rn else ""),
+                    "stat": (f"阅读 {rn} · 赞 {ln}" if rn or ln else ""),
                 })
         result["notes"] = notes[:20]
-        result["posts"] = pub_cnt or len(notes)
+        published = pub_cnt or total or len(notes)
+        result["posts"] = published
+        result["likes"] = like_sum or None
+        result["reads"] = total_read or None
         result["metrics"] = [
-            {"label": "已发表", "value": pub_cnt, "vs": ""},
+            {"label": "已发表", "value": published, "vs": ""},
             {"label": "群发次数", "value": mass_cnt, "vs": ""},
             {"label": "发表记录总数", "value": total, "vs": ""},
         ]
         if total_read:
-            result["metrics"].append({"label": "累计阅读", "value": total_read, "vs": ""})
-            result["likes"] = total_read
-        result["nickname"] = result["name"]
+            result["metrics"].append({"label": "列表累计阅读", "value": total_read, "vs": ""})
     except Exception as e:
         result["error"] = f"发表记录解析失败：{e}"
 
 
+def _daily_totals(lst):
+    """后台趋势按 scene 拆行，scene=9999 才是当天合计。按行去尾会把「近 30 日」算成最近几条分场景。"""
+    has_total = any(int(x.get("scene", -1) or -1) == 9999 for x in lst)
+    by_date = {}
+    for x in lst:
+        scene = int(x.get("scene", -1) or -1)
+        if has_total and scene != 9999:
+            continue
+        day = int(x.get("date") or 0)
+        prev = by_date.get(day)
+        if prev is None or int(x.get("read_uv") or 0) >= int(prev.get("read_uv") or 0):
+            by_date[day] = x
+    return [by_date[k] for k in sorted(by_date)]
+
+
 def _parse_analytics(cap, result):
     """解析数据分析页的 XHR：阅读/分享趋势、单篇文章数据、粉丝数。数据为 0 属新号真实值。"""
-    # 阅读 / 分享趋势（近 ~30 天 read_uv / share_uv 求和）
     try:
         if cap.get("tendency"):
             d = json.loads(cap["tendency"])
-            lst = (d.get("all_article_stat_tendency") or {}).get("list") or []
-            read = sum(int(x.get("read_uv", 0) or 0) for x in lst)
-            share = sum(int(x.get("share_uv", 0) or 0) for x in lst)
-            result["metrics"].append({"label": "阅读人数(近30天)", "value": read, "vs": ""})
-            result["metrics"].append({"label": "分享人数(近30天)", "value": share, "vs": ""})
-            if read:
-                result["likes"] = read
+            daily = _daily_totals((d.get("all_article_stat_tendency") or {}).get("list") or [])
+            read = sum(int(x.get("read_uv", 0) or 0) for x in daily)
+            result["reads"] = read or result.get("reads")
+            result["period_metrics"] = {
+                "day": _tendency_metrics(daily, 1),
+                "week": _tendency_metrics(daily, 7),
+                "month": _tendency_metrics(daily, 30),
+                "year": _tendency_metrics(daily, 365),
+                "last": _tendency_metrics(daily, 7),
+            }
+            result["metrics"] = result["period_metrics"]["week"]
     except Exception:
         pass
-    # 单篇文章数据 → 合并进 notes 的 stat（按标题匹配）
     try:
         if cap.get("article_list"):
             d = json.loads(cap["article_list"])
             by_title = {}
+            extras = []
             for a in (d.get("article_list") or []):
                 info = a.get("appmsg_info") or a
-                t = info.get("title") or a.get("title")
-                if t:
-                    by_title[t] = f"阅读 {info.get('read_num', info.get('int_page_read_uv', 0))} · 分享 {info.get('share_num', 0)}"
+                title = info.get("title") or a.get("title")
+                if not title:
+                    continue
+                uv = int(info.get("total_read_uv") or info.get("read_num") or info.get("int_page_read_uv") or 0)
+                share = int(info.get("share_num") or info.get("share_uv") or 0)
+                stat = f"阅读 {uv} · 分享 {share}"
+                by_title[title] = stat
+                extras.append({"title": title, "url": info.get("link") or info.get("content_url") or "", "cover": info.get("cover") or "", "stat": stat})
             for n in result.get("notes", []):
-                if n.get("title") in by_title and not n.get("stat"):
+                if n.get("title") in by_title:
                     n["stat"] = by_title[n["title"]]
+            if not result.get("notes"):
+                result["notes"] = extras[:20]
     except Exception:
         pass
     # 粉丝数（尽力：从用户汇总的累计关注取；新号为 0）
@@ -325,6 +358,80 @@ def _parse_analytics(cap, result):
                 result["followers"] = int(next(iter(found.values())) or 0)
     except Exception:
         pass
+
+
+def _tendency_metrics(lst, days):
+    chunk = lst[-days:] if days and lst else []
+    read = sum(int(x.get("read_uv", 0) or 0) for x in chunk)
+    share = sum(int(x.get("share_uv", 0) or 0) for x in chunk)
+    return [
+        {"label": "阅读人数", "value": read, "vs": ""},
+        {"label": "分享次数", "value": share, "vs": ""},
+        {"label": "统计天数", "value": len(chunk), "vs": ""},
+    ]
+
+
+def _fetch_followers(page, token, result):
+    for path in (
+        f"https://mp.weixin.qq.com/misc/useranalysis?token={token}&lang=zh_CN",
+        f"https://mp.weixin.qq.com/cgi-bin/home?t=home/index&token={token}&lang=zh_CN",
+    ):
+        try:
+            page.goto(path, wait_until="commit", timeout=30000)
+            page.wait_for_timeout(1500)
+            html = page.content()
+            m = re.search(r"(累计关注|关注用户|粉丝数)[^\d%]{0,12}(\d[\d,]*)", html)
+            if m and "%" not in html[m.end(): m.end() + 2]:
+                result["followers"] = int(m.group(2).replace(",", ""))
+                return
+            txt = page.inner_text("body")
+            for label in ("累计关注", "关注用户", "粉丝数"):
+                mm = re.search(rf"{label}\s*[:：]?\s*([\d,]+)", txt)
+                if mm:
+                    result["followers"] = int(mm.group(1).replace(",", ""))
+                    return
+        except Exception:
+            continue
+
+
+def _apply_nickname(page, result):
+    if result.get("nickname") and result["nickname"] != result.get("name"):
+        return
+    for sel in (".weui-desktop-account__nickname", ".account_nickname", "#nickname", ".weui-desktop-account__info"):
+        try:
+            el = page.query_selector(sel)
+            if el:
+                text = (el.inner_text() or "").strip().splitlines()[0].strip()
+                if text and text not in ("微信公众号", result.get("name")):
+                    result["nickname"] = text
+                    return
+        except Exception:
+            continue
+    if not result.get("nickname"):
+        result["nickname"] = result.get("name") or "微信公众号"
+
+
+def _attach_growth(result):
+    import account_stats
+    now = int(time.time())
+    snap = {
+        "ts": now,
+        "followers": result.get("followers"),
+        "likes": result.get("likes"),
+        "posts": result.get("posts"),
+        "reads": result.get("reads"),
+    }
+    history = account_stats.load_history("wechat-oa")
+    result["growth"] = account_stats.growth_windows(history, snap)
+    if not result.get("error") and any(snap.get(k) is not None for k in ("followers", "likes", "posts")):
+        account_stats.record_snapshot("wechat-oa", snap)
+    result["overview"] = [
+        {"key": "followers", "label": "粉丝", "value": result.get("followers")},
+        {"key": "posts", "label": "已发表", "value": result.get("posts")},
+        {"key": "likes", "label": "点赞", "value": result.get("likes")},
+    ]
+    result["fetched_at"] = now
+    result["following"] = None
 
 
 def _editor_ctx(page, token):
@@ -456,6 +563,35 @@ def cmd_publish(a):
             ctx.close()
 
 
+def cmd_selftest(_a=None):
+    raw = json.dumps({
+        "publish_page": json.dumps({
+            "total_count": 37, "publish_count": 0, "masssend_count": 12,
+            "publish_list": [{
+                "publish_info": json.dumps({
+                    "appmsgex": [{"title": "a", "link": "https://mp.weixin.qq.com/s/x", "read_num": 80, "like_num": 3}],
+                }, ensure_ascii=False),
+            }],
+        }, ensure_ascii=False),
+    }, ensure_ascii=False)
+    result = dict(EMPTY)
+    result["metrics"] = []
+    _parse_publish(raw, result)
+    assert result["posts"] == 37, result["posts"]
+    assert result["likes"] == 3, result["likes"]
+    assert result["reads"] == 80, result["reads"]
+    assert result["likes"] != result["reads"]
+    lst = [{"date": i, "scene": 9999, "read_uv": 10, "share_uv": 1} for i in range(30)]
+    noisy = lst + [{"date": 29, "scene": 1, "read_uv": 99, "share_uv": 9}]
+    daily = _daily_totals(noisy)
+    week = _tendency_metrics(daily, 7)
+    month = _tendency_metrics(daily, 30)
+    assert len(daily) == 30, len(daily)
+    assert week[0]["value"] == 70 and month[0]["value"] == 300
+    print("weixin_mp_stats selftest ok")
+    return 0
+
+
 def cmd_whoami(a):
     from playwright.sync_api import sync_playwright
     out = {"loggedIn": False, "name": "", "avatar": ""}
@@ -497,6 +633,9 @@ def main():
 
     wp = sub.add_parser("whoami"); common(wp)
     wp.set_defaults(func=cmd_whoami)
+
+    tp = sub.add_parser("selftest")
+    tp.set_defaults(func=cmd_selftest)
 
     pp = sub.add_parser("publish"); common(pp)
     pp.add_argument("--html", required=True, help="已排版的公众号 HTML 文件")

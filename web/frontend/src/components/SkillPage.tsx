@@ -3,6 +3,7 @@ import type { ComponentType } from 'react';
 import { fetchSkills } from '../lib/api';
 import type { SkillItem } from '../lib/api';
 import SkillDrawer from './SkillDrawer';
+import { skillSummary } from '../lib/skillText';
 import {
   IconSearch, IconCompass, IconSkills, IconSend, IconChart, IconLayers,
   IconVideo, IconImage, IconMusic, IconMic, IconText, IconLayout, IconProfile, IconOutputs,
@@ -10,6 +11,7 @@ import {
 
 interface SkillPageProps {
   persona: string;
+  onDraftToChat?: (text: string, stage?: string, skill?: string) => void;
 }
 
 type IconC = ComponentType<{ size?: number }>;
@@ -52,7 +54,7 @@ const LAYER_DESC: Record<string, string> = {
   publish: '发布层技能', attribute: '归因层技能', general: '通用技能', other: '技能',
 };
 
-export default function SkillPage({ persona }: SkillPageProps) {
+export default function SkillPage({ persona, onDraftToChat }: SkillPageProps) {
   const [skills, setSkills] = useState<SkillItem[]>([]);
   const [error, setError] = useState('');
   const [query, setQuery] = useState('');
@@ -67,7 +69,9 @@ export default function SkillPage({ persona }: SkillPageProps) {
     const q = query.trim().toLowerCase();
     if (!q) return skills;
     return skills.filter((s) =>
-      s.name.toLowerCase().includes(q) || (s.description || '').toLowerCase().includes(q));
+      s.name.toLowerCase().includes(q)
+      || skillSummary(s).toLowerCase().includes(q)
+      || (s.description || '').toLowerCase().includes(q));
   }, [skills, query]);
 
   const grouped = useMemo(() => {
@@ -134,7 +138,8 @@ export default function SkillPage({ persona }: SkillPageProps) {
                   >
                     {alert && <div className="skill-card-alert" title="需要配置 API key">!</div>}
                     <div className="skill-card-icon" style={{ color: meta.color }}><Icon size={19} /></div>
-                    <div className="skill-card-name">{s.name}</div>
+                    <div className="skill-card-name">{skillSummary(s)}</div>
+                    <div className="skill-card-slug">{s.name}</div>
                     <div className="skill-card-desc">{s.description?.trim() || LAYER_DESC[layer.key]}</div>
                     <div className="skill-card-foot">
                       {s.needsApi && (s.apiConfigured
@@ -155,6 +160,7 @@ export default function SkillPage({ persona }: SkillPageProps) {
           persona={persona}
           onClose={() => setSelected(null)}
           onConfigured={load}
+          onDraftToChat={onDraftToChat}
         />
       )}
     </div>
