@@ -17,6 +17,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "web"))
 sys.path.insert(0, str(PROJECT_ROOT / "skills" / "openclaw" / "paper-explainer" / "scripts"))
+sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
 
 from easel.commands import skill as cli_skill  # noqa: E402
 from easel import persona  # noqa: E402
@@ -26,6 +27,7 @@ import render_slides  # noqa: E402
 from model_registry import (configured_providers, env_aliases, provider_ids,
                             provider_required_env)  # noqa: E402
 from persona_gate import classify as classify_persona_score  # noqa: E402
+import gemini_maas_adapter as gemini_adapter  # noqa: E402
 
 
 # ---- 媒体模型注册表：脚本与 Web 共用同一真相源 ----
@@ -334,6 +336,31 @@ def test_attachment_context_rejects_tampered_reference(tmp_path, monkeypatch):
     assert exc.value.status_code == 403
 
 
+# ---- 跨平台：文本落盘必须显式 encoding（否则 Windows cp1252/gbk 写中文报错、读回丢内容）----
+
+@pytest.mark.parametrize("rel", ["web/app.py", "easel/persona.py", "easel/commands/skill.py"])
+def test_text_io_always_pins_utf8_encoding(rel):
+    """read_text/write_text 若不显式指定 encoding，Windows 默认非 UTF-8：
+    写中文抛 UnicodeEncodeError（落不了盘），读回抛 UnicodeDecodeError（像丢了数据）。
+    这些持久化路径在 Linux CI 恰好用 UTF-8 默认值而侥幸通过，此守卫在任何平台都能拦住回归。"""
+    import ast as _ast
+
+    source = (PROJECT_ROOT / rel).read_text(encoding="utf-8")
+    offenders = []
+    for node in _ast.walk(_ast.parse(source)):
+        if not (isinstance(node, _ast.Call) and isinstance(node.func, _ast.Attribute)):
+            continue
+        if node.func.attr not in ("read_text", "write_text"):
+            continue
+        has_kw = any(kw.arg == "encoding" for kw in node.keywords)
+        # 位置参：read_text(encoding) 第 1 个、write_text(data, encoding) 第 2 个
+        min_pos = 1 if node.func.attr == "read_text" else 2
+        has_pos = len(node.args) >= min_pos
+        if not (has_kw or has_pos):
+            offenders.append(f"{rel}:{node.lineno} {node.func.attr}() 缺少 encoding")
+    assert not offenders, "以下文本落盘未固定 encoding：\n" + "\n".join(offenders)
+
+
 # ---- Web: 路径穿越防护 ----
 
 def test_safe_output_path_blocks_traversal():
@@ -377,9 +404,9 @@ def test_write_baseline_profile(tmp_path, monkeypatch):
     names = {f.name for f in pd.iterdir()}
     assert names == {"identity.md", "style.md", "audience.md",
                      "platforms.md", "preferences.md", "memory.md"}
-    assert "平价护肤测评" in (pd / "identity.md").read_text()
-    assert "不接医疗功效" in (pd / "preferences.md").read_text()
-    assert "小红书" in (pd / "platforms.md").read_text()
+    assert "平价护肤测评" in (pd / "identity.md").read_text(encoding="utf-8")
+    assert "不接医疗功效" in (pd / "preferences.md").read_text(encoding="utf-8")
+    assert "小红书" in (pd / "platforms.md").read_text(encoding="utf-8")
 
 
 # ---- Web: _persona_prefix ----
@@ -407,7 +434,7 @@ def test_persona_gate_low_score_warns_but_never_blocks_publish():
 
 
 def test_persona_skill_prioritizes_positioning_and_caps_cross_niche_scores():
-    skill = (PROJECT_ROOT / "skills/openclaw/skill-persona-check/SKILL.md").read_text()
+    skill = (PROJECT_ROOT / "skills/openclaw/skill-persona-check/SKILL.md").read_text(encoding="utf-8")
     assert "账号定位与内容赛道" in skill and "| 30% |" in skill
     assert "内容形式一致性" in skill and "目标受众匹配" in skill
     assert "总分最高 59" in skill
@@ -456,7 +483,7 @@ def test_job_events_resume_after_event_id(tmp_path, monkeypatch):
         {"id": 3, "event": "token", "data": "后"},
         {"id": 4, "event": "done", "data": {"sessionKey": "s"}},
     ]
-    path.write_text("\n".join(json.dumps(e, ensure_ascii=False) for e in events) + "\n")
+    path.write_text("\n".join(json.dumps(e, ensure_ascii=False) for e in events) + "\n", encoding="utf-8")
 
     resumed = web._read_job_events("turn-a", after=2)
     assert [event["id"] for event in resumed] == [3, 4]
@@ -510,22 +537,50 @@ def test_chat_stop_waits_for_process_and_supervisor_cleanup(monkeypatch):
     assert proc.terminated and proc.poll() == -15
 
 
-def test_raw_stream_events_are_isolated_by_openclaw_session():
+def test_raw_stream_events_are_isolated_by_run_id():
+    # 共享 raw 流里事件带 runId（无 sessionId）：本轮闩锁自己的 runId 后，别的 run 的事件被拒。
     own = json.dumps({
         "event": "assistant_text_stream", "evtType": "text_delta",
-        "sessionId": "session-a", "runId": "run-a", "delta": "自己的回答",
+        "runId": "run-a", "delta": "自己的回答",
     })
     foreign = json.dumps({
         "event": "assistant_thinking_stream", "evtType": "thinking_delta",
-        "sessionId": "session-b", "runId": "run-b", "delta": "其他会话的思考",
+        "runId": "run-b", "delta": "其他会话的思考",
     })
 
-    assert web._raw_event_for_session(own, "session-a")["delta"] == "自己的回答"
-    assert web._raw_event_for_session(foreign, "session-a") is None
+    assert web._raw_event_for_run(own, "run-a")["delta"] == "自己的回答"
+    assert web._raw_event_for_run(foreign, "run-a") is None
 
 
-def test_raw_stream_parser_keeps_legacy_events_without_session_id():
-    legacy = json.dumps({
-        "event": "assistant_text_stream", "evtType": "text_delta", "delta": "兼容旧事件",
+def test_raw_stream_parser_accepts_events_before_run_is_latched():
+    # expected_run_id=None = 本轮尚未闩锁 → 先放行，调用方据此从 event['runId'] 闩锁。
+    ev = json.dumps({
+        "event": "assistant_text_stream", "evtType": "text_delta",
+        "runId": "run-a", "delta": "首个事件",
     })
-    assert web._raw_event_for_session(legacy, "session-a")["delta"] == "兼容旧事件"
+    assert web._raw_event_for_run(ev, None)["delta"] == "首个事件"
+
+
+# ---- Gemini 适配器：流式端点改写 + finishReason 归一 ----
+
+def test_gemini_stream_endpoint_swaps_method_and_adds_sse():
+    # 非流式 :generateContent → 流式 :streamGenerateContent?alt=sse
+    assert gemini_adapter.stream_endpoint_for(
+        "https://h/v1beta/models/m:generateContent"
+    ) == "https://h/v1beta/models/m:streamGenerateContent?alt=sse"
+
+
+def test_gemini_stream_endpoint_preserves_existing_query():
+    # 端点已带 query 时用 & 追加 alt=sse，不能覆盖原参数
+    out = gemini_adapter.stream_endpoint_for(
+        "https://h/v1beta/models/m:generateContent?api-version=2024-12-01"
+    )
+    assert out == "https://h/v1beta/models/m:streamGenerateContent?api-version=2024-12-01&alt=sse"
+
+
+@pytest.mark.parametrize("reason,mapped", [
+    ("STOP", "stop"), ("MAX_TOKENS", "length"),
+    ("SAFETY", "content_filter"), (None, "stop"), ("WHATEVER", "stop"),
+])
+def test_gemini_finish_reason_mapping(reason, mapped):
+    assert gemini_adapter.map_finish_reason(reason) == mapped

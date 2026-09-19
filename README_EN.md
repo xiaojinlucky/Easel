@@ -259,6 +259,15 @@ Easel uses an isolated `easel` OpenClaw profile and does not overwrite an existi
 - [Known issues](docs/known-issues_EN.md)
 - [Full acknowledgments](docs/ACKNOWLEDGMENTS.md)
 
+## 🗺️ Roadmap
+
+Ordered by priority — contributions welcome; feel free to claim or add items via Issues/PRs:
+
+- [ ] **1. Windows support** — Complete native Windows compatibility across installation, paths/encoding, and browser publishing.
+- [ ] **2. Simpler installation** — Lower the barrier to entry with fewer manual steps and a smoother one-click setup.
+- [ ] **3. Better in-app Agent UX** — Improve the Web workbench's chat interaction, loading logic, and streaming feedback.
+- [ ] **4. More Agent harnesses** — Support agent runtimes beyond OpenClaw, e.g. Claude Code, DeepSeek harness, Codex.
+
 ## 🙏 Acknowledgments
 
 Easel's Skill system and workflows benefit from many excellent open-source projects, tools, and content methodologies. We thank their original authors and contributors. See the [full acknowledgments](docs/ACKNOWLEDGMENTS.md) for projects, usage, and license information.

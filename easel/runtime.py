@@ -16,6 +16,11 @@ PROFILE = 'easel-studio'
 CONFIG_FILE = Path.home() / f'.openclaw-{PROFILE}/openclaw.json'
 STATE = ROOT / '.runtime'
 SETTINGS_FILE = STATE / 'model-settings.json'
+# 常驻 gateway 写「模型原始流」的单个共享文件，web 侧 tail 它做逐字流式 + 思考面板。
+# POSIX 沿用上游 scripts/gateway.sh 的 /tmp 默认；本机 Windows 统一落 .runtime，
+# 由 easel.services 给 gateway 与 web 注入同一个 OPENCLAW_RAW_STREAM_PATH /
+# EASEL_RAW_STREAM_PATH，避免 /tmp 在本机不可靠导致流式静默失效。
+SHARED_RAW_STREAM = STATE / 'easel-raw-stream.jsonl'
 CREATE_FLAGS = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
 _rpc_lock = threading.Lock()
 _json_write_lock = threading.Lock()

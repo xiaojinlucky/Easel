@@ -1,6 +1,6 @@
 ---
 name: ai-image-gen
-description: "通用 AI 生图：文生图、图生图、编辑与变体。Easel 本地订阅部署优先使用当前 Codex 提供的 image_gen.imagegen 原生工具；也保留用户自备密钥的 OpenAI 兼容与 apimart API。"
+description: "通用 AI 生图：文生图、图生图、编辑与变体。当用户要出图、改图或做图片变体时使用。Easel 本地订阅部署优先使用当前 Codex 提供的 image_gen.imagegen 原生工具；也保留用户自备密钥的 OpenAI 兼容与 apimart API。"
 layer: produce
 ---
 

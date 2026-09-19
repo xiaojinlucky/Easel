@@ -1,6 +1,6 @@
 # HANDOFF · Easel 自媒体工作台
 
-> 交接时间：**2026-09-15 15:50**（UTC+8）
+> 交接时间：**2026-09-15 15:50**（UTC+8）；**2026-09-19 增量见 §5.9 与 §13，正文其余仍以 09-15 快照为准**
 > 交接对象：**完全没有上下文的新会话或新 Agent**
 > 本文件取代 2026-09-15 02:49 版交接。更早的 09-13 全文仍在 git：`git show 83d6bc4:HANDOFF.md`
 > 本文是二次叙述。关键结论请对照代码、测试、git 与运行端口，不要把下文当唯一真源。
@@ -11,13 +11,13 @@
 
 | 项 | 现役事实（2026-09-15 15:50 核对） |
 |---|---|
-| 长期开发树 | `F:\科研大师兄\自媒体工作台\Easel`（二次开发）。HEAD `f44b3b2`，本地分支名 `main`，跟踪 **`origin/workbench`** |
+| 长期开发树 | `F:\科研大师兄\自媒体工作台\Easel`（二次开发）。本地 `main` = `5ab86a0`，跟踪 **`origin/workbench`**（远端同点） |
 | 上手/原版树 | `F:\科研大师兄\自媒体工作台\Easel-official`。detached **v0.1.1** `23d0f7c`，**不要当长期开发树** |
 | 用户现在在用 | 原版 Web **`127.0.0.1:7870`**（pid 65120）+ 网关 **`127.0.0.1:18789`**（pid 46380） |
 | 二次开发 Web | **7860 空**。桌面快捷方式「Easel 自媒体工作台」仍指向 7860，**此时不要和 7870 抢网关** |
 | GitHub | `origin` = `git@github.com:xiaojinlucky/Easel.git`（用户 fork）。`upstream` = `https://github.com/ZJU-REAL/Easel.git`。`gh` 默认仓库 = `xiaojinlucky/Easel` |
-| 相对上游 | 本地相对 `upstream/main`（`71de7f9`）：**超前 10 / 落后 11**。fork 的 `origin/main` 已等于当前上游 |
-| 未提交 | 二次开发树有一批 **09-15 胶水未提交**（公众号登录态、Cloak 登录、发布页等）。根目录 `_*.py` **不要提交** |
+| 相对上游 | 上游 v0.2.0（`ed3bf27`）**已合进** `merge/upstream-v020`，CI 全绿但**未落到 `main`**，见 §5.9 / §13 |
+| 未提交 | 只剩根目录 `_*.py` 草稿脚本 —— 它们**本就不该提交**（§11 Don't） |
 | 原版未提交补丁 | `openclaw_cmd.py`、`scripts/gateway.ps1`、`xhs_publish.py`、`web/app.py`、`AccountsPage.tsx`；另有独立 `.venv`、启动脚本、show-me HTML |
 | 对话模型 | 7870 对话 = OpenClaw → Codex 插件 → **`openai/gpt-6-astra`**（官方 Codex 订阅）。**不是** Cursor 里的 Grok 4.6 |
 | 主未闭环 | 小红书扫码登录（Cloak 锁已加，**用户尚未扫出持久 cookie**）；公众号 **真实送草稿**未做；对话页中文乱码 |
@@ -239,6 +239,41 @@ Cloak 可执行文件：`C:\Users\Administrator\.cloakbrowser\chromium-146.0.768
 
 ---
 
+### 5.9 09-19：胶水收口 + 合并上游 v0.2.0（二次开发树）
+
+两件事，都在 `Easel/`，都没碰原版树：
+
+1. **`5ab86a0`（已在 `main` 且已推 `origin/workbench`）**：09-15 那批未提交胶水入库（公众号登录态只认
+   `outputs/_login/wechat-oa-mp.json` 的 `state==success`、`POST /api/wechat/draft` 三分支降级、
+   CloakBrowser 内核、`_ProfileLock`、抖音 `--keep-open`）。仍排除根目录 `_*.py`。
+2. **`91945f0`（在分支 `merge/upstream-v020`，**未并进 `main`、未推送**）**：合并 `upstream/main` v0.2.0，
+   149 文件 / +18,598 / −219。父提交 `5ab86a0` + `ed3bf27`。回退点 `backup/pre-upstream-merge` = `5ab86a0`。
+
+**合并时定下的、后续不要再改回去的三条不变量：**
+
+- **profile 与工作区**：`OPENCLAW_PROFILE = PROFILE`（`easel-studio`），`OPENCLAW_WORKSPACE` 写死
+  `~/.openclaw/workspace-easel`。09-19 核对过 `~/.openclaw-easel-studio/openclaw.json` 的
+  `agents.defaults.workspace` 正是该路径 —— **不能**按 `f"workspace-{profile}"` 拼，那个目录不存在。
+  两个 profile 的 gateway 端口都配 18789，互斥依旧成立。
+- **安全姿态**：上游的 `allow_origins=["*"]` 已删除。本机 `_LOCAL_ORIGINS`（7860/5173）+
+  `local_write_guard` + `TrustedHostMiddleware` + 只绑 127.0.0.1 全部保留。上游新增的
+  `tests/test_web_security.py` 因此必须伪装本机客户端才能跑通 —— **改测试，不放宽守卫**。
+- **Windows 逐字流式**：上游靠 `scripts/gateway.sh` 导出 `OPENCLAW_RAW_STREAM_PATH`（默认 `/tmp`）。
+  本机 Windows 起 gateway 走 `easel/services.py`，已补注入同一份 `OPENCLAW_RAW_STREAM` /
+  `OPENCLAW_RAW_STREAM_PATH` / `EASEL_RAW_STREAM_PATH`，落 `.runtime/easel-raw-stream.jsonl`
+  （常量在 `easel/runtime.py: SHARED_RAW_STREAM`）。**删掉这段接线的表现**：回答整块蹦出来、
+  「💭 思考过程」面板空白，而不是报错。
+
+**已验证**：`pytest tests/ -q` → 321 passed；`scripts/validate_skills.py` → OK 114 skills；
+前端 `tsc -b && vite build` 通过；合并提交内无 `.env`/cookie/凭证类文件。
+**未验证**：真机四条链（小红书 Cloak 扫码出码、公众号真送草稿、对话逐字流式不乱码、桌面壳托盘完全退出）
+一条都没跑过 —— 起服务会抢用户正在用的 18789，必须等用户让跑。
+
+**遗留决定**：上游 `SettingsPanel`/`EnvBoard` 与本机 `ModelSettingsPage` 是两套模型设置 UI，功能重叠，
+需要产品级去重（我的建议：上游做默认入口，本机页折进去当一个分区），未动。
+
+---
+
 ## 6. 当前问题
 
 ### 6.1 接手优先（会挡住用户真用）
@@ -248,14 +283,15 @@ Cloak 可执行文件：`C:\Users\Administrator\.cloakbrowser\chromium-146.0.768
 | 1 | 小红书登录未形成持久 cookie | Cloak + 锁已进代码。用户需在 **7870** 关弹层、等 10s、点一次登录并扫码。不要连点 |
 | 2 | 公众号真实送草稿未跑通 | 不要代用户点「登录」或送草稿。扫码会开有头 Chromium |
 | 3 | 7870 对话页中文乱码 | 会话 jsonl 正常。未修前端/网关编码 |
-| 4 | 二次开发 09-15 胶水未提交 | 见 §7。不要带 `_*.py`、`.env`、`.runtime` |
-| 5 | 本地落后上游 11 个提交 | 含 wechat-oa ticket HTTP 抓取等，合之前先看冲突 |
+| 4 | ~~二次开发 09-15 胶水未提交~~ 已做 | `5ab86a0` → `main` 已推 `origin/workbench`，见 §5.9。根目录 `_*.py` 仍未提交，且**不该**提交 |
+| 5 | ~~本地落后上游 11 个提交~~ 已合，未落地 | 合并提交 `91945f0` 只在 `merge/upstream-v020`，**未进 `main`、未推送**；推不推由用户定 |
 | 6 | 两套网关互斥 | 用户在用 7870。不要擅自起 7860 桌面版去抢 18789 |
 | 7 | 原版官方补丁只在 detached HEAD | 长期开发请回到 `Easel/` + fork `workbench` |
 
 ### 6.2 未修、不影响当前上手的 P2（旧账，可后做）
 
-- `_session_locks` 永不释放；`stdout_lines` 无界；进程归属靠命令行字符串
+- ~~`_session_locks` 永不释放；`stdout_lines` 无界~~ 已修：`_release_session_lock` 按 waiter 计数清条目，
+  本轮对话用 `deque(maxlen=_STDOUT_MAX_LINES)`。仍留的旧账：**进程归属靠命令行字符串**
 - `/api/auth-guide` 与 `/api/platforms` 双真源（有 Dashboard 消费方，收敛要另排）
 - `lib/whoami.ts` 对污染的 localStorage 不做类型校验（既有、不在改动面）
 - 问答卡端到端仍缺**用户实机点一次**（沙箱不能起会调 `reg.exe` 的网关）
@@ -280,7 +316,7 @@ Cloak 可执行文件：`C:\Users\Administrator\.cloakbrowser\chromium-146.0.768
 
 > 我在用原版 Easel（`F:\科研大师兄\自媒体工作台\Easel-official`，Web 7870）。请先读 `Easel\HANDOFF.md` §5.6。不要启动 7860。等我关掉登录弹层约 10 秒后，我自己只点一次小红书「登录」并扫码。你只读 `outputs/_login` 与 `xhs_publish` 日志，确认 cookie 是否进了 `~\.easel-browser-profiles\XiaohongshuProfile`，不要代我点登录。
 
-**路线 B — 把二次开发未提交胶水收进 `workbench`**
+**路线 B — 把二次开发未提交胶水收进 `workbench`（09-19 已完成 → `5ab86a0` 已推）**
 
 > 请先读 `F:\科研大师兄\自媒体工作台\Easel\HANDOFF.md`。只提交二次开发树里与公众号登录态、Cloak 登录、发布页相关的源码和测试，不要 `_*.py`、`.env`、`.runtime`。提交前再跑 `tests/`。需要我先口头确认再 commit。
 
@@ -306,6 +342,10 @@ Cloak 可执行文件：`C:\Users\Administrator\.cloakbrowser\chromium-146.0.768
 - **OpenClaw / 嵌入页会把中文显示成乱码**：以会话文件和 `outputs/` 为准。
 - **SM 里有 skill ≠ Cursor 看得到**：本机全局看 `active-global-skills` + `skill-scope.json`。
 - **官方 `setup.ps1` 会动全机 Node/openclaw**，禁止在这台机器跑。
+- **`encoding="utf-8"` 解码子进程 ≠ 子进程真的写 UTF-8**：中文 Windows 上 Python 子进程默认按
+  cp936 写 stdout，父进程按 utf-8 解出的是坏字节 → JSON 解析失败，异常又被 `except Exception` 吞掉，
+  表现是「配方表读空」而不是报错。本机带 `PYTHONUTF8=1` 跑测试会**恰好掩盖**它（09-19 就是这样，
+  只有 CI 的 windows runner 炸）。写这类桥接要给子进程 `env` 显式塞 `PYTHONUTF8` + `PYTHONIOENCODING`。
 
 ### 8.2 旧坑（仍有效）
 
@@ -393,3 +433,40 @@ Cloak 可执行文件：`C:\Users\Administrator\.cloakbrowser\chromium-146.0.768
 - 清理：无。未删 `_*.py`，未停 7870/18789，未动用户 `outputs/`
 - 保留：磁盘上未声明的 `codex-desktop-db-recovery`、`win-lnk-electron-diagnose`（§6.4）
 - 阻塞：无管理器阻塞。用户要在**新 Cursor 对话**里才能稳定看到全局 `handoff` 条目
+
+---
+
+## 13. 09-19 收尾：合并结果怎么落地（下一步真源）
+
+当前分支 `merge/upstream-v020`（代码头 = `cab8712` 编码修复，其后只有文档提交）。
+`main` 与远端 `workbench` 都仍停在 `5ab86a0`。
+
+**09-19 已做完「先推分支让 CI 验」这一步**：分支已推 fork，开了 [PR #1](https://github.com/xiaojinlucky/Easel/pull/1)
+（base `workbench`）→ `MERGEABLE`，三个 job 全绿（Skill contracts / pytest ubuntu / pytest windows）。
+首跑 windows 红过一次，抓出上游 `install_tool` 桥接的 cp936 编码 bug，见 `cab8712` 与 §8.1。
+**合并本身还没落地**（`workbench` 没前进，`main` 没动）。下一步等用户选：
+
+1. **就地验收再落地**（推荐）：用户允许起服务后，真机跑四条链 —— 小红书 Cloak 扫码出码、
+   公众号真送草稿、对话逐字流式不乱码、桌面壳托盘完全退出。全绿再：
+   `git checkout main && git merge --ff-only merge/upstream-v020`，然后推 `origin/workbench`。
+2. **先合 PR 再长验**：直接 `gh pr merge 1`，让远端 `workbench` 前进；本地 `main` 需要
+   `git fetch && git merge --ff-only origin/workbench` 跟上。CI 已绿，风险只剩真机四条链。
+3. **放弃合并**：`git checkout main && git branch -D merge/upstream-v020`。`5ab86a0` 就是干净基线。
+
+复现验证命令（只读，不起服务、不碰 18789/7870）：
+
+```powershell
+cd 'F:\科研大师兄\自媒体工作台\Easel'
+$env:PYTHONUTF8='1'
+.\.venv\Scripts\python.exe -X utf8 -m pytest tests/ -q           # 期望 322 passed
+.\.venv\Scripts\python.exe -X utf8 scripts\validate_skills.py      # 期望 OK 114 skills
+.\.venv\Scripts\python.exe -X utf8 scripts\validate_skill_commands.py  # 期望 OK 273 commands
+cd web\frontend ; npm run build                                  # 期望 tsc + vite 通过
+```
+
+合并后新增的对外行为，用户可能没预期到，先说清楚再动：
+
+- `EASEL_CHAT_TRANSPORT` 默认仍是 `cli`；设成 `http` 才走常驻网关直连（省 6-7s 冷启动），
+  起没起由 `_gateway_http_ready` 判定，失败自动回退 CLI。
+- 上游 `video-production` 技能带进来一整套 vendor SDK（MIT）和字体资产，仓库体积明显变大。
+- 上游 `.gitignore` 只排除 vendor 里的 `node_modules/`、`.remotion/`、`models/`，不会误伤本机数据。
