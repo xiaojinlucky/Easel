@@ -11,13 +11,13 @@
 
 | 项 | 现役事实（2026-09-15 15:50 核对） |
 |---|---|
-| 长期开发树 | `F:\科研大师兄\自媒体工作台\Easel`（二次开发）。HEAD `f44b3b2`，本地分支名 `main`，跟踪 **`origin/workbench`** |
+| 长期开发树 | `F:\科研大师兄\自媒体工作台\Easel`（二次开发）。本地 `main` = `5ab86a0`，跟踪 **`origin/workbench`**（远端同点） |
 | 上手/原版树 | `F:\科研大师兄\自媒体工作台\Easel-official`。detached **v0.1.1** `23d0f7c`，**不要当长期开发树** |
 | 用户现在在用 | 原版 Web **`127.0.0.1:7870`**（pid 65120）+ 网关 **`127.0.0.1:18789`**（pid 46380） |
 | 二次开发 Web | **7860 空**。桌面快捷方式「Easel 自媒体工作台」仍指向 7860，**此时不要和 7870 抢网关** |
 | GitHub | `origin` = `git@github.com:xiaojinlucky/Easel.git`（用户 fork）。`upstream` = `https://github.com/ZJU-REAL/Easel.git`。`gh` 默认仓库 = `xiaojinlucky/Easel` |
-| 相对上游 | 本地相对 `upstream/main`（`71de7f9`）：**超前 10 / 落后 11**。fork 的 `origin/main` 已等于当前上游 |
-| 未提交 | 二次开发树有一批 **09-15 胶水未提交**（公众号登录态、Cloak 登录、发布页等）。根目录 `_*.py` **不要提交** |
+| 相对上游 | 上游 v0.2.0（`ed3bf27`）**已合进** `merge/upstream-v020`，CI 全绿但**未落到 `main`**，见 §5.9 / §13 |
+| 未提交 | 只剩根目录 `_*.py` 草稿脚本 —— 它们**本就不该提交**（§11 Don't） |
 | 原版未提交补丁 | `openclaw_cmd.py`、`scripts/gateway.ps1`、`xhs_publish.py`、`web/app.py`、`AccountsPage.tsx`；另有独立 `.venv`、启动脚本、show-me HTML |
 | 对话模型 | 7870 对话 = OpenClaw → Codex 插件 → **`openai/gpt-6-astra`**（官方 Codex 订阅）。**不是** Cursor 里的 Grok 4.6 |
 | 主未闭环 | 小红书扫码登录（Cloak 锁已加，**用户尚未扫出持久 cookie**）；公众号 **真实送草稿**未做；对话页中文乱码 |
@@ -438,14 +438,19 @@ Cloak 可执行文件：`C:\Users\Administrator\.cloakbrowser\chromium-146.0.768
 
 ## 13. 09-19 收尾：合并结果怎么落地（下一步真源）
 
-当前 HEAD 在 `merge/upstream-v020`（`91945f0`）。`main` 仍停在 `5ab86a0`。三种走法，等用户选：
+当前分支 `merge/upstream-v020`（代码头 = `cab8712` 编码修复，其后只有文档提交）。
+`main` 与远端 `workbench` 都仍停在 `5ab86a0`。
+
+**09-19 已做完「先推分支让 CI 验」这一步**：分支已推 fork，开了 [PR #1](https://github.com/xiaojinlucky/Easel/pull/1)
+（base `workbench`）→ `MERGEABLE`，三个 job 全绿（Skill contracts / pytest ubuntu / pytest windows）。
+首跑 windows 红过一次，抓出上游 `install_tool` 桥接的 cp936 编码 bug，见 `cab8712` 与 §8.1。
+**合并本身还没落地**（`workbench` 没前进，`main` 没动）。下一步等用户选：
 
 1. **就地验收再落地**（推荐）：用户允许起服务后，真机跑四条链 —— 小红书 Cloak 扫码出码、
    公众号真送草稿、对话逐字流式不乱码、桌面壳托盘完全退出。全绿再：
    `git checkout main && git merge --ff-only merge/upstream-v020`，然后推 `origin/workbench`。
-2. **先推分支再长验**：`git push origin merge/upstream-v020`，让 fork 上的 CI（上游新加的
-   `.github/workflows/ci.yml`，ubuntu+windows）替本机再跑一遍 `pytest` + `validate_skills`。
-   不碰 `main`，回退成本为零。
+2. **先合 PR 再长验**：直接 `gh pr merge 1`，让远端 `workbench` 前进；本地 `main` 需要
+   `git fetch && git merge --ff-only origin/workbench` 跟上。CI 已绿，风险只剩真机四条链。
 3. **放弃合并**：`git checkout main && git branch -D merge/upstream-v020`。`5ab86a0` 就是干净基线。
 
 复现验证命令（只读，不起服务、不碰 18789/7870）：
@@ -453,8 +458,9 @@ Cloak 可执行文件：`C:\Users\Administrator\.cloakbrowser\chromium-146.0.768
 ```powershell
 cd 'F:\科研大师兄\自媒体工作台\Easel'
 $env:PYTHONUTF8='1'
-.\.venv\Scripts\python.exe -X utf8 -m pytest tests/ -q          # 期望 321 passed
-.\.venv\Scripts\python.exe -X utf8 scripts\validate_skills.py    # 期望 OK 114 skills
+.\.venv\Scripts\python.exe -X utf8 -m pytest tests/ -q           # 期望 322 passed
+.\.venv\Scripts\python.exe -X utf8 scripts\validate_skills.py      # 期望 OK 114 skills
+.\.venv\Scripts\python.exe -X utf8 scripts\validate_skill_commands.py  # 期望 OK 273 commands
 cd web\frontend ; npm run build                                  # 期望 tsc + vite 通过
 ```
 
