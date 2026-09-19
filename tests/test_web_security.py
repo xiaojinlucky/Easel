@@ -9,6 +9,8 @@ Key 外泄。本 fork 另绑 127.0.0.1 并有 `local_write_guard`，但那只是
 """
 from __future__ import annotations
 
+import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -166,6 +168,26 @@ def test_install_id_must_be_known(client, bad_id):
 def test_install_ids_come_from_engine():
     ids = web._install_tool_ids()
     assert ids and "node" in ids, f"配方表读不出来：{ids}"
+
+
+def test_install_tool_json_forces_utf8_even_in_plain_env(monkeypatch):
+    """Windows 中文环境回归：子进程默认按 cp936 写 stdout，父进程按 utf-8 解码就成了坏字节，
+    配方表读空 → 安装接口拒绝一切合法 id（GitHub windows-latest 实测 frozenset()）。
+    只要父环境没带 UTF-8 开关（CI runner、双击启动的桌面版都是这样），
+    _utf8_child_env() 必须自己把它钉死。"""
+    for key in ("PYTHONUTF8", "PYTHONIOENCODING"):
+        monkeypatch.delenv(key, raising=False)
+        monkeypatch.delenv(key.lower(), raising=False)
+    env = web._utf8_child_env()
+    assert env.get("PYTHONUTF8") == "1" and env.get("PYTHONIOENCODING") == "utf-8", env
+
+    proc = subprocess.run(
+        [sys.executable, str(web.INSTALL_TOOL), "--json", "list"],
+        capture_output=True, text=True, encoding="utf-8", errors="strict",
+        timeout=60, cwd=str(PROJECT_ROOT), env=env)
+    assert proc.returncode == 0, proc.stderr[-300:]
+    tools = json.loads(proc.stdout).get("tools") or []   # 坏字节会在这里抛 JSONDecodeError
+    assert any(t.get("id") == "node" for t in tools), f"读不到配方：{tools[:3]}"
 
 
 # ---- 配方里的 {dir}：必须整元素落地，不可拼进更大的串（拼进去就能逃逸成代码）----

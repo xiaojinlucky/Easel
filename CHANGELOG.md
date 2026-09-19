@@ -67,6 +67,17 @@ All notable changes to Easel are documented in this file.
 - 小红书登录内核改走 CloakBrowser，并以 `_ProfileLock`（`.easel.lock`）串行化 whoami 与登录，
   避免两个 Chromium 抢同一 `user-data-dir`。
 
+### 修复
+
+- **Windows 中文环境下「环境安装」整块失效**（`web/app.py`，09-19 由上游 CI 的 windows-latest 任务暴露）：
+  `_install_tool_ids()` / `/api/env/tools` / 后台安装任务都用 `encoding="utf-8"` 解码 `install_tool.py`
+  子进程的 stdout，但中文 Windows 上 Python 子进程默认按 cp936 写 —— 解出来是坏字节，JSON 解析失败，
+  表现为配方表读空（`frozenset()`）、安装接口把一切合法工具 id 判成无效、环境体检 500。
+  本机带 `PYTHONUTF8=1` 跑测试会正好盖住这颗雷，所以只在 CI runner 与双击启动的桌面版上暴露。
+  现由 `_utf8_child_env()` 给子进程显式钉死 `PYTHONUTF8` + `PYTHONIOENCODING`，
+  并加回归测试 `test_install_tool_json_forces_utf8_even_in_plain_env`。
+  该缺陷来自上游 v0.2.0 的新引擎桥，本机先修；上游同样受影响的写法未回流。
+
 ## [0.1.1] - 2026-09-15
 
 ### Added

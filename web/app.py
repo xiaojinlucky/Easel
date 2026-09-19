@@ -1143,6 +1143,22 @@ _ENV_TOOLS_CACHE: dict = {"ts": 0.0, "data": None}
 _ENV_JOBS: dict[str, dict] = {}
 
 
+def _utf8_child_env() -> dict[str, str]:
+    """给 install_tool 子进程强制 UTF-8 输出。
+
+    下面三处都用 `encoding="utf-8"` 解码子进程 stdout，但 Windows 中文环境下
+    Python 子进程默认按 ANSI 代码页（cp936）写 —— 解出来是坏字节，JSON 解析失败，
+    表现为「配方表读空 → 安装接口拒绝一切合法 id」「环境体检 500 解析失败」。
+    本机跑测试时通常带 PYTHONUTF8=1，正好把这颗雷盖住；CI 的 windows runner 与
+    直接双击启动的桌面版都会踩到（实测 github windows-latest 上 _install_tool_ids()
+    返回 frozenset()）。所以不靠父进程环境，显式给子进程钉死。
+    """
+    env = os.environ.copy()
+    env["PYTHONUTF8"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
+    return env
+
+
 @app.get("/api/env/tools")
 async def api_env_tools(refresh: bool = False):
     """环境体检：引擎 check --json（15 秒缓存；refresh=1 强制重测）。"""
@@ -1152,7 +1168,7 @@ async def api_env_tools(refresh: bool = False):
         proc = await asyncio.to_thread(lambda: subprocess.run(
             [sys.executable, str(INSTALL_TOOL), "--json", "check"],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=240, cwd=str(PROJECT_ROOT)))
+            timeout=240, cwd=str(PROJECT_ROOT), env=_utf8_child_env()))
     except subprocess.TimeoutExpired:
         raise HTTPException(504, "环境体检超时，请稍后再试")
     if proc.returncode != 0 or not (proc.stdout or "").strip():
@@ -1181,7 +1197,8 @@ def _install_tool_ids() -> frozenset[str]:
     try:
         p = subprocess.run([sys.executable, str(INSTALL_TOOL), "--json", "list"],
                            capture_output=True, text=True, encoding="utf-8",
-                           errors="replace", timeout=30, cwd=str(PROJECT_ROOT))
+                           errors="replace", timeout=30, cwd=str(PROJECT_ROOT),
+                           env=_utf8_child_env())
         ids = frozenset(t["id"] for t in (json.loads(p.stdout).get("tools") or []) if t.get("id"))
     except Exception:  # noqa: BLE001
         return _INSTALL_IDS_CACHE["ids"]
@@ -1212,7 +1229,8 @@ async def api_env_install(req: EnvInstallRequest):
             proc = subprocess.Popen(
                 [sys.executable, str(INSTALL_TOOL), "--json", "install", tid],
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                text=True, encoding="utf-8", errors="replace", cwd=str(PROJECT_ROOT))
+                text=True, encoding="utf-8", errors="replace", cwd=str(PROJECT_ROOT),
+                env=_utf8_child_env())
             # stdout 必须**并发**抽干：串行地先读完 stderr 再读 stdout，子进程一旦往 stdout
             # 写满管道缓冲（64K）就会阻塞，而我们还堵在 stderr 上——双向死锁。
             _out: list[str] = []
