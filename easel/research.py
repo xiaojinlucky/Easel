@@ -13,6 +13,11 @@ import urllib.request
 from pathlib import Path
 
 _OCR = None
+_OCR_SECTIONS = (
+    '个人简历', '基本信息', '教育背景', '科研经历', '专业技能', '自我评价',
+    '工作经历', '项目经历', '实习经历', '校园经历', '荣誉奖励', '发表论文',
+    '论文成果', '核心课程', '证书',
+)
 from urllib.parse import urlsplit, urlunsplit
 
 from easel.research_browser import (
@@ -156,8 +161,7 @@ def save_source(url: str, title: str, platform: str, topic: str, content: str, m
         ocr_text = ocr_local_images(local_images) if local_images and len(str(content or '')) < 800 else ''
         if ocr_text:
             extra['ocr_text'] = ocr_text
-            if '[图片文字]' not in content:
-                content = (str(content or '').rstrip() + '\n\n[图片文字]\n' + ocr_text).strip()
+            content = _merge_ocr_content(content, ocr_text)
         if local_images:
             header += '本地图片：\n' + '\n'.join(f'- {item}' for item in local_images) + '\n'
         if images:
@@ -195,6 +199,70 @@ def _public_http_url(url: str) -> bool:
         return True
 
 
+def _ocr_box_origin(box) -> tuple[float, float, float]:
+    points = box if isinstance(box, (list, tuple)) else []
+    xs = [float(p[0]) for p in points if isinstance(p, (list, tuple)) and len(p) >= 2]
+    ys = [float(p[1]) for p in points if isinstance(p, (list, tuple)) and len(p) >= 2]
+    if not xs or not ys:
+        return 0.0, 0.0, 16.0
+    return min(xs), min(ys), max(8.0, max(ys) - min(ys))
+
+
+def _ocr_join_token(left: str, right: str, gap: float) -> str:
+    if not left:
+        return right
+    if gap >= 70:
+        return left + '    ' + right
+    last = left[-1]
+    first = right[0]
+    cjk = '\u4e00' <= last <= '\u9fff' or '\u4e00' <= first <= '\u9fff'
+    if cjk or first in '，。：、；,.:;）)]' or last in '（([':
+        return left + right
+    return left + ' ' + right
+
+
+def layout_ocr_items(items: list) -> str:
+    rows = []
+    for item in items or []:
+        if not isinstance(item, (list, tuple)) or len(item) < 2:
+            continue
+        text = str(item[1] or '').strip()
+        if not text:
+            continue
+        x, y, height = _ocr_box_origin(item[0])
+        rows.append((y, x, height, text))
+    rows.sort()
+    lines = []
+    for y, x, height, text in rows:
+        if lines and abs(y - lines[-1][0]) < max(8.0, 0.55 * lines[-1][2]):
+            lines[-1][3].append((x, text))
+            lines[-1][2] = (lines[-1][2] + height) / 2
+        else:
+            lines.append([y, x, height, [(x, text)]])
+    out = []
+    for _y, _x, _h, parts in lines:
+        parts.sort()
+        line = parts[0][1]
+        for index in range(1, len(parts)):
+            gap = parts[index][0] - parts[index - 1][0]
+            line = _ocr_join_token(line, parts[index][1], gap)
+        key = line.replace(' ', '').replace('#', '')
+        if key in _OCR_SECTIONS or (len(key) <= 6 and key.endswith('经历')):
+            if out:
+                out.append('')
+            out.append('## ' + key)
+        else:
+            out.append(line)
+    return '\n'.join(out).strip()
+
+
+def _merge_ocr_content(content: str, ocr_text: str) -> str:
+    caption = (content or '').split('[图片文字]', 1)[0].rstrip()
+    if ocr_text:
+        return (caption + '\n\n[图片文字]\n' + ocr_text).strip()
+    return caption
+
+
 def ocr_local_images(rel_paths: list[str]) -> str:
     global _OCR
     try:
@@ -203,7 +271,7 @@ def ocr_local_images(rel_paths: list[str]) -> str:
         return ''
     if _OCR is None:
         _OCR = RapidOCR()
-    chunks: list[str] = []
+    pages: list[str] = []
     for rel in rel_paths[:8]:
         path = ROOT / 'outputs' / str(rel)
         if not path.is_file():
@@ -212,13 +280,10 @@ def ocr_local_images(rel_paths: list[str]) -> str:
             result, _elapsed = _OCR(str(path))
         except Exception:
             continue
-        if not result:
-            continue
-        for item in result:
-            piece = item[1] if isinstance(item, (list, tuple)) and len(item) > 1 else item
-            if isinstance(piece, str) and piece.strip():
-                chunks.append(piece.strip())
-    return '\n'.join(chunks)
+        text = layout_ocr_items(result or [])
+        if text:
+            pages.append(text)
+    return '\n\n'.join(pages)
 
 
 def refresh_ocr(identifier: str) -> dict:
@@ -228,9 +293,7 @@ def refresh_ocr(identifier: str) -> dict:
     if not ocr_text:
         return item
     extra['ocr_text'] = ocr_text
-    content = item.get('content') or ''
-    if '[图片文字]' not in content:
-        content = (content.rstrip() + '\n\n[图片文字]\n' + ocr_text).strip()
+    content = _merge_ocr_content(item.get('content') or '', ocr_text)
     with connection() as db:
         db.execute(
             'UPDATE sources SET content=?, extra_json=? WHERE id=?',

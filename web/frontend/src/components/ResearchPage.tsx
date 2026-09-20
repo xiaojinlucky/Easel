@@ -42,6 +42,39 @@ function statsOf(s: Source) {
 function isFresh(s: Source) {
   return Date.now() / 1000 - Number(s.captured_at || 0) < 180;
 }
+function splitNote(content?: string, ocr?: string) {
+  const raw = content || '';
+  const parts = raw.split('[图片文字]');
+  const caption = parts[0].trim();
+  const fromContent = (parts[1] || '').trim();
+  const ocrText = fromContent || (ocr || '').trim();
+  return { caption, ocrText };
+}
+function OcrBlocks({ text }: { text: string }) {
+  const chunks: { title: string; body: string }[] = [];
+  let title = '';
+  let body: string[] = [];
+  const flush = () => {
+    const joined = body.join('\n').trim();
+    if (title || joined) chunks.push({ title, body: joined });
+    title = '';
+    body = [];
+  };
+  for (const line of text.split('\n')) {
+    if (line.startsWith('## ')) {
+      flush();
+      title = line.slice(3).trim();
+    } else body.push(line);
+  }
+  flush();
+  if (chunks.length === 1 && !chunks[0].title) return <pre className="research-ocr-pre">{chunks[0].body}</pre>;
+  return <div className="research-ocr">{chunks.map((chunk, index) => (
+    <section key={index}>
+      {chunk.title ? <h4>{chunk.title}</h4> : null}
+      {chunk.body ? <p>{chunk.body}</p> : null}
+    </section>
+  ))}</div>;
+}
 
 export default function ResearchPage({ onCreate, persona = '' }: { onCreate: (prompt: string, stage?: string) => void; persona?: string }) {
   const [sources, setSources] = useState<Source[]>([]);
@@ -196,18 +229,27 @@ export default function ResearchPage({ onCreate, persona = '' }: { onCreate: (pr
         </article>;
       })}</div>
     </section>}
-    {preview && <div className="overlay"><div className="modal research-preview">
-      <div><h3>{preview.title}</h3><button className="btn" onClick={() => setPreview(null)}>返回素材库</button></div>
-      <p>{[preview.author, preview.kind, preview.method, new Date(preview.captured_at * 1000).toLocaleString('zh-CN'), statsOf(preview)].filter(Boolean).join(' · ')}</p>
-      {preview.url && <a href={preview.url} target="_blank" rel="noreferrer">原始来源 ↗</a>}
-      <div className="model-actions">
-        <button className="btn btn-primary" disabled={busy} onClick={() => { const id = preview.id; setSelected([id]); setPreview(null); void useSources(WORKFLOWS[0], [id]); }}>仿写这条</button>
-        {WORKFLOWS.slice(1, 4).map(wf => <button key={wf.id} className="btn" disabled={busy} onClick={() => { const id = preview.id; setSelected([id]); setPreview(null); void useSources(wf, [id]); }}>{wf.label}</button>)}
+    {preview && <div className="overlay"><div className="modal research-preview">{(() => {
+      const note = splitNote(preview.content, preview.extra?.ocr_text);
+      const images = preview.extra?.local_images?.length ? preview.extra.local_images.map(p => '/api/media/' + p) : preview.extra?.image_urls || [];
+      return <>
+      <div className="research-preview-head">
+        <div><h3>{preview.title}</h3><button className="btn" onClick={() => setPreview(null)}>返回素材库</button></div>
+        <p>{[preview.author, preview.kind, preview.method, new Date(preview.captured_at * 1000).toLocaleString('zh-CN'), statsOf(preview)].filter(Boolean).join(' · ')}</p>
+        {preview.url && <a href={preview.url} target="_blank" rel="noreferrer">原始来源 ↗</a>}
+        <div className="model-actions">
+          <button className="btn btn-primary" disabled={busy} onClick={() => { const id = preview.id; setSelected([id]); setPreview(null); void useSources(WORKFLOWS[0], [id]); }}>仿写这条</button>
+          {WORKFLOWS.slice(1, 4).map(wf => <button key={wf.id} className="btn" disabled={busy} onClick={() => { const id = preview.id; setSelected([id]); setPreview(null); void useSources(wf, [id]); }}>{wf.label}</button>)}
+        </div>
       </div>
-      {!!(preview.extra?.local_images?.length || preview.extra?.image_urls?.length) && <div className="research-gallery">{(preview.extra.local_images?.length ? preview.extra.local_images.map(p => '/api/media/' + p) : preview.extra.image_urls || []).map(src => <img key={src} src={src} alt="" />)}</div>}
-      {preview.content ? <pre>{preview.content}</pre> : preview.error ? <pre>{preview.error}</pre> : null}
-      {preview.extra?.ocr_text && !(preview.content || '').includes('[图片文字]') ? <pre>{'[图片文字]\n' + preview.extra.ocr_text}</pre> : null}
-      {preview.extra?.comments_text ? <pre>{preview.extra.comments_text}</pre> : null}
-    </div></div>}
+      <div className="research-preview-body">
+        {!!images.length && <div className="research-gallery">{images.map(src => <img key={src} src={src} alt="" />)}</div>}
+        {note.caption ? <div className="research-caption"><span>配文</span><p>{note.caption}</p></div> : null}
+        {note.ocrText ? <div className="research-ocr-wrap"><span>图片文字</span><OcrBlocks text={note.ocrText} /></div> : null}
+        {preview.extra?.comments_text ? <div className="research-caption"><span>评论</span><pre>{preview.extra.comments_text}</pre></div> : null}
+        {preview.error ? <pre>{preview.error}</pre> : null}
+      </div>
+      </>;
+    })()}</div></div>}
   </div>;
 }
