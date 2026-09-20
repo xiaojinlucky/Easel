@@ -828,7 +828,7 @@ export default function App() {
       case 'breakdown':
         return <BreakdownPage persona={selectedPersona} />;
       case 'research':
-        return <ResearchPage onCreate={(prompt) => handleDraftToChat(prompt, 'plan')} />;
+        return <ResearchPage persona={selectedPersona} onCreate={(prompt, stage) => handleDraftToChat(prompt, stage || 'produce')} />;
       case 'skills':
         return <SkillPage persona={selectedPersona} onDraftToChat={handleDraftToChat} />;
       case 'workflows':

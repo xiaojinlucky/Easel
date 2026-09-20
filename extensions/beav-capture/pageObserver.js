@@ -970,7 +970,7 @@ ${description}
   async function runXhsDomAction(action, options = {}) {
     if (!USER_PROFILE_FEATURE_ENABLED && (action === "blogger" || action === "bloggerNotes")) return;
     const actionMap = {
-      save: { type: "save-xhs", pending: "保存中...", done: "已保存到 Easel" },
+      save: { type: "save-xhs", pending: "保存中...", done: "已保存到 Easel。打开工作台「调研与素材」即可仿写" },
       download: { type: "xhs:download-current-note", pending: "下载中...", done: "已创建下载任务" },
       downloadZip: { type: "xhs:download-current-note-zip", pending: "打包中...", done: "已创建压缩包下载" },
       comments: { type: "xhs:collect-current-comments", pending: "采集中...", done: "评论已写入 Easel 素材库" },

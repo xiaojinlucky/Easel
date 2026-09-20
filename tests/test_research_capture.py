@@ -3,7 +3,21 @@ import socket
 from types import SimpleNamespace
 
 import pytest
+from pathlib import Path
+
 from easel import research, research_browser
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_research_page_offers_rewrite_actions():
+    text = (ROOT / 'web' / 'frontend' / 'src' / 'components' / 'ResearchPage.tsx').read_text(encoding='utf-8')
+    assert '仿写笔记' in text
+    assert '改成可发文案' in text
+    assert '刚保存' in text
+    assert 'MAX_PICK = 12' in text
+    assert 'UNTRUSTED_REFERENCE' in text
+    assert "stage: 'produce'" in text
 
 
 @pytest.fixture
