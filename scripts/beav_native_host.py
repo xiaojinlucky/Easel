@@ -31,7 +31,13 @@ HOST_METHODS = [
     "knowledge.ingestZhihuArticle",
     "knowledge.ingestDocumentSource",
     "knowledge.ingestComments",
+    "knowledge.ingestMediaAssets",
     "knowledge.batchIngest",
+    "accounts.createImportSession",
+    "accounts.upsertPostsBatch",
+    "accounts.upsertCommentsBatch",
+    "accounts.upsertMediaBatch",
+    "accounts.completeImportSession",
 ]
 
 
@@ -76,39 +82,139 @@ def _ok_ping() -> dict:
     }
 
 
-def _text_from_payload(payload: dict) -> tuple[str, str, str]:
-    if not isinstance(payload, dict):
-        payload = {}
-    inner = payload.get("payload") if isinstance(payload.get("payload"), dict) else payload
-    source = inner.get("source") if isinstance(inner.get("source"), dict) else {}
-    content = inner.get("content") if isinstance(inner.get("content"), dict) else {}
-    note = inner.get("note") if isinstance(inner.get("note"), dict) else {}
-    url = (
+def _unwrap(params: dict) -> dict:
+    if not isinstance(params, dict):
+        return {}
+    inner = params.get("payload") if isinstance(params.get("payload"), dict) else params
+    return inner if isinstance(inner, dict) else {}
+
+
+def _as_dict(value: object) -> dict:
+    return value if isinstance(value, dict) else {}
+
+
+def _join_comments(items: object) -> str:
+    if not isinstance(items, list):
+        return ""
+    lines = []
+    for item in items[:200]:
+        if not isinstance(item, dict):
+            continue
+        author = str(item.get("author") or item.get("nickname") or "").strip()
+        text = str(item.get("text") or item.get("content") or "").strip()
+        if text:
+            lines.append(f"{author}：{text}" if author else text)
+    return "\n".join(lines)
+
+
+def extract_entry(method: str, params: dict) -> dict:
+    inner = _unwrap(params)
+    source = _as_dict(inner.get("source"))
+    content = _as_dict(inner.get("content"))
+    note = _as_dict(inner.get("note"))
+    answer = _as_dict(inner.get("answer"))
+    article = _as_dict(inner.get("article"))
+    assets = _as_dict(inner.get("assets"))
+    comments = _as_dict(inner.get("comments"))
+    url = str(
         source.get("sourceUrl")
         or source.get("sourceLink")
         or note.get("url")
         or inner.get("url")
+        or inner.get("homepageUrl")
         or ""
-    )
-    title = content.get("title") or note.get("title") or inner.get("title") or "网页收藏"
-    text = (
-        content.get("text")
+    ).strip()
+    title = str(content.get("title") or note.get("title") or article.get("title") or inner.get("title") or "网页收藏").strip()[:300]
+    text = str(
+        note.get("text")
+        or content.get("text")
+        or answer.get("text")
+        or article.get("text")
         or content.get("excerpt")
         or note.get("desc")
         or inner.get("text")
-        or url
-    )
-    return str(url).strip(), str(title).strip()[:300], str(text or "").strip()
+        or ""
+    ).strip()
+    author = str(
+        note.get("author")
+        or content.get("author")
+        or answer.get("author")
+        or article.get("author")
+        or ""
+    ).strip()
+    images = []
+    for key in ("imageUrls", "images"):
+        value = assets.get(key) or note.get(key) or article.get(key) or inner.get(key)
+        if isinstance(value, list):
+            images.extend(str(item) for item in value if item)
+    cover = str(assets.get("coverUrl") or note.get("coverUrl") or article.get("coverUrl") or (images[0] if images else "")).strip()
+    if method == "knowledge.ingestMediaAssets":
+        items = inner.get("items") if isinstance(inner.get("items"), list) else []
+        for item in items:
+            if isinstance(item, dict) and item.get("source"):
+                images.append(str(item.get("source")))
+                title = str(item.get("title") or title)[:300]
+        cover = cover or (images[0] if images else "")
+        text = text or "\n".join(images)
+    comments_text = _join_comments(comments.get("items")) or str(content.get("commentsSnapshot") or inner.get("indexText") or "").strip()
+    kind = str(inner.get("kind") or note.get("noteType") or method.replace("knowledge.ingest", "").replace("Entry", "") or "webpage")
+    external_id = str(source.get("externalId") or note.get("noteId") or answer.get("id") or article.get("id") or "").strip()
+    if method.endswith("Comments") or "comment" in kind.lower():
+        external_id = external_id and f"comments-{external_id}" or external_id
+    platform = "Beav采集"
+    if "xhs" in kind.lower() or "xiaohongshu" in url:
+        platform = "小红书"
+    elif "zhihu" in url or "zhihu" in method.lower():
+        platform = "知乎"
+    elif "douyin" in url:
+        platform = "抖音"
+    return {
+        "url": url,
+        "title": title,
+        "text": text or url,
+        "author": author,
+        "kind": kind,
+        "cover_url": cover,
+        "platform": platform,
+        "extra": {
+            "external_id": external_id,
+            "image_urls": images[:24],
+            "comments_text": comments_text,
+            "html": str(content.get("html") or answer.get("html") or article.get("html") or "")[:20000],
+            "method": method,
+        },
+    }
 
 
-def _ingest(params: dict) -> dict:
-    url, title, text = _text_from_payload(params if isinstance(params, dict) else {})
-    if not url.startswith(("http://", "https://")):
+def _text_from_payload(payload: dict) -> tuple[str, str, str]:
+    entry = extract_entry("", payload if isinstance(payload, dict) else {})
+    return entry["url"], entry["title"], entry["text"]
+
+
+def _ingest(params: dict, method: str = "") -> dict:
+    entry = extract_entry(method, params if isinstance(params, dict) else {})
+    if not entry["url"].startswith(("http://", "https://")):
         raise ValueError("缺少可保存的网页链接")
-    if not text:
-        text = url
-    row = save_source(url, title, "Beav采集", "", text, "Beav 开源浏览器插件")
-    return {"success": True, "id": row.get("id"), "title": row.get("title")}
+    row = save_source(
+        entry["url"],
+        entry["title"],
+        entry["platform"],
+        "",
+        entry["text"],
+        "Beav 开源浏览器插件",
+        author=entry["author"],
+        kind=entry["kind"],
+        cover_url=entry["cover_url"],
+        extra=entry["extra"],
+    )
+    return {
+        "success": True,
+        "id": row.get("id"),
+        "entryId": row.get("id"),
+        "title": row.get("title"),
+        "duplicate": False,
+        "comments": {"captured": bool(entry["extra"].get("comments_text"))},
+    }
 
 
 def handle(method: str, params: dict) -> dict:
@@ -133,11 +239,13 @@ def handle(method: str, params: dict) -> dict:
                 entries = [params]
             for item in entries:
                 try:
-                    items.append(_ingest(item if isinstance(item, dict) else {"payload": item}))
+                    items.append(_ingest(item if isinstance(item, dict) else {"payload": item}, method))
                 except Exception as exc:  # noqa: BLE001
                     items.append({"success": False, "error": str(exc)})
             return {"success": True, "results": items}
-        return _ingest(params if isinstance(params, dict) else {})
+        if method == "accounts.completeImportSession":
+            return {"success": True}
+        return _ingest(params if isinstance(params, dict) else {}, method)
     raise ValueError(f"unsupported method: {method}")
 
 

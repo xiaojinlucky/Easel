@@ -1,6 +1,11 @@
 import { useEffect, useState } from 'react';
 
-type Source = { id: string; url: string; title: string; platform: string; topic: string; content?: string; excerpt?: string; state: string; error: string; captured_at: number; method: string; cached?: boolean };
+type Source = {
+  id: string; url: string; title: string; platform: string; topic: string;
+  content?: string; excerpt?: string; state: string; error: string; captured_at: number;
+  method: string; cached?: boolean; author?: string; kind?: string; cover_url?: string;
+  extra?: { image_urls?: string[]; comments_text?: string };
+};
 type Status = { saved_count: number; blocked: { platform: string; reason: string }[]; platforms: string[] };
 async function api<T>(path: string, body?: unknown): Promise<T> {
   const response = await fetch('/api/research' + path, body === undefined ? undefined : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -31,6 +36,8 @@ export default function ResearchPage({ onCreate }: { onCreate: (prompt: string, 
   const [preview, setPreview] = useState<Source | null>(null);
   const [pairing, setPairing] = useState('');
   const [beavExtId, setBeavExtId] = useState('');
+  const [view, setView] = useState<'library' | 'capture'>('library');
+  const [kindFilter, setKindFilter] = useState('全部');
   async function refresh(search = query) {
     const [list, current] = await Promise.all([api<Source[]>('/sources?query=' + encodeURIComponent(search)), api<Status>('/status')]);
     setSources(list); setStatus(current);
@@ -55,8 +62,12 @@ export default function ResearchPage({ onCreate }: { onCreate: (prompt: string, 
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
   }
+  const kinds = ['全部', ...Array.from(new Set(sources.map(s => s.kind || s.platform).filter(Boolean)))];
+  const visible = sources.filter(s => kindFilter === '全部' || (s.kind || s.platform) === kindFilter);
   return <div className="research-page">
-    <div className="model-heading"><div><span className="model-eyebrow">从真实来源开始</span><h2>调研与素材</h2><p>先存证据，再选题写稿。每条素材保留来源链接、采集方式和时间。已保存 {status?.saved_count ?? 0} 条。</p></div><span className="research-engine">素材库</span></div>
+    <div className="model-heading"><div><span className="model-eyebrow">从真实来源开始</span><h2>调研与素材</h2><p>先逛素材库，再决定怎么用。已保存 {status?.saved_count ?? 0} 条。</p></div><span className="research-engine">素材库</span></div>
+    <div className="research-tabs"><button className={view === 'library' ? 'selected' : ''} onClick={() => setView('library')}>素材库</button><button className={view === 'capture' ? 'selected' : ''} onClick={() => setView('capture')}>采集</button></div>
+    {view === 'capture' && <>
     <section className="research-collect">
       <div className="research-tabs"><button className={mode === 'capture' ? 'selected' : ''} onClick={() => setMode('capture')}>采集网页</button><button className={mode === 'import' ? 'selected' : ''} onClick={() => setMode('import')}>导入摘录 / 评论</button></div>
       <label>调研主题<input placeholder="例如：知识类账号的选题、封面与评论区需求" value={topic} maxLength={100} onChange={e => setTopic(e.target.value)} /></label>
@@ -70,11 +81,15 @@ export default function ResearchPage({ onCreate }: { onCreate: (prompt: string, 
     {!!status?.blocked.length && <section className="research-blocked"><b>等待你处理的来源</b>{status.blocked.map(b => <div key={b.platform}><span>{b.platform}：{b.reason}</span><button className="btn" disabled={busy} onClick={async () => { setBusy(true); try { await api('/restore/' + encodeURIComponent(b.platform), {}); await refresh(); setMessage(`已恢复 ${b.platform}，仍遵守采集频率限制。`); } catch (e) { setError((e as Error).message); } finally { setBusy(false); } }}>我已完成登录或解除限制，恢复</button></div>)}</section>}
     <details className="research-collect" open><summary>Beav 开源采集扩展（个人非商用）→ 本工作台</summary><p>商店里的商业版 Beav 扩展仍然只会存进 Beav。个人非商用可以用开源插件：Chrome/Edge 打开开发者模式，加载已解压目录 <code>extensions/beav-capture</code>。把扩展 ID（32 位）填在下面并注册宿主。不要覆盖商业版的 Native Host 名。</p><div className="model-actions"><input placeholder="chrome://extensions 里的 32 位 ID" value={beavExtId} onChange={e => setBeavExtId(e.target.value)} style={{ minWidth: 280 }} /><button className="btn" disabled={busy} onClick={async () => { setBusy(true); setError(''); try { await api('/beav-host', { extensionId: beavExtId.trim() }); setMessage('已注册 Easel 采集宿主。请刷新扩展后再点保存。'); } catch (e) { setError((e as Error).message); } finally { setBusy(false); } }}>注册到本工作台</button></div></details>
     <details className="research-collect"><summary>简易采集扩展（仅当前页/选区）</summary><p>功能更少。下载并解压，加载已解压扩展，生成配对码后即可保存当前页或选中文字。</p><div className="model-actions"><a className="btn" href="/api/research/clipper-download" download>下载简易扩展</a><button className="btn" onClick={async () => { try { const value = await api<{ token: string }>('/clipper-pair', {}); setPairing(value.token); } catch (e) { setError((e as Error).message); } }}>生成配对码</button>{pairing && <button className="btn" onClick={async () => { try { await navigator.clipboard.writeText(pairing); setMessage('配对码已复制，请粘贴到采集扩展。'); } catch { setError('复制失败，请在下方手动复制配对码。'); } }}>复制配对码</button>}</div>{pairing && <label>配对码<input type="password" readOnly value={pairing} aria-label="配对码" /></label>}</details>
-    <section className="research-library"><div className="research-library-head"><h3>素材库</h3><form onSubmit={e => { e.preventDefault(); refresh().catch(e => setError(e.message)); }}><input placeholder="搜索标题、正文或主题" value={query} onChange={e => setQuery(e.target.value)} /><button className="btn">搜索</button></form></div>
+    </>}
+    {error && view === 'library' && <div className="model-alert error" role="alert">{error}</div>}
+    {message && view === 'library' && <div className="model-alert" role="status">{message}</div>}
+    {view === 'library' && <section className="research-library"><div className="research-library-head"><h3>素材库</h3><form onSubmit={e => { e.preventDefault(); refresh().catch(e => setError(e.message)); }}><input placeholder="搜索标题、正文或主题" value={query} onChange={e => setQuery(e.target.value)} /><button className="btn">搜索</button></form></div>
+      <div className="research-kinds">{kinds.map(k => <button key={k} className={kindFilter === k ? 'selected' : ''} onClick={() => setKindFilter(k)}>{k}</button>)}</div>
       <div className="research-workflows"><span>已选 {selected.length} 条</span><button className="btn" disabled={busy || !selected.length} onClick={() => useSources('生成带证据的选题清单和 Brief')}>策划选题</button><button className="btn" disabled={busy || !selected.length} onClick={() => useSources('制作小红书、公众号、知乎和短视频四份适配稿，并用质量门检查')}>一稿多平台</button><button className="btn" disabled={busy || !selected.length} onClick={() => useSources('提炼评论区真实需求、分歧与值得验证的问题，避免虚构用户画像')}>评论洞察</button></div>
-      {!sources.length && <div className="research-empty">保存第一条素材，让下一次创作有据可依。</div>}
-      <div className="research-sources">{sources.map(s => <article key={s.id}><div className="research-source-top"><input type="checkbox" aria-label={'选择 ' + s.title} checked={selected.includes(s.id)} disabled={s.state !== 'saved' || (!selected.includes(s.id) && selected.length >= 5)} onChange={e => setSelected(e.target.checked ? [...selected, s.id] : selected.filter(id => id !== s.id))} /><span>{s.platform} · {new Date(s.captured_at * 1000).toLocaleDateString('zh-CN')}</span><small className={s.state === 'saved' ? 'saved' : 'blocked'}>{s.state === 'saved' ? '已保存' : s.state === 'blocked' ? '需登录 / 验证' : '采集失败'}</small></div><h4><button onClick={async () => { try { setPreview(await api<Source>('/sources/' + s.id)); } catch (e) { setError((e as Error).message); } }}>{s.title}</button></h4><p>{s.error || s.excerpt}</p><div className="research-source-bottom"><span>{s.topic || '未设主题'}</span>{s.url && <a href={s.url} target="_blank" rel="noreferrer">查看原文 ↗</a>}</div></article>)}</div>
-    </section>
-    {preview && <div className="overlay"><div className="modal research-preview"><div><h3>{preview.title}</h3><button className="btn" onClick={() => setPreview(null)}>关闭</button></div><p>{preview.method} · {new Date(preview.captured_at * 1000).toLocaleString('zh-CN')}</p>{preview.url && <a href={preview.url} target="_blank" rel="noreferrer">原始来源 ↗</a>}<pre>{preview.content || preview.error}</pre></div></div>}
+      {!visible.length && <div className="research-empty">还没有素材。到「采集」保存网页，或用 Beav 开源扩展点保存。</div>}
+      <div className="research-sources">{visible.map(s => <article key={s.id}>{s.cover_url ? <button className="research-cover" onClick={async () => { try { setPreview(await api<Source>('/sources/' + s.id)); } catch (e) { setError((e as Error).message); } }}><img src={s.cover_url} alt="" /></button> : null}<div className="research-source-top"><input type="checkbox" aria-label={'选择 ' + s.title} checked={selected.includes(s.id)} disabled={s.state !== 'saved' || (!selected.includes(s.id) && selected.length >= 5)} onChange={e => setSelected(e.target.checked ? [...selected, s.id] : selected.filter(id => id !== s.id))} /><span>{s.platform}{s.kind ? ` · ${s.kind}` : ''} · {new Date(s.captured_at * 1000).toLocaleDateString('zh-CN')}</span><small className={s.state === 'saved' ? 'saved' : 'blocked'}>{s.state === 'saved' ? '已保存' : s.state === 'blocked' ? '需登录 / 验证' : '采集失败'}</small></div><h4><button onClick={async () => { try { setPreview(await api<Source>('/sources/' + s.id)); } catch (e) { setError((e as Error).message); } }}>{s.title}</button></h4><p>{s.author ? `${s.author} · ` : ''}{s.error || s.excerpt}</p><div className="research-source-bottom"><span>{s.topic || '未设主题'}</span>{s.url && <a href={s.url} target="_blank" rel="noreferrer">查看原文 ↗</a>}</div></article>)}</div>
+    </section>}
+    {preview && <div className="overlay"><div className="modal research-preview"><div><h3>{preview.title}</h3><button className="btn" onClick={() => setPreview(null)}>返回列表</button></div><p>{[preview.author, preview.kind, preview.method, new Date(preview.captured_at * 1000).toLocaleString('zh-CN')].filter(Boolean).join(' · ')}</p>{preview.url && <a href={preview.url} target="_blank" rel="noreferrer">原始来源 ↗</a>}<div className="model-actions"><button className="btn btn-primary" onClick={() => { setSelected([preview.id]); setPreview(null); useSources('引用这一条素材继续创作'); }}>带进创作</button></div>{!!preview.extra?.image_urls?.length && <div className="research-gallery">{preview.extra.image_urls.map(src => <img key={src} src={src} alt="" />)}</div>}{preview.extra?.comments_text ? <pre>{preview.extra.comments_text}</pre> : <p>评论尚未采集</p>}<pre>{preview.content || preview.error}</pre></div></div>}
   </div>;
 }

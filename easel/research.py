@@ -42,6 +42,15 @@ def connection() -> sqlite3.Connection:
     db.execute('CREATE TABLE IF NOT EXISTS visits (platform TEXT, at REAL)')
     db.execute('CREATE TABLE IF NOT EXISTS blocked (platform TEXT PRIMARY KEY, reason TEXT, at REAL)')
     db.execute('CREATE TABLE IF NOT EXISTS cooldowns (platform TEXT PRIMARY KEY, next_at REAL)')
+    existing = {row[1] for row in db.execute('PRAGMA table_info(sources)').fetchall()}
+    for column, decl in (
+        ('author', 'TEXT NOT NULL DEFAULT \'\''),
+        ('kind', 'TEXT NOT NULL DEFAULT \'\''),
+        ('cover_url', 'TEXT NOT NULL DEFAULT \'\''),
+        ('extra_json', 'TEXT NOT NULL DEFAULT \'\''),
+    ):
+        if column not in existing:
+            db.execute(f'ALTER TABLE sources ADD COLUMN {column} {decl}')
     return db
 
 
@@ -69,7 +78,7 @@ def normalize_url(raw: str, check_network: bool = False) -> tuple[str, str]:
 
 def list_sources(query: str = '') -> list[dict]:
     with connection() as db:
-        rows = db.execute('SELECT id,url,title,platform,topic,state,error,captured_at,asset_path,method,substr(content,1,220) AS excerpt FROM sources WHERE title LIKE ? OR topic LIKE ? OR content LIKE ? ORDER BY captured_at DESC LIMIT 200', ('%' + query + '%',) * 3).fetchall()
+        rows = db.execute('SELECT id,url,title,platform,topic,state,error,captured_at,asset_path,method,author,kind,cover_url,substr(content,1,220) AS excerpt FROM sources WHERE title LIKE ? OR topic LIKE ? OR content LIKE ? OR author LIKE ? OR kind LIKE ? ORDER BY captured_at DESC LIMIT 200', ('%' + query + '%',) * 5).fetchall()
     return [dict(row) for row in rows]
 
 
@@ -78,14 +87,25 @@ def get_source(identifier: str) -> dict:
         row = db.execute('SELECT * FROM sources WHERE id=?', (identifier,)).fetchone()
     if row is None:
         raise CollectionError('素材不存在。', 404)
-    return dict(row)
+    item = dict(row)
+    raw = item.get('extra_json') or ''
+    if raw:
+        try:
+            item['extra'] = json.loads(raw)
+        except json.JSONDecodeError:
+            item['extra'] = {}
+    return item
 
 
-def save_source(url: str, title: str, platform: str, topic: str, content: str, method: str = 'manual', state: str = 'saved', error: str = '') -> dict:
+def save_source(url: str, title: str, platform: str, topic: str, content: str, method: str = 'manual', state: str = 'saved', error: str = '', author: str = '', kind: str = '', cover_url: str = '', extra: dict | None = None) -> dict:
+    extra = extra or {}
+    external_id = str(extra.get('external_id') or '').strip()
     if method == 'FreshRSS':
         identity = 'rss\n' + url
     elif method == CLIPPER_METHOD:
         identity = 'clipper\n' + url + '\n' + content
+    elif external_id:
+        identity = 'ext\n' + external_id
     elif method != 'manual':
         identity = url
     else:
@@ -109,11 +129,32 @@ def save_source(url: str, title: str, platform: str, topic: str, content: str, m
     if state == 'saved':
         target = ROOT / 'outputs/研究素材' / f'{identifier}.md'
         target.parent.mkdir(parents=True, exist_ok=True)
-        header = f'# {title}\n\n来源：{url or "用户导入"}\n采集时间：{time.strftime("%Y-%m-%d %H:%M:%S%z")}\n方式：{method}\n主题：{topic}\n\n---\n\n'
+        images = extra.get('image_urls') or []
+        comments = extra.get('comments_text') or ''
+        header = (
+            f'# {title}\n\n来源：{url or "用户导入"}\n采集时间：{time.strftime("%Y-%m-%d %H:%M:%S%z")}\n'
+            f'方式：{method}\n主题：{topic}\n作者：{author}\n类型：{kind}\n'
+        )
+        if cover_url:
+            header += f'封面：{cover_url}\n'
+        if images:
+            header += '图片：\n' + '\n'.join(f'- {item}' for item in images[:24]) + '\n'
+        if comments:
+            header += '\n## 评论\n\n' + comments + '\n'
+        header += '\n---\n\n'
         target.write_text(header + content, encoding='utf-8')
         asset_path = target.relative_to(ROOT / 'outputs').as_posix()
+    extra_json = json.dumps(extra, ensure_ascii=False) if extra else ''
     with connection() as db:
-        db.execute('INSERT INTO sources VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET title=excluded.title,topic=excluded.topic,content=excluded.content,state=excluded.state,error=excluded.error,captured_at=excluded.captured_at,asset_path=excluded.asset_path,method=excluded.method', (identifier, url, title[:500], platform, topic, content, state, error, captured_at, asset_path, method))
+        db.execute(
+            'INSERT INTO sources (id,url,title,platform,topic,content,state,error,captured_at,asset_path,method,author,kind,cover_url,extra_json) '
+            'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET '
+            'title=excluded.title,topic=excluded.topic,content=excluded.content,state=excluded.state,'
+            'error=excluded.error,captured_at=excluded.captured_at,asset_path=excluded.asset_path,'
+            'method=excluded.method,author=excluded.author,kind=excluded.kind,cover_url=excluded.cover_url,'
+            'extra_json=excluded.extra_json',
+            (identifier, url, title[:500], platform, topic, content, state, error, captured_at, asset_path, method, author, kind, cover_url, extra_json),
+        )
     return get_source(identifier)
 
 

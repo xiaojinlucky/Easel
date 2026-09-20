@@ -28,3 +28,35 @@ def test_extracts_knowledge_entry_fields():
     assert url.endswith('/abc')
     assert title == '一条笔记'
     assert '正文' in text
+
+
+def test_xhs_v2_uses_note_text_and_images():
+    entry = mod.extract_entry('knowledge.ingestXhsEntryV2', {
+        'payload': {
+            'source': {'sourceUrl': 'https://www.xiaohongshu.com/explore/abc', 'externalId': 'n1'},
+            'note': {
+                'title': 'V2标题',
+                'text': '笔记正文不该丢',
+                'author': '作者甲',
+                'coverUrl': 'https://example.com/cover.jpg',
+                'imageUrls': ['https://example.com/1.jpg'],
+            },
+            'comments': {'items': [{'author': '乙', 'text': '一条评论'}]},
+        }
+    })
+    assert entry['title'] == 'V2标题'
+    assert '不该丢' in entry['text']
+    assert entry['author'] == '作者甲'
+    assert entry['cover_url'].endswith('cover.jpg')
+    assert '一条评论' in entry['extra']['comments_text']
+
+
+def test_zhihu_answer_uses_nested_text():
+    entry = mod.extract_entry('knowledge.ingestZhihuAnswer', {
+        'payload': {
+            'source': {'sourceUrl': 'https://www.zhihu.com/question/1/answer/2'},
+            'answer': {'text': '回答正文', 'author': '答主'},
+        }
+    })
+    assert '回答正文' in entry['text']
+    assert entry['author'] == '答主'
