@@ -6,3 +6,21 @@
 .research-cover img{display:block;width:100%;height:160px;object-fit:cover}
 .research-gallery{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px;margin:16px 0}
 .research-gallery img{width:100%;height:auto;max-height:70vh;object-fit:contain;border-radius:8px;background:var(--surface-2)}
+.research-index-status{display:flex;flex-wrap:wrap;align-items:center;gap:14px;font-size:12px;color:var(--text-secondary);border:1px solid var(--border);border-radius:10px;background:var(--surface-2);padding:9px 14px;margin:10px 0}
+.research-index-status .engine{color:#14727d;font-weight:600}
+.research-index-status button{font-size:11px;padding:5px 10px}
+.research-tags{display:flex;flex-wrap:wrap;align-items:center;gap:7px;margin:8px 0}
+.research-tags button,.research-tags span{display:inline-flex;align-items:center;gap:4px;border:1px solid var(--border);background:transparent;border-radius:999px;padding:3px 10px;font-size:11px;cursor:pointer;color:#217d8a}
+.research-tags span{cursor:default;background:var(--surface-2)}
+.research-tags span button{border:0;background:none;padding:0 2px;font-size:12px;color:var(--text-secondary);cursor:pointer}
+.research-tags input{border:1px solid var(--border);border-radius:8px;padding:5px 9px;font-size:12px;width:110px}
+.research-tags .btn{font-size:11px;padding:5px 10px}
+.research-manage{border-top:1px dashed var(--border);margin-top:16px;padding-top:10px}
+.research-hint{font-size:12px;color:var(--text-secondary)}
+.research-sources .is-pinned{border-color:#c9b6e4;background:#fbf7ff}
+.research-more{display:flex;justify-content:center;margin:18px 0}
+.research-edit{width:100%;box-sizing:border-box;border:1px solid var(--border);border-radius:8px;padding:12px;font:13px/1.9 inherit;margin-top:18px;resize:vertical;background:white;color:var(--text)}
+.research-trash-list{display:flex;flex-direction:column;gap:10px}
+.research-trash-row{display:flex;align-items:center;justify-content:space-between;gap:14px;border:1px solid var(--border);border-radius:12px;padding:14px 18px;background:white;font-size:13px}
+.research-trash-row small{display:block;color:var(--text-secondary);font-size:11px;margin-top:4px}
+.research-trash-row button{font-size:12px}
