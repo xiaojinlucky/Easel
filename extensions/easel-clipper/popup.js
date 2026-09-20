@@ -18,11 +18,11 @@ save.addEventListener('click', async () => {
     } });
     const source = extracted.result;
     if (!source?.content?.trim()) throw new Error('没有可保存的正文，请选择需要的文字后重试。');
-    const response = await fetch('http://127.0.0.1:7860/api/clipper', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token }, body: JSON.stringify({ ...source, title: source.title.slice(0, 300), content: source.content.slice(0, 300000), topic: topicInput.value }) });
+    const response = await fetch('http://127.0.0.1:7870/api/clipper', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token }, body: JSON.stringify({ ...source, title: source.title.slice(0, 300), content: source.content.slice(0, 300000), topic: topicInput.value }) });
     const result = await response.json();
     if (!response.ok) throw new Error(typeof result.detail === 'string' ? result.detail : '保存失败。');
     await chrome.storage.local.set({ easelToken: token, topic: topicInput.value });
     status.textContent = '已保存到本地素材库，可继续做选题、评论洞察和多平台改写。';
-  } catch (error) { status.textContent = error.message.includes('Failed to fetch') ? '无法连接 Easel，请先启动本地工作台。' : error.message; }
+  } catch (error) { status.textContent = error.message.includes('Failed to fetch') ? '无法连接 Easel（7870），请先打开本地工作台。' : error.message; }
   finally { save.disabled = false; }
 });
