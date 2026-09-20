@@ -19,6 +19,17 @@ def test_project_root_ignores_utf8_bom():
     assert 'encoding="utf-8-sig"' in text
 
 
+def test_hashtags_become_tags_when_plugin_omits_them():
+    entry = mod.extract_entry('knowledge.ingestXhsEntryV2', {
+        'payload': {
+            'source': {'sourceUrl': 'https://www.xiaohongshu.com/explore/abc'},
+            'note': {'title': '简历求改', 'text': '27应届 #改简历#校招 #生物就业前景'},
+        }
+    })
+    assert '改简历' in entry['extra']['tags']
+    assert '校招' in entry['extra']['tags']
+
+
 def test_ping_reports_bridge_connected():
     result = handle('ping', {})
     assert result['ok'] is True

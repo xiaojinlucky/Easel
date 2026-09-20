@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import struct
 import sys
 import traceback
@@ -108,6 +109,20 @@ def _unwrap(params: dict) -> dict:
 
 def _as_dict(value: object) -> dict:
     return value if isinstance(value, dict) else {}
+
+
+def _tags_from(note: dict, content: dict, inner: dict, text: str) -> list[str]:
+    raw = note.get("tags") or content.get("tags") or inner.get("tags") or []
+    if isinstance(raw, str):
+        raw = [raw]
+    tags = [str(item).strip().lstrip("#") for item in raw if str(item).strip()] if isinstance(raw, list) else []
+    if not tags:
+        tags = [item.strip() for item in re.findall(r"#([^\s#]+)", text)]
+    seen: list[str] = []
+    for tag in tags:
+        if tag and tag not in seen:
+            seen.append(tag)
+    return seen[:24]
 
 
 def _join_comments(items: object) -> str:
@@ -220,7 +235,7 @@ def extract_entry(method: str, params: dict) -> dict:
             or _as_dict(note.get("stats")).get("collectedCount"),
             "comments": _as_dict(note.get("stats") or content.get("stats")).get("comments")
             or comments.get("total"),
-            "tags": note.get("tags") or content.get("tags") or inner.get("tags") or [],
+            "tags": _tags_from(note, content, inner, text),
             "html": str(content.get("html") or answer.get("html") or article.get("html") or "")[:20000],
             "method": method,
         },

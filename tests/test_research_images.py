@@ -1,4 +1,8 @@
-from easel.research import _public_http_url
+from easel.research import _public_http_url, ocr_local_images
+
+
+def test_ocr_empty_paths_do_not_crash():
+    assert ocr_local_images([]) == ''
 
 
 def test_blocks_localhost_and_private_image_urls():

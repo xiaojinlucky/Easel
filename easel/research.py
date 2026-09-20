@@ -11,6 +11,8 @@ import time
 import urllib.parse
 import urllib.request
 from pathlib import Path
+
+_OCR = None
 from urllib.parse import urlsplit, urlunsplit
 
 from easel.research_browser import (
@@ -151,6 +153,11 @@ def save_source(url: str, title: str, platform: str, topic: str, content: str, m
             header += f'封面：{cover_url}\n'
         local_images = materialize_images(identifier, ([cover_url] if cover_url else []) + list(images))
         extra['local_images'] = local_images
+        ocr_text = ocr_local_images(local_images) if local_images and len(str(content or '')) < 800 else ''
+        if ocr_text:
+            extra['ocr_text'] = ocr_text
+            if '[图片文字]' not in content:
+                content = (str(content or '').rstrip() + '\n\n[图片文字]\n' + ocr_text).strip()
         if local_images:
             header += '本地图片：\n' + '\n'.join(f'- {item}' for item in local_images) + '\n'
         if images:
@@ -186,6 +193,50 @@ def _public_http_url(url: str) -> bool:
         return bool(ip.is_global)
     except ValueError:
         return True
+
+
+def ocr_local_images(rel_paths: list[str]) -> str:
+    global _OCR
+    try:
+        from rapidocr_onnxruntime import RapidOCR
+    except ImportError:
+        return ''
+    if _OCR is None:
+        _OCR = RapidOCR()
+    chunks: list[str] = []
+    for rel in rel_paths[:8]:
+        path = ROOT / 'outputs' / str(rel)
+        if not path.is_file():
+            continue
+        try:
+            result, _elapsed = _OCR(str(path))
+        except Exception:
+            continue
+        if not result:
+            continue
+        for item in result:
+            piece = item[1] if isinstance(item, (list, tuple)) and len(item) > 1 else item
+            if isinstance(piece, str) and piece.strip():
+                chunks.append(piece.strip())
+    return '\n'.join(chunks)
+
+
+def refresh_ocr(identifier: str) -> dict:
+    item = get_source(identifier)
+    extra = dict(item.get('extra') or {})
+    ocr_text = ocr_local_images(list(extra.get('local_images') or []))
+    if not ocr_text:
+        return item
+    extra['ocr_text'] = ocr_text
+    content = item.get('content') or ''
+    if '[图片文字]' not in content:
+        content = (content.rstrip() + '\n\n[图片文字]\n' + ocr_text).strip()
+    with connection() as db:
+        db.execute(
+            'UPDATE sources SET content=?, extra_json=? WHERE id=?',
+            (content, json.dumps(extra, ensure_ascii=False), identifier),
+        )
+    return get_source(identifier)
 
 
 def materialize_images(identifier: str, urls: list[str]) -> list[str]:
