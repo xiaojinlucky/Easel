@@ -1,0 +1,266 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 360px;
+  background: #f3f7f3;
+  color: #162521;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+.app {
+  padding: 14px;
+  display: grid;
+  gap: 10px;
+}
+
+.panel {
+  border: 1px solid #cfe4dd;
+  border-radius: 16px;
+  background: #fbfff9;
+  padding: 14px;
+}
+
+.section-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #6a7d75;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.brand-icon {
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  display: block;
+  flex: 0 0 auto;
+}
+
+.eyebrow {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #0f766e;
+}
+
+h1 {
+  margin: 6px 0 4px;
+  font-size: 19px;
+  line-height: 1.2;
+}
+
+.status,
+.page-meta {
+  margin-top: 10px;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.capture-type {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #115e59;
+  font-weight: 600;
+}
+
+.status.ok {
+  color: #15803d;
+}
+
+.status.waiting {
+  color: #a16207;
+}
+
+.status.error {
+  color: #b91c1c;
+}
+
+.actions {
+  display: grid;
+  gap: 8px;
+}
+
+.update-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.update-meta {
+  font-size: 12px;
+  line-height: 1.5;
+  color: #5f6f68;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.update-meta strong {
+  color: #162521;
+}
+
+.update-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.action-hint {
+  font-size: 11px;
+  line-height: 1.4;
+  color: #6a7d75;
+  padding: 0 2px;
+}
+
+.btn {
+  border: 1px solid #b7d2cb;
+  border-radius: 12px;
+  background: #ffffff;
+  color: #162521;
+  padding: 11px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.btn:hover:not(:disabled) {
+  border-color: #0f766e;
+}
+
+.btn:disabled {
+  cursor: not-allowed;
+  opacity: 1;
+  color: #6a7d75;
+  border-color: #d9e7e3;
+  background: #ecf4f1;
+}
+
+.btn-primary {
+  background: #0f766e;
+  border-color: #0f766e;
+  color: #f7fffb;
+}
+
+.btn-secondary {
+  background: #ecf4f1;
+  border-color: #d9e7e3;
+  color: #5f6f68;
+}
+
+.btn-secondary:hover:not(:disabled) {
+  border-color: #a7c9c0;
+}
+
+.btn-ghost {
+  background: #fbfff9;
+  border-color: #b7d2cb;
+  color: #115e59;
+}
+
+.btn-ghost:hover:not(:disabled) {
+  border-color: #0f766e;
+  background: #e7f6f2;
+}
+
+.btn-primary:disabled {
+  color: #6a7d75;
+  border-color: #d9e7e3;
+  background: #ecf4f1;
+}
+
+.result {
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.result.success {
+  color: #166534;
+}
+
+.result.error {
+  color: #b91c1c;
+}
+
+.platform-safety-notice-dialog {
+  width: min(340px, calc(100vw - 28px));
+  margin: auto;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: #162521;
+  padding: 0;
+  box-shadow: 0 20px 56px rgba(15, 23, 42, 0.24);
+}
+
+.platform-safety-notice-dialog::backdrop {
+  background: rgba(15, 23, 42, 0.38);
+}
+
+.platform-safety-notice-card {
+  display: grid;
+  gap: 18px;
+  border-radius: inherit;
+  background: #ffffff;
+  padding: 20px;
+}
+
+.platform-safety-notice-copy {
+  display: grid;
+  gap: 8px;
+}
+
+.platform-safety-notice-copy h2,
+.platform-safety-notice-copy p {
+  margin: 0;
+}
+
+.platform-safety-notice-copy h2 {
+  font-size: 16px;
+  line-height: 1.35;
+}
+
+.platform-safety-notice-copy p {
+  color: #525252;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.platform-safety-notice-actions {
+  display: grid;
+  grid-template-columns: 1fr 1.35fr;
+  gap: 8px;
+}
+
+.platform-safety-notice-actions button {
+  min-height: 36px;
+  border: 1px solid rgba(15, 23, 42, 0.14);
+  border-radius: 7px;
+  background: #ffffff;
+  color: #262626;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1.25;
+}
+
+.platform-safety-notice-actions button.primary {
+  border-color: #0f766e;
+  background: #0f766e;
+  color: #f7fffb;
+}
+
+.hidden {
+  display: none;
+}

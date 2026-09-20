@@ -1,0 +1,4 @@
+本目录来自 Jamailar/Beav 开源浏览器插件（MIT License — Non-Commercial Use Only）。
+仅供本机个人非商用：把采集结果写入 Easel 调研素材库。
+未修改采集器业务逻辑；仅改 Native Host 名称，避免占用商业版 Beav 的 com.redbox.browser_control。
+完整版权与限制见 LICENSE.Beav-MIT-NC.txt。

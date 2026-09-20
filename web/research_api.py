@@ -65,6 +65,33 @@ async def import_excerpt(request: Excerpt):
     return research.save_source(request.url, request.title, '导入摘录', request.topic, request.content)
 
 
+class BeavHostRequest(BaseModel):
+    extensionId: str = Field(min_length=32, max_length=32)
+
+
+@router.post('/beav-host')
+async def install_beav_host(request: BeavHostRequest):
+    import re
+    import subprocess
+    from easel.research_browser import ROOT
+    ext = request.extensionId.strip().lower()
+    if not re.fullmatch(r'[a-z]{32}', ext):
+        raise HTTPException(422, '请填写 chrome://extensions 里 32 位扩展 ID。')
+    script = ROOT / 'scripts' / 'install_beav_native_host.ps1'
+    if not script.is_file():
+        raise HTTPException(500, '未找到宿主安装脚本。')
+    completed = await asyncio.to_thread(
+        subprocess.run,
+        ['powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', str(script), '-ExtensionId', ext],
+        capture_output=True,
+        text=True,
+        encoding='utf-8',
+    )
+    if completed.returncode != 0:
+        raise HTTPException(500, (completed.stderr or completed.stdout or '宿主注册失败')[-800:])
+    return {'ok': True, 'extensionId': ext, 'host': 'com.easel.research_clipper'}
+
+
 @router.post('/restore/{platform}')
 async def restore(platform: str):
     if platform not in research.PLATFORMS.values():
