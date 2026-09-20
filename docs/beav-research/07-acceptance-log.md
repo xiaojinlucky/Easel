@@ -12,7 +12,7 @@
 | 阶段 0 | `e6bfb0b` | 摘 Beav 云回连/遥测、`.runtime` 入库防护、rapidocr+yt-dlp 进依赖、端口统一 7870、NOTICE 重写 |
 | 阶段 1A | `65fdac9` | 宿主协议：回执、`operationId` 幂等、`data:` 图落盘、kind/平台归一化、真实 `desktop.health`/`desktop.context` |
 | 阶段 1B+1C | `ac809cb` | 素材库治理：分页/筛选/kindCounts、jieba+FTS5 全文检索（LIKE 兜底）、标签/置顶/摘要、回收站+30 天清理、治理路由、前端治理面 |
-| 阶段 2 | `ac527af` 功能 + `49b1f78` 线程用例 + `d8d32ba` 修复轮一 + 本次修复轮二 | AI 打标/摘要队列、OCR 批量回填、视频字幕/Whisper 转写、Beav 目录式导出（folder/json/csv）、宿主入库自动投递加工任务；两轮对抗验收修复见下 |
+| 阶段 2 | `ac527af` 功能 + `49b1f78` 线程用例 + `d8d32ba` 修复轮一 + `04a633e` 修复轮二 | AI 打标/摘要队列、OCR 批量回填、视频字幕/Whisper 转写、Beav 目录式导出（folder/json/csv）、宿主入库自动投递加工任务；两轮对抗验收修复见下 |
 
 ## 已验证事实（可复制复核）
 
