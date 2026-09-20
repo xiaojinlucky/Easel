@@ -8,6 +8,8 @@ import sqlite3
 import subprocess
 import threading
 import time
+import urllib.parse
+import urllib.request
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
@@ -137,6 +139,10 @@ def save_source(url: str, title: str, platform: str, topic: str, content: str, m
         )
         if cover_url:
             header += f'封面：{cover_url}\n'
+        local_images = materialize_images(identifier, ([cover_url] if cover_url else []) + list(images))
+        extra['local_images'] = local_images
+        if local_images:
+            header += '本地图片：\n' + '\n'.join(f'- {item}' for item in local_images) + '\n'
         if images:
             header += '图片：\n' + '\n'.join(f'- {item}' for item in images[:24]) + '\n'
         if comments:
@@ -156,6 +162,49 @@ def save_source(url: str, title: str, platform: str, topic: str, content: str, m
             (identifier, url, title[:500], platform, topic, content, state, error, captured_at, asset_path, method, author, kind, cover_url, extra_json),
         )
     return get_source(identifier)
+
+
+def _public_http_url(url: str) -> bool:
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.scheme not in ('http', 'https') or parsed.username or parsed.password:
+        return False
+    host = (parsed.hostname or '').lower()
+    if not host or host in {'localhost', '127.0.0.1', '::1'} or host.endswith('.local'):
+        return False
+    try:
+        ip = ipaddress.ip_address(host)
+        return bool(ip.is_global)
+    except ValueError:
+        return True
+
+
+def materialize_images(identifier: str, urls: list[str]) -> list[str]:
+    folder = ROOT / 'outputs' / '研究素材' / identifier
+    saved: list[str] = []
+    seen: set[str] = set()
+    for index, raw in enumerate(urls):
+        url = str(raw or '').strip()
+        if not url or url in seen or not _public_http_url(url):
+            continue
+        seen.add(url)
+        if len(saved) >= 8:
+            break
+        suffix = Path(urllib.parse.urlsplit(url).path).suffix.lower()
+        if suffix not in {'.jpg', '.jpeg', '.png', '.webp', '.gif'}:
+            suffix = '.jpg'
+        target = folder / f'{index:02d}{suffix}'
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+            request = urllib.request.Request(url, headers={'User-Agent': 'EaselResearch/1.0'})
+            with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(request, timeout=8) as response:
+                data = response.read(2_000_001)
+            if not data or len(data) > 2_000_000:
+                continue
+            target.write_bytes(data)
+            saved.append(target.relative_to(ROOT / 'outputs').as_posix())
+        except (OSError, ValueError):
+            continue
+    return saved
 
 
 def collection_status() -> dict:

@@ -1,6 +1,6 @@
 # Easel 素材采集扩展
 
-正文提取直接复用 Mozilla Readability 0.6.0（Apache-2.0，见 LICENSE.Readability.md）；这里只提供 Chrome / Edge 到本地 Easel 素材库的连接。
+正文提取复用 Mozilla Readability（Apache-2.0，LICENSE.Readability.md）。Markdown 转换复用 Turndown 与 GFM 插件（MIT，vendor/LICENSE.turndown*.txt）。管道对照 pavi2410/clipdown 的 content.ts，出口仍是本机 7870，不请求全站常驻权限。
 
 1. 打开浏览器扩展管理页面，开启开发者模式，选择「加载已解压的扩展程序」，选择此目录。
 2. 在 Easel「调研与素材」生成配对码，复制到扩展。
