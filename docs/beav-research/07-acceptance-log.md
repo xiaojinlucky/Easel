@@ -12,7 +12,7 @@
 | 阶段 0 | `e6bfb0b` | 摘 Beav 云回连/遥测、`.runtime` 入库防护、rapidocr+yt-dlp 进依赖、端口统一 7870、NOTICE 重写 |
 | 阶段 1A | `65fdac9` | 宿主协议：回执、`operationId` 幂等、`data:` 图落盘、kind/平台归一化、真实 `desktop.health`/`desktop.context` |
 | 阶段 1B+1C | `ac809cb` | 素材库治理：分页/筛选/kindCounts、jieba+FTS5 全文检索（LIKE 兜底）、标签/置顶/摘要、回收站+30 天清理、治理路由、前端治理面 |
-| 阶段 2 | 本提交 | AI 打标/摘要队列、OCR 批量回填、视频字幕/Whisper 转写、Beav 目录式导出（folder/json/csv）、宿主入库自动投递加工任务 |
+| 阶段 2 | `ac527af` 功能 + `49b1f78` 线程用例 + 本次修复轮 | AI 打标/摘要队列、OCR 批量回填、视频字幕/Whisper 转写、Beav 目录式导出（folder/json/csv）、宿主入库自动投递加工任务；修复轮见「对抗验收后修掉的问题」 |
 
 ## 已验证事实（可复制复核）
 
@@ -21,8 +21,8 @@
 ```bash
 cd "F:/科研大师兄/自媒体工作台/Easel-beav-kb"
 PY="F:/科研大师兄/自媒体工作台/Easel/.venv/Scripts/python.exe"
-"$PY" -m pytest -q                 # 期望：3 failed, 241 passed, 5 skipped
-"$PY" -m pytest tests/test_research_enrich.py -q   # 期望：9 passed
+"$PY" -m pytest -q                 # 期望：3 failed, 248 passed, 5 skipped
+"$PY" -m pytest tests/test_research_enrich.py -q   # 期望：16 passed
 ```
 
 `tests/test_core.py` 里那 3 个失败（`test_write_baseline_profile`、
@@ -30,7 +30,7 @@ PY="F:/科研大师兄/自媒体工作台/Easel/.venv/Scripts/python.exe"
 `test_job_events_resume_after_event_id`）**在主树同样失败**——已在 `Easel-official` 上跑过同文件比对，
 属于基线问题，不是这条线引入的。
 
-调研线各测试文件通过数：宿主 15 / 治理 6 / 治理路由 2 / 导出+OCR 4 / 加工队列 9 / 扩展安全 6 = 42 条。
+调研线各测试文件通过数：宿主 15 / 治理 6 / 治理路由 2 / 导出+OCR 4 / 加工队列 16 / 扩展安全 6 = 49 条。
 
 前端（worktree 里 `npm ci` 后）：
 
@@ -41,7 +41,8 @@ cd web/frontend && npm run build   # 期望：tsc 无错，vite 产出 ~459KB �
 阶段 2 具体已测行为：
 
 - 打标提示词把素材包成 `UNTRUSTED_REFERENCE`，素材内指令不会被当指令；模型返回的标签/摘要写回库，且进全文索引（能用标签词搜到）。
-- 失败重试：模型通道不可用（返回以 `⏳/⏱️/❌` 开头）→ 任务回到 `pending`，三次后 `failed`，`index-status` 里 `enrich_failed` 计数可见，素材摘要保持为空（不会写坏数据）。
+- 失败重试：模型通道不可用（返回以 `⏳/⏱️/❌` 开头）→ 任务回到 `pending` 并按 `90s × 已试次数` 退避，
+  三次后才转 `failed`，`index-status` 里 `enrich_pending`/`enrich_failed` 计数可见，素材摘要保持为空（不会写坏数据）。
 - 幂等：同一素材同一任务只留一行，重复点按钮不会堆队列；`enqueue_missing_enrich` 只补没有摘要的存量。
 - 进程被杀留下的 `running` 僵尸行，超过 30 分钟（`STALE_RUNNING_AFTER`）重新可领。
 - 加工线程本体用假模型通道在进程内跑通：锁被占时 `start_worker()` 返回 False（不并发起第二个），
@@ -51,6 +52,31 @@ cd web/frontend && npm run build   # 期望：tsc 无错，vite 产出 ~459KB �
 
 顺带修掉一个阶段 1C 引入的前端回归：`api()` 支持 PATCH/DELETE 时把默认方法写死成 GET，导致
 `/capture`、`/reindex`、`/export` 这类没显式传方法的调用变成 GET。现在按「有没有 body」推默认方法（有 body 即 POST）。
+
+### 对抗验收后修掉的问题（阶段 2 修复轮）
+
+第一轮提交后另派一次独立评审（读 `ac527af` 的 diff），查出 6 个真缺陷，都已修并补了回归用例：
+
+1. **重复转写把正文越堆越长**：判重写的是 `[视频转写]`，实际落的标记是 `[视频转写·subtitles]`，永远判不中。
+   现在判重与写入共用同一个前缀常量 `TRANSCRIBE_MARKER`，且整段追加走 `append_marked_section()` 一条原子 UPDATE。
+   用例：连转两次 → `[视频转写` 只出现 1 次，md 资产同步。
+2. **OCR 回填会吃掉并发修改**：先读整行 → 跑几秒 OCR → 整列写回，期间用户「保存正文」或转写追加会被覆盖。
+   现在 OCR 与转写共用同一个「带标记才追加」的原子 UPDATE，资产与索引只在真追加时刷新。
+3. **重试在几十毫秒内烧光三次机会**：模型通道一句 `⏳ 会话被占用` 就能把任务打成 `failed`。
+   现在 `RETRY_BACKOFF=90s` 按 `attempts` 递增退避，`MAX_IDLE_WAIT=300s` 兜住线程驻留时长。
+   用例：失败后立刻 `_claim()` 返回 None，退避归零后才能再领。
+4. **扩展投递的任务没人排干**：宿主进程没有模型通道，`start_worker()` 只在两个按钮路由里调用，
+   "入库后自动加工"实际不成立。现在后端启动时接着跑，前端每 6 秒轮询 `/index-status` 时也补一次，
+   并在线程释放锁后再探测一次，堵掉「最后一次探测 → 释放锁」之间投递进来的漏。
+   用例：队列有空行时 `/index-status` 不起线程，有可领任务时恰好触发一次。
+5. **跑任务期间重新投递会被判成已完成**：`_finish()` 无条件写 `done`，把用户新排的队吞了。
+   现在只更新自己领到的那一版（`status='running' AND attempts=?`），不匹配就什么都不写。
+   用例：claim → 再 enqueue → finish → 计数仍是 `pending:1`。
+6. **上次跑剩的字幕/音频被当成本次结果**：yt-dlp 这次失败时，`glob('subs*')`/`glob('audio.*')` 会把旧文件读回来并报成功。
+   现在两条下载路径各自先清掉自己那类旧产物；顺带补 `creationflags` 不再弹控制台窗口。
+   用例：预置旧 `subs.zh.vtt` + 假 `_run` 什么都不做 → 返回空串而不是旧字幕。
+
+另外：导出按钮原来在没勾选时会导出「当前已加载的这些条」却说得像全库，现在按钮与提示都写清范围（勾选/本页）。
 
 ## 推断（读了代码，没跑起来）
 
@@ -69,3 +95,7 @@ cd web/frontend && npm run build   # 期望：tsc 无错，vite 产出 ~459KB �
 - 博主订阅每日刷新（4.1）、账号档案（4.2）、browser-control 自动化（4.3）：未启动。
 - 本 worktree 里 `/api/research/feeds/sync` 恒为 503：`easel/feeds.py` 在这条分支基线上就不存在，属既有缺口，不在 06 方案范围。
 - 多 worktree 同时注册 Native Host 是否互相覆盖注册表键：未核实（合并时留意）。
+- **一个可能要回退的行为决定**：修复轮之后队列是**自动排干**的（后端启动时 + 素材库页打开时每 6 秒探测），
+  也就是说打标会自己消耗 ChatGPT 订阅额度，不需要你点按钮。不想要就删两处触发点：
+  `web/app.py` 启动里的 `research_enrich.start_worker()`、`web/research_api.py` 的 `/index-status` 分支，
+  只留「AI 打标摘要」按钮手动触发。

@@ -106,7 +106,15 @@ async def reindex():
 
 @router.get('/index-status')
 async def index_status():
-    return await asyncio.to_thread(research.index_status)
+    value = await asyncio.to_thread(research.index_status)
+    # 扩展宿主进程只会投递任务，模型通道在本后端进程里：前端每 6 秒轮询这里时顺手把队列接上
+    try:
+        from easel import research_enrich
+        if research_enrich._has_claimable():
+            research_enrich.start_worker()
+    except Exception:  # noqa: BLE001  触发失败不影响状态返回
+        pass
+    return value
 
 
 @router.post('/migrate-kinds')

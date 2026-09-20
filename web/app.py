@@ -3217,4 +3217,9 @@ if __name__ == "__main__":
     if proxy_url:
         print(f"  {proxy_url}")
     print()
+    try:  # 扩展宿主只投递任务，模型通道在本进程：开机接着排干上次没跑完的加工队列
+        from easel import research_enrich
+        research_enrich.start_worker()
+    except Exception as exc:  # noqa: BLE001  队列起不来不能挡工作台启动
+        print(f"  · 素材库加工队列未启动：{exc}")
     uvicorn.run(app, host="0.0.0.0", port=port, log_level="warning")

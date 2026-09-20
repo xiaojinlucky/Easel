@@ -18,6 +18,9 @@ from easel import research
 
 MAX_ATTEMPTS = 3
 STALE_RUNNING_AFTER = 1800   # 后端中途崩溃留下的 running 行，超过 30 分钟重新可领
+RETRY_BACKOFF = 90           # 两次重试至少隔这么久，别把 3 次机会在几毫秒内烧光
+MAX_IDLE_WAIT = 300          # 等退避中的重试最多再守 5 分钟，之后交给下一次触发
+TRANSCRIBE_MARKER = '[视频转写'   # 实际写入形如 [视频转写·subtitles]，判重只认前缀
 _WORKER = threading.Lock()
 _WHISPER = None
 _WHISPER_NAME = ''
@@ -56,11 +59,12 @@ def enqueue_missing_enrich(limit: int = 50) -> int:
 
 
 def _claim(task: str) -> dict | None:
+    now = time.time()
     with research.connection() as db:
         row = db.execute(
-            "SELECT * FROM enrich_tasks WHERE status='pending' "
+            "SELECT * FROM enrich_tasks WHERE (status='pending' AND ? >= updated_at + attempts*?) "
             "OR (status='running' AND updated_at<?) ORDER BY id LIMIT 1",
-            (time.time() - STALE_RUNNING_AFTER,)).fetchone()
+            (now, RETRY_BACKOFF, now - STALE_RUNNING_AFTER)).fetchone()
         if row is None:
             return None
         db.execute("UPDATE enrich_tasks SET status='running', attempts=attempts+1, updated_at=? WHERE id=?",
@@ -71,11 +75,35 @@ def _claim(task: str) -> dict | None:
         return item
 
 
+def next_available() -> float | None:
+    """还在退避中的最早可领时刻，还有多久（秒）；没有待办则返回 None。"""
+    now = time.time()
+    with research.connection() as db:
+        row = db.execute(
+            "SELECT min(updated_at + attempts*?) FROM enrich_tasks WHERE status='pending'",
+            (RETRY_BACKOFF,)).fetchone()
+    if row is None or row[0] is None:
+        return None
+    return max(0.0, float(row[0]) - now)
+
+
+def _has_claimable() -> bool:
+    """此刻就有可领的任务（用于释放锁后的补跑，不含仍在退避的行）。"""
+    now = time.time()
+    with research.connection() as db:
+        return db.execute(
+            "SELECT 1 FROM enrich_tasks WHERE (status='pending' AND ? >= updated_at + attempts*?) "
+            "OR (status='running' AND updated_at<?) LIMIT 1",
+            (now, RETRY_BACKOFF, now - STALE_RUNNING_AFTER)).fetchone() is not None
+
+
 def _finish(task_id: int, ok: bool, result: dict | None, error: str, attempts: int) -> None:
     status = 'done' if ok else ('pending' if attempts < MAX_ATTEMPTS else 'failed')
     with research.connection() as db:
-        db.execute('UPDATE enrich_tasks SET status=?, result_json=?, error=?, updated_at=? WHERE id=?',
-                   (status, json.dumps(result or {}, ensure_ascii=False), error[:300], time.time(), task_id))
+        # 只写自己领到的那一版：任务跑期间被重新投递（attempts 归零）时不覆盖新请求
+        db.execute("UPDATE enrich_tasks SET status=?, result_json=?, error=?, updated_at=? "
+                   "WHERE id=? AND status='running' AND attempts=?",
+                   (status, json.dumps(result or {}, ensure_ascii=False), error[:300], time.time(), task_id, attempts))
 
 
 def queue_status(limit: int = 10) -> dict:
@@ -135,12 +163,22 @@ def enrich_one(task: dict) -> dict:
 # ---------- 视频：字幕优先，无字幕走 faster-whisper ----------
 
 def _run(cmd: list[str], timeout: int = 1800) -> subprocess.CompletedProcess:
+    from easel.model_runtime import CREATE_FLAGS   # Windows 下不弹控制台窗口
     return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
-                          encoding='utf-8', errors='replace')
+                          encoding='utf-8', errors='replace', creationflags=CREATE_FLAGS)
+
+
+def _clear_media(folder, patterns: tuple[str, ...]) -> None:
+    """清掉上一次的产物：yt-dlp 这次失败时才不会把旧视频的字幕/音频当结果读回来。"""
+    for pattern in patterns:
+        for stale in folder.glob(pattern):
+            if stale.is_file():
+                stale.unlink(missing_ok=True)
 
 
 def fetch_subtitles(video_url: str, folder) -> str:
     """B站/YouTube 优先拉现成字幕（04·§7），零 GPU 成本。"""
+    _clear_media(folder, ('subs*',))
     cmd = [sys.executable, '-m', 'yt_dlp', '--skip-download', '--write-subs', '--write-auto-subs',
            '--sub-langs', 'zh.*,zh-Hans,zh-CN,en', '--no-playlist',
            '-o', str(folder / 'subs.%(ext)s'), video_url]
@@ -161,7 +199,7 @@ def _parse_subtitle(path) -> str:
     skip = re.compile(r'^(WEBVTT|Kind:|Language:|\d{2}:\d{2}.*-->|\d+$)')
     for raw in path.read_text(encoding='utf-8', errors='replace').splitlines():
         line = re.sub(r'<[^>]+>', '', raw).strip()
-        if not line or skip.match(line) or line.upper().startswith(('MUSIC', 'NOTE:')):
+        if not line or skip.match(line) or line.strip('[]()').upper().startswith(('MUSIC', 'NOTE:')):
             continue
         if not lines or lines[-1] != line:  # 自动字幕常见两行重复
             lines.append(line)
@@ -169,6 +207,7 @@ def _parse_subtitle(path) -> str:
 
 
 def download_audio(video_url: str, folder) -> str:
+    _clear_media(folder, ('audio.*',))
     cmd = [sys.executable, '-m', 'yt_dlp', '-f', 'bestaudio/best', '--no-playlist', '-x',
            '--audio-format', 'mp3', '-o', str(folder / 'audio.%(ext)s'), video_url]
     completed = _run(cmd, timeout=1800)
@@ -206,10 +245,9 @@ def transcribe_one(task: dict) -> dict:
         source = 'whisper'
     if not text.strip():
         raise ValueError('字幕与转写都是空的。')
-    content = str(item.get('content') or '')
-    if '[视频转写]' not in content:
-        content = (content.rstrip() + '\n\n[视频转写·' + source + ']\n' + text[:40000]).strip()
-    research.update_source(item['id'], content=content)
+    # 转写要几分钟：追加走一条原子 UPDATE，期间用户改正文或 OCR 回填都不会被整列覆盖
+    research.append_marked_section(
+        item['id'], TRANSCRIBE_MARKER, TRANSCRIBE_MARKER + '·' + source + ']\n' + text[:40000])
     return {'chars': len(text), 'source': source}
 
 
@@ -233,14 +271,25 @@ def start_worker() -> bool:
         return False
 
     def loop() -> None:
+        waited = 0.0
         try:
             while True:
                 task = _claim('')
                 if task is None:
-                    break
+                    # 退避中的重试还在队列里：等一会儿再接，不然它永远等人手点一次
+                    delay = next_available()
+                    if delay is None or waited > MAX_IDLE_WAIT:
+                        break
+                    nap = min(max(delay, 1.0), 30.0)
+                    time.sleep(nap)
+                    waited += nap
+                    continue
                 run_task(task)
         finally:
             _WORKER.release()
+        # 释放锁与最后一次探测之间投进来的任务，由这里补一次，不靠用户再点按钮
+        if _has_claimable():
+            start_worker()
 
     threading.Thread(target=loop, daemon=True, name='easel-enrich').start()
     return True

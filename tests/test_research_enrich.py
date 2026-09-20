@@ -84,6 +84,7 @@ def test_enrich_failure_retries_then_fails(client, monkeypatch):
         return '⏳ 这个会话正在另一个窗口运行，请稍候再试'
 
     monkeypatch.setattr(research_enrich, 'agent_text', broken_agent)
+    monkeypatch.setattr(research_enrich, 'RETRY_BACKOFF', 0)   # 真机会退避，测试里立刻连抽三次
     research_enrich.enqueue(saved['id'], 'enrich')
     for attempt in range(1, research_enrich.MAX_ATTEMPTS + 1):
         task = research_enrich._claim('enrich')
@@ -138,6 +139,8 @@ def test_host_ingest_enqueues_enrich_and_transcribe(tmp_path, monkeypatch):
     assert status == {'pending': 2}
     tasks = {row['task'] for row in research_enrich.queue_status()['recent']}
     assert tasks == {'enrich', 'transcribe'}
+    row = research.get_source(research.list_sources()['items'][0]['id'])
+    assert row['kind'] == 'video' and row['extra']['video_url'] == 'https://cdn.example/1.mp4'
 
 
 def test_agent_channel_reuses_loaded_backend(monkeypatch):
@@ -160,6 +163,89 @@ def test_agent_channel_reuses_loaded_backend(monkeypatch):
     monkeypatch.setattr(sys.modules['__main__'], 'run_agent_sync', None, raising=False)
     with pytest.raises(RuntimeError, match='后端在跑'):
         research_enrich._agent_runner()
+
+
+def test_transient_failure_waits_out_backoff_before_retry(client, monkeypatch):
+    saved = _import(client)
+    monkeypatch.setattr(research_enrich, 'agent_text', lambda prompt, timeout=300: '❌ 后端没在跑')
+    research_enrich.enqueue(saved['id'], 'enrich')
+    assert research_enrich.run_task(research_enrich._claim('enrich')) is False
+    # 刚失败的行此刻不可领（真机会退避），否则三次机会会在几十毫秒内烧光
+    assert research_enrich._claim('enrich') is None
+    assert research_enrich.next_available() is not None
+    monkeypatch.setattr(research_enrich, 'RETRY_BACKOFF', 0)
+    assert research_enrich._claim('enrich') is not None
+
+
+def test_reenqueue_while_running_is_not_swallowed(client):
+    saved = _import(client)
+    research_enrich.enqueue(saved['id'], 'enrich')
+    task = research_enrich._claim('enrich')
+    research_enrich.enqueue(saved['id'], 'enrich')     # 跑期间用户又点了一次
+    research_enrich._finish(task['id'], True, {'tags': []}, '', task['attempts'])
+    assert research_enrich.queue_status()['counts'] == {'pending': 1}
+
+
+def _video_source(identifier_seed='一条视频'):
+    return research.save_source('https://www.bilibili.com/video/BV1x', identifier_seed, '哔哩哔哩', '',
+                                '口播正文', 'Beav 开源浏览器插件', kind='video',
+                                extra={'video_url': 'https://cdn.example/1.mp4'})
+
+
+def test_transcribe_appends_once_and_syncs_asset(tmp_path, monkeypatch):
+    monkeypatch.setattr(research, 'DB', tmp_path / 'research.sqlite')
+    monkeypatch.setattr(research, 'ROOT', tmp_path)
+    monkeypatch.setattr(research, 'ocr_local_images', lambda rel: '')
+    saved = _video_source()
+    monkeypatch.setattr(research_enrich, 'fetch_subtitles', lambda url, folder: '第一句\n第二句')
+    task = {'source_id': saved['id'], 'task': 'transcribe', 'id': 1, 'attempts': 1}
+    assert research_enrich.transcribe_one(task)['source'] == 'subtitles'
+    first = research.get_source(saved['id'])
+    assert '[视频转写·subtitles]' in first['content'] and '第一句' in first['content']
+    research_enrich.transcribe_one(task)               # 再转一次不能重复堆 4 万字
+    assert research.get_source(saved['id'])['content'].count('[视频转写') == 1
+    asset = tmp_path / 'outputs' / first['asset_path']
+    assert '第一句' in asset.read_text(encoding='utf-8')   # md 资产跟着正文走
+
+
+def test_stale_subtitle_files_are_purged(tmp_path, monkeypatch):
+    monkeypatch.setattr(research, 'DB', tmp_path / 'research.sqlite')
+    monkeypatch.setattr(research, 'ROOT', tmp_path)
+    folder = tmp_path / 'outputs' / '研究素材' / 'abc' / 'media'
+    folder.mkdir(parents=True)
+    (folder / 'subs.zh.vtt').write_text('WEBVTT\n\n00:00.000 --> 00:01.000\n上个视频的字幕\n', encoding='utf-8')
+    # 这次 yt-dlp 什么都没拉到（失败或无字幕）：旧文件不能被当成本次结果
+    monkeypatch.setattr(research_enrich, '_run', lambda cmd, timeout=1800: None)
+    assert research_enrich.fetch_subtitles('https://www.bilibili.com/video/BV1x', folder) == ''
+
+
+def test_subtitle_parser_strips_timing_and_cues():
+    import types
+    sample = types.SimpleNamespace(
+        read_text=lambda encoding='utf-8', errors='replace': (
+            'WEBVTT\nKind: captions\nLanguage: zh\n\n00:00.000 --> 00:02.000 align:center\n'
+            '<c>同一句</c>\n同一句\n\n1\n\n[MUSIC]\n真正的内容\n'))
+    assert research_enrich._parse_subtitle(sample) == '同一句\n真正的内容'
+
+
+def test_download_audio_raises_when_ytdlp_fails(tmp_path, monkeypatch):
+    import subprocess as sp
+
+    monkeypatch.setattr(research_enrich, '_run',
+                        lambda cmd, timeout=1800: sp.CompletedProcess(cmd, 1, '', 'ERROR: unable to download'))
+    with pytest.raises(RuntimeError, match='yt-dlp 下载失败'):
+        research_enrich.download_audio('https://x/y', tmp_path)
+
+
+def test_index_status_route_nudges_worker(client, monkeypatch):
+    saved = _import(client)
+    nudges = []
+    monkeypatch.setattr(research_enrich, 'start_worker', lambda: nudges.append(1) or False)
+    client.get('/api/research/index-status')
+    assert nudges == []                       # 队列空时不白起线程
+    research_enrich.enqueue(saved['id'], 'enrich')
+    client.get('/api/research/index-status')
+    assert nudges == [1]                      # 扩展投递的任务由后端轮询接着排干
 
 
 def test_worker_thread_drains_queue(tmp_path, monkeypatch):

@@ -261,17 +261,17 @@ export default function ResearchPage({ onCreate, persona = '' }: { onCreate: (pr
           const ids = (selected.length ? selected : sources.map(s => s.id)).slice(0, 500);
           try {
             const r = await api<{ file?: string; folder?: string; count: number; items?: { folder: string }[] }>('/export', { ids, format: 'csv' });
-            setExportNote(r.file ? `/api/media/${r.file}` : ''); setMessage(`已导出 ${r.count} 条为 CSV。`);
+            setExportNote(r.file ? `/api/media/${r.file}` : ''); setMessage(`已导出 ${r.count} 条为 CSV${selected.length ? '（勾选的）' : '（未勾选＝当前已加载的这些条）'}。`);
           } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
-        }}>导出 CSV</button>
+        }}>导出 CSV（勾选/本页）</button>
         <button className="btn" disabled={busy || !sources.length} onClick={async () => {
           setBusy(true); setExportNote('');
           const ids = (selected.length ? selected : sources.map(s => s.id)).slice(0, 500);
           try {
             const r = await api<{ items?: { folder: string }[] }>('/export', { ids, format: 'folder' });
-            setMessage(`已导出 ${r.items?.length ?? 0} 条到 knowledge/ 知识库目录（meta.json+content.md，Obsidian 可直接打开）。`);
+            setMessage(`已导出 ${r.items?.length ?? 0} 条${selected.length ? '（勾选的）' : '（未勾选＝当前已加载的这些条）'}到 knowledge/ 知识库目录（meta.json+content.md，Obsidian 可直接打开）。`);
           } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
-        }}>导出知识库夹</button>
+        }}>导出知识库夹（勾选/本页）</button>
         {exportNote && <a href={exportNote} download>下载导出文件</a>}
       </div>
       <div className="research-kinds"><button className={kindFilter === '' ? 'selected' : ''} onClick={() => { setKindFilter(''); refresh(query, '').catch(() => {}); }}>全部 {total}</button>{kindChips.map(([k, n]) => <button key={k} className={kindFilter === k ? 'selected' : ''} onClick={() => { setKindFilter(k); refresh(query, k).catch(() => {}); }}>{k} {n}</button>)}</div>

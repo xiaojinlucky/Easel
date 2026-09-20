@@ -387,18 +387,11 @@ def refresh_ocr(identifier: str) -> dict:
                        (json.dumps(extra, ensure_ascii=False), identifier))
         return get_source(identifier)
     extra['ocr_text'] = ocr_text
-    content = item.get('content') or ''
-    if '[图片文字]' not in content:
-        content = (content.rstrip() + '\n\n[图片文字]\n' + ocr_text).strip()
     with connection() as db:
-        db.execute(
-            'UPDATE sources SET content=?, extra_json=? WHERE id=?',
-            (content, json.dumps(extra, ensure_ascii=False), identifier),
-        )
-    try:
-        index_source(identifier)
-    except sqlite3.Error:
-        pass
+        db.execute('UPDATE sources SET extra_json=? WHERE id=?',
+                   (json.dumps(extra, ensure_ascii=False), identifier))
+    # 追加走原子 UPDATE：OCR 跑几秒期间用户改过正文也不会被整列覆盖，已带标记则不动
+    append_marked_section(identifier, '[图片文字]', '[图片文字]\n' + ocr_text)
     return get_source(identifier)
 
 
@@ -641,20 +634,48 @@ def update_source(identifier: str, title=None, topic=None, content=None, summary
         with connection() as db:
             db.execute(f"UPDATE sources SET {','.join(sets)} WHERE id=?", params)
     if content is not None and item.get('asset_path'):
-        target = (ROOT / 'outputs' / item['asset_path']).resolve()
-        outputs_root = (ROOT / 'outputs').resolve()
-        if str(target).startswith(str(outputs_root)) and target.parent.is_dir():
-            old = target.read_text(encoding='utf-8') if target.is_file() else ''
-            head, sep, _body = old.partition('\n---\n\n')
-            try:
-                target.write_text((head + sep if sep else f"# {title or item.get('title') or ''}\n\n---\n\n") + str(content), encoding='utf-8')
-            except OSError:
-                pass
+        _write_asset(item, content, title)
     try:
         index_source(identifier)
     except sqlite3.Error:
         pass
     return get_source(identifier)
+
+
+def _write_asset(item: dict, content: str, title: str | None = None) -> None:
+    """把正文同步回 outputs/ 里的 md 资产，保留 front header；越界路径一律不写。"""
+    target = (ROOT / 'outputs' / str(item['asset_path'])).resolve()
+    outputs_root = (ROOT / 'outputs').resolve()
+    if not str(target).startswith(str(outputs_root)) or not target.parent.is_dir():
+        return
+    old = target.read_text(encoding='utf-8') if target.is_file() else ''
+    head, sep, _body = old.partition('\n---\n\n')
+    try:
+        target.write_text((head + sep if sep else f"# {title or item.get('title') or ''}\n\n---\n\n") + str(content), encoding='utf-8')
+    except OSError:
+        pass
+
+
+def append_marked_section(identifier: str, marker: str, block: str) -> bool:
+    """原子追加一段带标记的内容（OCR 文字 / 视频转写）。
+
+    长耗时任务不能「先读整行、算完再整行写回」——期间用户改过正文就会被覆盖；
+    这里把「有没有这个标记」和追加都放进同一条 UPDATE，只有真的追加了才同步资产与索引。
+    """
+    with connection() as db:
+        appended = db.execute(
+            "UPDATE sources SET content = trim(content, char(10)||' ') || char(10)||char(10)||? "
+            'WHERE id=? AND instr(content, ?)=0',
+            (block, identifier, marker)).rowcount > 0
+    if not appended:
+        return False
+    item = get_source(identifier)
+    _write_asset(item, item.get('content') or '')
+    try:
+        index_source(identifier)
+    except sqlite3.Error:
+        pass
+    return True
 
 
 def add_tag(identifier: str, tag: str) -> dict:
