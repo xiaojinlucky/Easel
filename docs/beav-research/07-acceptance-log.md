@@ -12,7 +12,7 @@
 | 阶段 0 | `e6bfb0b` | 摘 Beav 云回连/遥测、`.runtime` 入库防护、rapidocr+yt-dlp 进依赖、端口统一 7870、NOTICE 重写 |
 | 阶段 1A | `65fdac9` | 宿主协议：回执、`operationId` 幂等、`data:` 图落盘、kind/平台归一化、真实 `desktop.health`/`desktop.context` |
 | 阶段 1B+1C | `ac809cb` | 素材库治理：分页/筛选/kindCounts、jieba+FTS5 全文检索（LIKE 兜底）、标签/置顶/摘要、回收站+30 天清理、治理路由、前端治理面 |
-| 阶段 2 | `ac527af` 功能 + `49b1f78` 线程用例 + 本次修复轮 | AI 打标/摘要队列、OCR 批量回填、视频字幕/Whisper 转写、Beav 目录式导出（folder/json/csv）、宿主入库自动投递加工任务；修复轮见「对抗验收后修掉的问题」 |
+| 阶段 2 | `ac527af` 功能 + `49b1f78` 线程用例 + `d8d32ba` 修复轮一 + 本次修复轮二 | AI 打标/摘要队列、OCR 批量回填、视频字幕/Whisper 转写、Beav 目录式导出（folder/json/csv）、宿主入库自动投递加工任务；两轮对抗验收修复见下 |
 
 ## 已验证事实（可复制复核）
 
@@ -21,8 +21,8 @@
 ```bash
 cd "F:/科研大师兄/自媒体工作台/Easel-beav-kb"
 PY="F:/科研大师兄/自媒体工作台/Easel/.venv/Scripts/python.exe"
-"$PY" -m pytest -q                 # 期望：3 failed, 248 passed, 5 skipped
-"$PY" -m pytest tests/test_research_enrich.py -q   # 期望：16 passed
+"$PY" -m pytest -q                 # 期望：3 failed, 254 passed, 5 skipped
+"$PY" -m pytest tests/test_research_enrich.py -q   # 期望：22 passed
 ```
 
 `tests/test_core.py` 里那 3 个失败（`test_write_baseline_profile`、
@@ -30,7 +30,7 @@ PY="F:/科研大师兄/自媒体工作台/Easel/.venv/Scripts/python.exe"
 `test_job_events_resume_after_event_id`）**在主树同样失败**——已在 `Easel-official` 上跑过同文件比对，
 属于基线问题，不是这条线引入的。
 
-调研线各测试文件通过数：宿主 15 / 治理 6 / 治理路由 2 / 导出+OCR 4 / 加工队列 16 / 扩展安全 6 = 49 条。
+调研线各测试文件通过数：宿主 15 / 治理 6 / 治理路由 2 / 导出+OCR 4 / 加工队列 22 / 扩展安全 6 = 55 条。
 
 前端（worktree 里 `npm ci` 后）：
 
@@ -41,8 +41,9 @@ cd web/frontend && npm run build   # 期望：tsc 无错，vite 产出 ~459KB �
 阶段 2 具体已测行为：
 
 - 打标提示词把素材包成 `UNTRUSTED_REFERENCE`，素材内指令不会被当指令；模型返回的标签/摘要写回库，且进全文索引（能用标签词搜到）。
-- 失败重试：模型通道不可用（返回以 `⏳/⏱️/❌` 开头）→ 任务回到 `pending` 并按 `90s × 已试次数` 退避，
-  三次后才转 `failed`，`index-status` 里 `enrich_pending`/`enrich_failed` 计数可见，素材摘要保持为空（不会写坏数据）。
+- 失败重试分两类：**模型不配合**（返回不是 JSON、标签和摘要都空）按 `90s × 已试次数` 退避，三次后转 `failed`；
+  **通道不可用**（工作台没起、CLI 超时、返回 `⏳/⏱️/❌/（无输出）`）退回 `pending` 不计次，通道恢复后自动补跑（修复轮二）。
+  `index-status` 里 `enrich_pending`/`enrich_failed` 计数可见，素材摘要保持为空（不会写坏数据）。
 - 幂等：同一素材同一任务只留一行，重复点按钮不会堆队列；`enqueue_missing_enrich` 只补没有摘要的存量。
 - 进程被杀留下的 `running` 僵尸行，超过 30 分钟（`STALE_RUNNING_AFTER`）重新可领。
 - 加工线程本体用假模型通道在进程内跑通：锁被占时 `start_worker()` 返回 False（不并发起第二个），
@@ -78,12 +79,41 @@ cd web/frontend && npm run build   # 期望：tsc 无错，vite 产出 ~459KB �
 
 另外：导出按钮原来在没勾选时会导出「当前已加载的这些条」却说得像全库，现在按钮与提示都写清范围（勾选/本页）。
 
+### 对抗验收后修掉的问题（阶段 2 修复轮二）
+
+针对 `d8d32ba` 再派一次独立评审，查出 5 个问题（2 高 2 中 1 低），逐条对着代码复核后都修了：
+
+1. **HIGH｜后端空跑一次就把整队列判死**：通道不可用（`⏳/⏱️/❌/（无输出）`）原来照样计次，
+   三次在 270 秒内烧完（`MAX_IDLE_WAIT=300`），`failed` 行此后再也不会被领；
+   于是"没开着模型通道时启动一次工作台"= 队列全灭。
+   现在这类失败走 `ChannelUnavailable` → `_finish(deferred=True)` 退回 `pending`，
+   `attempts` 封顶在 `MAX_ATTEMPTS`（退避固定 270s，不随领取次数无限增长），永不转 `failed`。
+   用例：`test_channel_outage_does_not_burn_the_retry_budget`（连跑 6 轮仍 pending、`enrich_failed==0`、通道恢复后跑成 done）。
+2. **HIGH｜转写"成功"是假的**：`transcribe_one` 把 `append_marked_section()` 的返回值丢了，
+   追加没生效也报 `done`。顺带发现原子 UPDATE 在 `content IS NULL` 时整条匹配 0 行
+   （`trim(NULL)`/`instr(NULL,x)` 都是 NULL），而 `ocr_attempted` 已经写进去了 → 识别文字永久丢失、批量回填也不会再来。
+   现在 SQL 两处都 `COALESCE(content,'')`；转写侧未追加成功时回读正文：已有转写标记 → `{'already': True}`，
+   否则抛错让队列记失败。用例：`test_transcribe_reports_failure_when_append_is_refused`、
+   `test_ocr_backfill_appends_into_null_content_and_keeps_extra`。
+3. **MEDIUM｜OCR 整列覆盖 extra_json**：`refresh_ocr` 用「读整行→算→写整列」，OCR 那几秒里并发补的字段会被抹掉。
+   现在走新加的 `merge_extra_json()`（SQLite `json_set` 逐 key 合并，坏 JSON 先当 `{}` 兜底）。
+   用例：`test_merge_extra_json_preserves_untouched_keys`。
+4. **MEDIUM｜`start_worker()` 可能漏锁**：`_WORKER` 先抢后起线程，`Thread` 构造/`start()` 抛异常时
+   `loop` 从未执行、`finally` 也就不会释放，加工队列到重启前彻底起不来。现在整段包 `try`，失败即还锁并返回 False。
+   用例：`test_start_worker_releases_lock_when_thread_cannot_start`。
+5. **LOW｜领取没有版本核对**：`_claim` 是「读一行→无条件改成 running」，两个领取者会跑同一行、重复烧配额；
+   `_finish` 的 `(status='running', attempts=?)` 也不是唯一版本（第二次领取同样落在 running/1）。
+   现在领取的 UPDATE 带 `status=? AND attempts=?` 复检，抢输的一方 `rowcount==0` 直接放弃这一轮。
+   用例：`test_claim_is_versioned_so_two_workers_cannot_run_one_row`。
+
+这一轮只动后端与测试，前端未改（`npm run build` 结论沿用 `d8d32ba`）。
+
 ## 推断（读了代码，没跑起来）
 
 - 模型通道复用工作台进程内的 `run_agent_sync`（`web/app.py`）：`_agent_runner()` 只从已加载的
   `app` / `__main__` / `web.app` 模块取函数，取不到就明确报错——刻意不回退到 `import app`，
   那会把整份 FastAPI 模块再执行一遍。因此**打标必须在 Easel Web 后端进程内跑**；
-  从别的进程（如 Native Host）触发的任务会以 `failed` + 这条中文原因显示出来。
+  后端没起时投进来的任务停在 `pending`（`error` 里就是这句中文原因），等下一次后端启动或页面轮询自动补跑，不会转 `failed`。
 - Whisper 走 CPU + int8（`EASEL_WHISPER_MODEL`，默认 `small`），首次要下模型；没字幕的视频才会走到它。
 
 ## 未做 / 未验证（别当成已通过）

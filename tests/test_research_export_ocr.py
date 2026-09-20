@@ -37,7 +37,8 @@ def test_refresh_ocr_batch_marks_attempted(lib, monkeypatch):
     result = research.refresh_ocr_batch()
     assert result == {'processed': 1, 'with_text': 1}
     item = research.get_source(row['id'])
-    assert '识别出的文字' in item['content'] and item['extra']['ocr_attempted'] is True
+    # json_set 落库的是 1（SQLite 没有独立的布尔类型），批量筛选按这个标记跳过已尝试的
+    assert '识别出的文字' in item['content'] and item['extra']['ocr_attempted'] == 1
     assert research.refresh_ocr_batch()['processed'] == 0  # 已尝试过的不重跑
 
 

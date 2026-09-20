@@ -2,6 +2,7 @@
 
 全部离线：不碰网络、不装 whisper 也能跑（重依赖都在函数内部延迟导入）。
 """
+import json
 import sys
 from pathlib import Path
 
@@ -81,7 +82,7 @@ def test_enrich_failure_retries_then_fails(client, monkeypatch):
     saved = _import(client)
 
     def broken_agent(prompt, timeout=300):
-        return '⏳ 这个会话正在另一个窗口运行，请稍候再试'
+        return '这段素材写得很好，我不输出 JSON。'   # 真·模型不配合：这才是该记次的失败
 
     monkeypatch.setattr(research_enrich, 'agent_text', broken_agent)
     monkeypatch.setattr(research_enrich, 'RETRY_BACKOFF', 0)   # 真机会退避，测试里立刻连抽三次
@@ -95,6 +96,31 @@ def test_enrich_failure_retries_then_fails(client, monkeypatch):
         assert counts == {expected: 1}
     assert client.get('/api/research/index-status').json()['enrich_failed'] == 1
     assert research.get_source(saved['id'])['summary'] == ''
+
+
+def test_channel_outage_does_not_burn_the_retry_budget(client, monkeypatch):
+    """工作台没起时跑过的队列不能把素材判死：通道恢复后还要能自动补跑。"""
+    saved = _import(client)
+    monkeypatch.setattr(research_enrich, 'agent_text', lambda prompt, timeout=300: '❌ 后端未启动')
+    monkeypatch.setattr(research_enrich, 'RETRY_BACKOFF', 0)
+    research_enrich.enqueue(saved['id'], 'enrich')
+    for _ in range(research_enrich.MAX_ATTEMPTS * 2):        # 远超重试次数也一直退回 pending
+        task = research_enrich._claim('enrich')
+        assert task is not None
+        assert research_enrich.run_task(task) is False
+    assert client.get('/api/research/enrich/status').json()['counts'] == {'pending': 1}
+    assert client.get('/api/research/index-status').json()['enrich_failed'] == 0
+    # 退避次数封顶，不会随领取次数无限增长成一晚都醒不过来的停顿
+    with research.connection() as db:
+        attempts = db.execute('SELECT attempts FROM enrich_tasks').fetchone()[0]
+    assert attempts == research_enrich.MAX_ATTEMPTS
+
+    def good_agent(prompt, timeout=300):
+        return '{"tags": ["求职"], "summary": "通道恢复后的摘要。"}'
+
+    monkeypatch.setattr(research_enrich, 'agent_text', good_agent)
+    assert research_enrich.run_task(research_enrich._claim('enrich')) is True
+    assert research.get_source(saved['id'])['summary'].startswith('通道恢复后')
 
 
 def test_missing_enrich_only_targets_unsummarized(client, monkeypatch):
@@ -170,7 +196,7 @@ def test_transient_failure_waits_out_backoff_before_retry(client, monkeypatch):
     monkeypatch.setattr(research_enrich, 'agent_text', lambda prompt, timeout=300: '❌ 后端没在跑')
     research_enrich.enqueue(saved['id'], 'enrich')
     assert research_enrich.run_task(research_enrich._claim('enrich')) is False
-    # 刚失败的行此刻不可领（真机会退避），否则三次机会会在几十毫秒内烧光
+    # 通道不可用会退回 pending 而不是判死，但仍要退避：否则 worker 会空转刷 CLI
     assert research_enrich._claim('enrich') is None
     assert research_enrich.next_available() is not None
     monkeypatch.setattr(research_enrich, 'RETRY_BACKOFF', 0)
@@ -202,10 +228,22 @@ def test_transcribe_appends_once_and_syncs_asset(tmp_path, monkeypatch):
     assert research_enrich.transcribe_one(task)['source'] == 'subtitles'
     first = research.get_source(saved['id'])
     assert '[视频转写·subtitles]' in first['content'] and '第一句' in first['content']
-    research_enrich.transcribe_one(task)               # 再转一次不能重复堆 4 万字
+    assert research_enrich.transcribe_one(task)['already'] is True   # 再转一次不堆 4 万字
     assert research.get_source(saved['id'])['content'].count('[视频转写') == 1
     asset = tmp_path / 'outputs' / first['asset_path']
     assert '第一句' in asset.read_text(encoding='utf-8')   # md 资产跟着正文走
+
+
+def test_transcribe_reports_failure_when_append_is_refused(tmp_path, monkeypatch):
+    """追加没生效又确认不了正文里有转写时必须报错，不能悄悄丢掉几分钟的转写判成 done。"""
+    monkeypatch.setattr(research, 'DB', tmp_path / 'research.sqlite')
+    monkeypatch.setattr(research, 'ROOT', tmp_path)
+    monkeypatch.setattr(research, 'ocr_local_images', lambda rel: '')
+    saved = _video_source()
+    monkeypatch.setattr(research_enrich, 'fetch_subtitles', lambda url, folder: '第一句')
+    monkeypatch.setattr(research, 'append_marked_section', lambda *a, **k: False)
+    with pytest.raises(RuntimeError, match='未能写入素材正文'):
+        research_enrich.transcribe_one({'source_id': saved['id'], 'task': 'transcribe', 'id': 1, 'attempts': 1})
 
 
 def test_stale_subtitle_files_are_purged(tmp_path, monkeypatch):
@@ -279,9 +317,84 @@ def test_worker_thread_drains_queue(tmp_path, monkeypatch):
     row = research.get_source(saved['id'])
     assert row['summary'].startswith('一条关于应届求职') and row['tags'] == ['求职', '校招']
     assert research_enrich.queue_status()['counts'] == {'done': 1}
-    # 线程跑完自己退出并释放单例锁
-    for _ in range(40):
-        if not any(t.name == 'easel-enrich' for t in threading.enumerate()):
-            break
+    # 线程跑完自己退出并释放单例锁；这里只验锁还回来，不再起新 worker，
+    # 免得留一个后台线程在 monkeypatch 撤销后摸到真实素材库。
+    deadline = time.time() + 5
+    while time.time() < deadline and any(t.name == 'easel-enrich' for t in threading.enumerate()):
         time.sleep(0.05)
-    assert research_enrich.start_worker() is True
+    assert not any(t.name == 'easel-enrich' for t in threading.enumerate())
+    assert research_enrich._WORKER.acquire(blocking=False) is True
+    research_enrich._WORKER.release()
+
+
+def test_claim_is_versioned_so_two_workers_cannot_run_one_row(client):
+    saved = _import(client)
+    research_enrich.enqueue(saved['id'], 'enrich')
+    first = research_enrich._claim('enrich')
+    assert first is not None
+    # 已被领走的 running 行，在退避期内不能被第二个领取者抢走（不重复烧配额）
+    assert research_enrich._claim('enrich') is None
+    with research.connection() as db:
+        db.execute('UPDATE enrich_tasks SET updated_at=? WHERE id=?',
+                   (0.0, first['id']))          # 模拟后端崩溃后留下的陈旧 running 行
+    revived = research_enrich._claim('enrich')
+    assert revived is not None and revived['attempts'] == first['attempts'] + 1
+
+
+def _lock_free(timeout: float = 5.0) -> bool:
+    import time
+
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if research_enrich._WORKER.acquire(blocking=False):
+            research_enrich._WORKER.release()
+            return True
+        time.sleep(0.05)
+    return False
+
+
+def test_start_worker_releases_lock_when_thread_cannot_start(tmp_path, monkeypatch):
+    import threading
+
+    monkeypatch.setattr(research, 'DB', tmp_path / 'research.sqlite')
+    monkeypatch.setattr(research, 'ROOT', tmp_path)
+    assert _lock_free()     # 等上一个用例留下的 worker 自己退出
+
+    def boom(*args, **kwargs):
+        raise OSError('not enough resources to start thread')
+
+    monkeypatch.setattr(threading, 'Thread', boom)
+    assert research_enrich.start_worker() is False
+    # 起线程失败时 loop 从未执行，锁必须还回去，否则加工队列到重启前永远起不来
+    assert _lock_free()
+
+
+def test_ocr_backfill_appends_into_null_content_and_keeps_extra(tmp_path, monkeypatch):
+    monkeypatch.setattr(research, 'DB', tmp_path / 'research.sqlite')
+    monkeypatch.setattr(research, 'ROOT', tmp_path)
+    monkeypatch.setattr(research, 'ocr_local_images', lambda images: '图里写着：秋招时间线')
+    saved = research.save_source('https://www.xiaohongshu.com/explore/1', '图文笔记', '小红书', '', '',
+                                 '剪存', kind='note')
+    with research.connection() as db:
+        db.execute('UPDATE sources SET content=NULL, extra_json=? WHERE id=?',
+                   (json.dumps({'local_images': ['outputs/研究素材/a/00.jpg']}, ensure_ascii=False), saved['id']))
+    research.refresh_ocr(saved['id'])
+    row = research.get_source(saved['id'])
+    # content 为 NULL 时整列 UPDATE 会匹配 0 行：过去这里写了 ocr_attempted 又丢正文，永远不再补
+    assert '图里写着：秋招时间线' in (row['content'] or '')
+    assert row['extra']['ocr_attempted'] == 1
+    assert row['extra']['local_images'] == ['outputs/研究素材/a/00.jpg']   # 合并不是整列覆盖
+
+
+def test_merge_extra_json_preserves_untouched_keys(tmp_path, monkeypatch):
+    monkeypatch.setattr(research, 'DB', tmp_path / 'research.sqlite')
+    monkeypatch.setattr(research, 'ROOT', tmp_path)
+    saved = research.save_source('https://www.zhihu.com/question/1', '一条回答', '知乎', '', '', '剪存',
+                                 extra={'video_url': 'https://cdn.example/1.mp4'})
+    research.merge_extra_json(saved['id'], {'ocr_attempted': 1})
+    extra = research.get_source(saved['id'])['extra']
+    assert extra['video_url'] == 'https://cdn.example/1.mp4' and extra['ocr_attempted'] == 1
+    # 坏 JSON（历史脏数据）也能并入，不再整条报错
+    with research.connection() as db:
+        db.execute('UPDATE sources SET extra_json=? WHERE id=?', ('{坏数据', saved['id']))
+    assert research.merge_extra_json(saved['id'], {'ocr_text': '文字'})['extra']['ocr_text'] == '文字'

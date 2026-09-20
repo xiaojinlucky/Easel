@@ -376,23 +376,36 @@ def ocr_local_images(rel_paths: list[str]) -> str:
     return '\n'.join(chunks)
 
 
+def merge_extra_json(identifier: str, updates: dict) -> dict:
+    """只把给的几个 key 并进 extra_json，其余 key 以库里当前值为准。
+
+    耗时任务（OCR、转写）如果「整列读→算完整列写回」，中间别人补的字段就没了；
+    这里交给 SQLite 的 json_set 原地合并。
+    """
+    args: list = []
+    paths: list[str] = []
+    for key, value in updates.items():
+        paths.append("'$.'||?, ?")
+        args.extend((str(key), value))
+    args.append(identifier)
+    with connection() as db:
+        db.execute(
+            "UPDATE sources SET extra_json = json_set("
+            "CASE WHEN json_valid(extra_json) THEN extra_json ELSE '{}' END, "
+            + ','.join(paths) + ') WHERE id=?', args)
+    return get_source(identifier)
+
+
 def refresh_ocr(identifier: str) -> dict:
     item = get_source(identifier)
     extra = dict(item.get('extra') or {})
     ocr_text = ocr_local_images(list(extra.get('local_images') or []))
-    extra['ocr_attempted'] = True
     if not ocr_text:
-        with connection() as db:
-            db.execute('UPDATE sources SET extra_json=? WHERE id=?',
-                       (json.dumps(extra, ensure_ascii=False), identifier))
-        return get_source(identifier)
-    extra['ocr_text'] = ocr_text
-    with connection() as db:
-        db.execute('UPDATE sources SET extra_json=? WHERE id=?',
-                   (json.dumps(extra, ensure_ascii=False), identifier))
+        return merge_extra_json(identifier, {'ocr_attempted': 1})
+    merged = merge_extra_json(identifier, {'ocr_attempted': 1, 'ocr_text': ocr_text})
     # 追加走原子 UPDATE：OCR 跑几秒期间用户改过正文也不会被整列覆盖，已带标记则不动
-    append_marked_section(identifier, '[图片文字]', '[图片文字]\n' + ocr_text)
-    return get_source(identifier)
+    merged['ocr_appended'] = append_marked_section(identifier, '[图片文字]', '[图片文字]\n' + ocr_text)
+    return merged
 
 
 def materialize_images(identifier: str, urls: list[str]) -> list[str]:
@@ -663,9 +676,11 @@ def append_marked_section(identifier: str, marker: str, block: str) -> bool:
     这里把「有没有这个标记」和追加都放进同一条 UPDATE，只有真的追加了才同步资产与索引。
     """
     with connection() as db:
+        # COALESCE：content 为 NULL 时 trim()/instr() 都是 NULL，整条 UPDATE 会匹配 0 行，
+        # 于是识别文字被静默丢弃（而 ocr_attempted 已写，批量回填再也不会回来补）。
         appended = db.execute(
-            "UPDATE sources SET content = trim(content, char(10)||' ') || char(10)||char(10)||? "
-            'WHERE id=? AND instr(content, ?)=0',
+            "UPDATE sources SET content = trim(COALESCE(content, ''), char(10)||' ') "
+            "|| char(10)||char(10)||? WHERE id=? AND instr(COALESCE(content, ''), ?)=0",
             (block, identifier, marker)).rowcount > 0
     if not appended:
         return False

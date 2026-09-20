@@ -67,8 +67,13 @@ def _claim(task: str) -> dict | None:
             (now, RETRY_BACKOFF, now - STALE_RUNNING_AFTER)).fetchone()
         if row is None:
             return None
-        db.execute("UPDATE enrich_tasks SET status='running', attempts=attempts+1, updated_at=? WHERE id=?",
-                   (time.time(), row['id']))
+        # 领取也带版本：先读到再整行改成 running 的话，两个领取者会跑同一行；
+        # 这里让 UPDATE 重新核对读到的 status/attempts，抢输的一方直接放弃这一轮。
+        claimed = db.execute("UPDATE enrich_tasks SET status='running', attempts=attempts+1, updated_at=? "
+                             "WHERE id=? AND status=? AND attempts=?",
+                             (time.time(), row['id'], row['status'], row['attempts']))
+        if claimed.rowcount < 1:
+            return None
         item = dict(row)
         item['status'] = 'running'
         item['attempts'] = row['attempts'] + 1
@@ -97,13 +102,33 @@ def _has_claimable() -> bool:
             (now, RETRY_BACKOFF, now - STALE_RUNNING_AFTER)).fetchone() is not None
 
 
-def _finish(task_id: int, ok: bool, result: dict | None, error: str, attempts: int) -> None:
-    status = 'done' if ok else ('pending' if attempts < MAX_ATTEMPTS else 'failed')
+class ChannelUnavailable(RuntimeError):
+    """模型通道当前不可用（工作台没起、CLI 超时、占锁失败）。
+
+    这是环境问题不是素材问题：烧掉 3 次重试机会会把整队列永久判死，
+    所以这类失败只让任务原地退避等待，不计入 failed。
+    """
+
+
+def _finish(task_id: int, ok: bool, result: dict | None, error: str, attempts: int,
+            deferred: bool = False) -> None:
+    if ok:
+        status = 'done'
+    elif deferred:
+        status = 'pending'
+    elif attempts < MAX_ATTEMPTS:
+        status = 'pending'
+    else:
+        status = 'failed'
+    # 通道不可用：attempts 封顶在 MAX_ATTEMPTS，退避固定为一段停顿，
+    # 否则每次领取都 +1，等模型通道恢复后还要再等几小时。
+    next_attempts = min(attempts, MAX_ATTEMPTS) if deferred else attempts
     with research.connection() as db:
         # 只写自己领到的那一版：任务跑期间被重新投递（attempts 归零）时不覆盖新请求
-        db.execute("UPDATE enrich_tasks SET status=?, result_json=?, error=?, updated_at=? "
+        db.execute("UPDATE enrich_tasks SET status=?, result_json=?, error=?, attempts=?, updated_at=? "
                    "WHERE id=? AND status='running' AND attempts=?",
-                   (status, json.dumps(result or {}, ensure_ascii=False), error[:300], time.time(), task_id, attempts))
+                   (status, json.dumps(result or {}, ensure_ascii=False), error[:300], next_attempts,
+                    time.time(), task_id, attempts))
 
 
 def queue_status(limit: int = 10) -> dict:
@@ -124,7 +149,7 @@ def _agent_runner():
         runner = getattr(sys.modules.get(name), 'run_agent_sync', None)
         if callable(runner):
             return runner
-    raise RuntimeError('打标需要 Easel Web 后端在跑（模型通道在工作台进程内）。')
+    raise ChannelUnavailable('打标需要 Easel Web 后端在跑（模型通道在工作台进程内）。')
 
 
 def agent_text(prompt: str, timeout: int = 300) -> str:
@@ -147,9 +172,10 @@ def enrich_one(task: dict) -> dict:
     if not body.strip():
         raise ValueError('素材没有正文，跳过打标。')
     prompt = ENRICH_PROMPT.format(title=item.get('title'), platform=item.get('platform'), body=body)
-    answer = agent_text(prompt)
+    answer = str(agent_text(prompt) or '')
+    # run_agent_sync 不抛异常，故障以这些前缀返回；它们跟素材无关，不该消耗重试次数
     if answer.startswith(('⏳', '⏱️', '❌')) or answer == '（无输出）':
-        raise RuntimeError(answer[:200])
+        raise ChannelUnavailable(str(answer)[:200])
     data = parse_agent_json(answer)
     tags = [str(tag) for tag in (data.get('tags') or []) if str(tag).strip()][:6]
     summary = str(data.get('summary') or '').strip()[:300]
@@ -246,8 +272,14 @@ def transcribe_one(task: dict) -> dict:
     if not text.strip():
         raise ValueError('字幕与转写都是空的。')
     # 转写要几分钟：追加走一条原子 UPDATE，期间用户改正文或 OCR 回填都不会被整列覆盖
-    research.append_marked_section(
+    appended = research.append_marked_section(
         item['id'], TRANSCRIBE_MARKER, TRANSCRIBE_MARKER + '·' + source + ']\n' + text[:40000])
+    if not appended:
+        current = str(research.get_source(item['id']).get('content') or '')
+        if TRANSCRIBE_MARKER in current:  # 已经有一份转写在正文里：只补元数据，不重复塞
+            return {'chars': len(text), 'source': source, 'already': True}
+        # 追加没生效又不能确认已有内容：宁可让任务失败重投，也不把几分钟的转写悄悄扔掉
+        raise RuntimeError('转写内容未能写入素材正文，本次结果未保存。')
     return {'chars': len(text), 'source': source}
 
 
@@ -258,6 +290,9 @@ def run_task(task: dict) -> bool:
             result = transcribe_one(task)
         else:
             result = enrich_one(task)
+    except ChannelUnavailable as exc:  # 通道没开：原样退回 pending，不烧重试次数
+        _finish(task['id'], False, None, str(exc), task['attempts'], deferred=True)
+        return False
     except Exception as exc:  # noqa: BLE001
         _finish(task['id'], False, None, str(exc), task['attempts'])
         return False
@@ -291,5 +326,10 @@ def start_worker() -> bool:
         if _has_claimable():
             start_worker()
 
-    threading.Thread(target=loop, daemon=True, name='easel-enrich').start()
+    try:
+        # 构造和启动都可能失败（线程资源不足）：这两种情况 loop 都没跑过，锁必须还回去
+        threading.Thread(target=loop, daemon=True, name='easel-enrich').start()
+    except BaseException:  # noqa: BLE001
+        _WORKER.release()
+        return False
     return True
