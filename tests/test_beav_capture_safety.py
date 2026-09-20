@@ -48,6 +48,9 @@ def test_service_worker_checks_native_connect_last_error():
     assert "chrome.webNavigation?.getAllFrames" in text
     assert 'pluginWarn("healthcheck-failed"' in text
     assert 'pluginError("healthcheck-failed"' not in text
+    assert "easelShortError" in text
+    assert 'console.log("[easel-sw]"' in text
+    assert "event.preventDefault()" in text
 
 
 def test_native_host_installer_uses_ascii_exe_launcher():

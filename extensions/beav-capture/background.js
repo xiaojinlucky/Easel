@@ -1,4 +1,26 @@
 (() => {
+  function easelShortError(value) {
+    if (value instanceof Error) return String(value.message || value.name || "Error").slice(0, 240);
+    if (typeof value === "string") return value.replace(/\s+/g, " ").slice(0, 240);
+    try {
+      return JSON.stringify(value).replace(/\s+/g, " ").slice(0, 240);
+    } catch {
+      return String(value).slice(0, 240);
+    }
+  }
+  console.error = (...args) => {
+    console.log("[easel-sw]", args.map(easelShortError).filter(Boolean).join(" ").slice(0, 300) || "error");
+  };
+  self.addEventListener("unhandledrejection", (event) => {
+    console.log("[easel-sw]", easelShortError(event?.reason || "unhandledrejection"));
+    event.preventDefault();
+  });
+  self.addEventListener("error", (event) => {
+    console.log("[easel-sw]", easelShortError(event?.error || event?.message || "error"));
+    event.preventDefault();
+  });
+})();
+(() => {
   // src/background/browserPolicy.js
   var DANGEROUS_CDP_METHODS = /^(Browser\.close|Browser\.crash|Browser\.crashGpuProcess|Page\.crash|Page\.produceCompilationCache|Storage\.clearDataForOrigin|Network\.deleteCookies|Runtime\.terminateExecution|Target\.closeTarget)$/;
   var STATE_CHANGING_CDP_METHODS = /^(Page\.navigate|Page\.reload|DOM\.set[A-Z].*|DOMStorage\.setDOMStorageItem|DOMStorage\.removeDOMStorageItem|Emulation\.set[A-Z].*|Network\.setCookie|Network\.clearBrowserCache|Network\.clearBrowserCookies|Storage\.clearDataForOrigin|Target\.closeTarget)$/;
@@ -18257,9 +18279,7 @@ ${text}`.slice(0, 6e3);
     cachedDesktopContextAt = 0;
   }
   function describeError7(error) {
-    if (error instanceof Error) {
-      return error.stack || error.message;
-    }
+    if (error instanceof Error) return error.message || String(error);
     return String(error);
   }
   function pluginLog(scope, details) {
