@@ -6,12 +6,24 @@ com.redbox.browser_control。
 from __future__ import annotations
 
 import json
+import os
 import struct
 import sys
 import traceback
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+
+def _project_root() -> Path:
+    env = (os.environ.get("EASEL_ROOT") or "").strip()
+    if env:
+        return Path(env)
+    sidecar = Path(__file__).with_name("easel-root.txt")
+    if sidecar.is_file():
+        return Path(sidecar.read_text(encoding="utf-8").strip())
+    return Path(__file__).resolve().parents[1]
+
+
+ROOT = _project_root()
 sys.path.insert(0, str(ROOT))
 
 from easel.research import save_source  # noqa: E402
