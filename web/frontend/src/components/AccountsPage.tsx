@@ -4,7 +4,7 @@ import {
   accountWhoami, logoutAccount, submitLoginSms,
   saveCredentials, getCredentials, startMpLogin, mpLoginStatus,
 } from '../lib/api';
-import type { AccountItem, AccountWhoami } from '../lib/api';
+import type { AccountItem, AccountWhoami, LoginStatus } from '../lib/api';
 import { getWhoamiCache, setWhoamiCache, verifyStale } from '../lib/whoami';
 import WorkflowDraftBar from './WorkflowDraftBar';
 
@@ -214,6 +214,14 @@ export default function AccountsPage({
     }
   }, [stopPoll, runWhoami]);
 
+  const markWechatLoggedIn = useCallback((platform: string) => {
+    setAccounts((list) => list.map((x) => x.platform === platform ? { ...x, loggedIn: true } : x));
+    setWhoami((w) => { const n = { ...w }; delete n[platform]; return n; });
+    setWhoamiCache(platform, null);
+    runWhoami(platform);
+    load();
+  }, [runWhoami, load]);
+
   // 公众号后台扫码登录（数据中心取数用，独立于 AppID 凭证）
   const handleMpLogin = useCallback(async (a: AccountItem) => {
     setBusy(a.platform + ':mp');
@@ -224,30 +232,28 @@ export default function AccountsPage({
       setQr({ platform: a.platform, name: a.name + ' · 后台取数', state: res.state || 'starting',
               message: res.message || '', qr: res.qr || '', qrTs: res.qrTs });
       stopPoll();
-      pollRef.current = setInterval(async () => {
+      const applyStatus = (s: LoginStatus): boolean => {
+        setQr((prev) => prev && ({ ...prev, state: s.state, message: s.message, qr: s.qr, qrTs: s.qrTs }));
+        if (!['success', 'expired', 'error'].includes(s.state)) return false;
+        stopPoll();
+        if (s.state === 'success') markWechatLoggedIn(a.platform);
+        return true;
+      };
+      if (applyStatus(res)) return;
+      const tick = async () => {
         try {
           const s = await mpLoginStatus(a.platform);
-          setQr((prev) => prev && ({ ...prev, state: s.state, message: s.message, qr: s.qr, qrTs: s.qrTs }));
-          if (['success', 'expired', 'error'].includes(s.state)) {
-            stopPoll();
-            if (s.state === 'success') {
-              // 像快手一样“内存态立即翻”：wechat-oa 的 effLoggedIn 只看 a.loggedIn，这里直接把它乐观置 true，
-              // 卡片瞬间变「已登录」，不必等 load() 那趟网络往返（后面 load() 再对账兜底）。
-              setAccounts((list) => list.map((x) => x.platform === a.platform ? { ...x, loggedIn: true } : x));
-              setWhoami((w) => { const n = { ...w }; delete n[a.platform]; return n; });
-              setWhoamiCache(a.platform, null);
-              runWhoami(a.platform);
-              load();
-            }
-          }
+          applyStatus(s);
         } catch { /* 忽略单次轮询失败 */ }
-      }, 2000);
+      };
+      void tick();
+      pollRef.current = setInterval(() => { void tick(); }, 500);
     } catch (e) {
       setErr(e instanceof Error ? e.message : '启动后台登录失败');
     } finally {
       setBusy('');
     }
-  }, [stopPoll, runWhoami, load]);
+  }, [stopPoll, markWechatLoggedIn]);
 
   const handleLogout = useCallback(async (a: AccountItem) => {
     if (!window.confirm(`确定退出「${a.name}」的登录？登录态将被清除，下次发布需重新扫码。`)) return;
@@ -277,6 +283,9 @@ export default function AccountsPage({
 
   const badge = (a: AccountItem) => {
     if (!a.supported) return <span className="badge">待重写</span>;
+    if (a.backend === 'wechat-oa' && a.loggedIn) {
+      return <span className="badge badge-ok">✓ 已登录</span>;
+    }
     if (whoami[a.platform] === 'loading') return <span className="badge">校验中…</span>;
     if (effLoggedIn(a)) return <span className="badge badge-ok">✓ 已登录</span>;
     return <span className="badge">未登录</span>;

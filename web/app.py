@@ -2078,13 +2078,11 @@ def _account_logged_in(platform: str, cfg: dict) -> bool:
     if backend == 'biliup':
         return (PROJECT_ROOT / 'cookies.json').is_file()
     if backend == 'wechat-oa':
-        # 发布+数据都走「后台会话」→ 以 mp 后台登录成功为准；AppID 凭证作为兜底（旧配置）
+        # 账号页「已登录」= 已扫公众号后台码。AppID 只给官方 API 用，不能冒充扫码会话。
         try:
-            if _mp_login_status().get('state') == 'success':
-                return True
+            return _mp_login_status().get('state') == 'success'
         except Exception:
-            pass
-        return _wechat_has_credentials()
+            return False
     st = LOGIN_DIR / f'{platform}.json'
     if st.is_file():
         try:
@@ -2269,8 +2267,7 @@ async def api_save_credentials(platform: str, req: WechatCredentials):
     with _WHOAMI_LOCK:
         _WHOAMI_CACHE.pop(platform, None)
     if ok:
-        _write_login_marker(platform, 'success', req.name.strip() or '微信公众号')
-        return {'ok': True, 'message': '公众号凭证已保存并验证通过'}
+        return {'ok': True, 'message': '公众号凭证已保存并验证通过。发布仍需在账号页扫公众号后台码。'}
     # 校验失败：凭证已存（下次改正后可直接重试），但明确告知失败原因（常见 40164 IP 白名单 / 40125 密钥错误）
     return {'ok': False, 'message': f'凭证已保存但验证未通过：{msg}。若是 40164 请把服务器出口 IP 加入公众号 IP 白名单。'}
 
@@ -2350,7 +2347,7 @@ async def api_account_whoami(platform: str):
     if backend == 'unsupported':
         return {'loggedIn': False, 'name': '', 'avatar': ''}
     if backend == 'wechat-oa':
-        # 不起浏览器：以 mp 后台会话/AppID 配置判断（见 _account_logged_in），名字取配置账号名
+        # 不起浏览器：已登录只认 mp 后台扫码会话（见 _account_logged_in），名字取配置账号名
         acc = _wechat_web_account()
         return {'loggedIn': _account_logged_in(platform, cfg),
                 'name': acc.get('name', '') or '微信公众号', 'avatar': ''}
