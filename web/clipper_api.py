@@ -13,6 +13,7 @@ class Excerpt(BaseModel):
     url: str = Field(default='', max_length=4096)
     topic: str = Field(default='', max_length=100)
     content: str = Field(min_length=1, max_length=300000)
+    image_urls: list[str] = Field(default_factory=list)
 
 router = APIRouter()
 TOKEN_FILE = STATE / 'clipper-pairing.json'
@@ -36,7 +37,11 @@ async def clip(request: Excerpt, authorization: str = Header(default='')):
         raise HTTPException(401, '配对码无效，请从调研页重新复制。')
     if not request.url.startswith(('https://', 'http://')):
         raise HTTPException(422, '只接受普通网页来源。')
-    result = save_source(request.url, request.title, '浏览器采集', request.topic, request.content, 'Mozilla Readability / 用户选区')
+    images = [u for u in request.image_urls if isinstance(u, str) and u.startswith(('https://', 'http://'))][:8]
+    result = save_source(
+        request.url, request.title, '浏览器采集', request.topic, request.content,
+        'Mozilla Readability / 用户选区', extra={'image_urls': images},
+    )
     return {'ok': True, 'id': result['id'], 'title': result['title']}
 
 

@@ -53,6 +53,14 @@ def test_xhs_v2_uses_note_text_and_images():
     assert entry['author'] == '作者甲'
     assert entry['cover_url'].endswith('cover.jpg')
     assert '一条评论' in entry['extra']['comments_text']
+    entry2 = mod.extract_entry('knowledge.ingestXhsEntryV2', {
+        'payload': {
+            'source': {'sourceUrl': 'https://www.xiaohongshu.com/explore/abc'},
+            'note': {'title': '有赞', 'text': '正文', 'stats': {'likes': 12, 'collects': 3, 'comments': 4}, 'tags': ['科研']},
+        }
+    })
+    assert entry2['extra']['likes'] == 12
+    assert '科研' in entry2['extra']['tags']
 
 
 def test_accounts_rpc_is_rejected():

@@ -202,6 +202,13 @@ def extract_entry(method: str, params: dict) -> dict:
             "external_id": external_id,
             "image_urls": images[:24],
             "comments_text": comments_text,
+            "likes": _as_dict(note.get("stats") or content.get("stats")).get("likes")
+            or _as_dict(note.get("stats")).get("likedCount"),
+            "collects": _as_dict(note.get("stats") or content.get("stats")).get("collects")
+            or _as_dict(note.get("stats")).get("collectedCount"),
+            "comments": _as_dict(note.get("stats") or content.get("stats")).get("comments")
+            or comments.get("total"),
+            "tags": note.get("tags") or content.get("tags") or inner.get("tags") or [],
             "html": str(content.get("html") or answer.get("html") or article.get("html") or "")[:20000],
             "method": method,
         },

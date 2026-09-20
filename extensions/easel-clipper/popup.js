@@ -29,6 +29,9 @@ async function readCurrentPage() {
   if (/(?:^|\.)(grok\.com|chatgpt\.com|claude\.ai)$/i.test(host)) {
     throw new Error('不要在 grok / ChatGPT / Claude 页面上采集。请打开要保存的文章或笔记。');
   }
+  if (/(?:^|\.)(xiaohongshu\.com|rednote\.com)$/i.test(host)) {
+    throw new Error('小红书请用「Beav采集 → Easel」：打开单篇笔记后点页内「保存笔记」。这只扩展只适合公众号和普通文章。');
+  }
   await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['Readability.js'] });
   const [extracted] = await chrome.scripting.executeScript({
     target: { tabId: tab.id },
@@ -45,14 +48,18 @@ async function readCurrentPage() {
         html = article?.content || document.body.innerHTML;
         title = article?.title || title;
       }
-      return { title, url: location.href, html };
+      const images = Array.from(new DOMParser().parseFromString(html, 'text/html').querySelectorAll('img[src]'))
+        .map((img) => img.src)
+        .filter((src) => /^https?:\/\//.test(src))
+        .slice(0, 8);
+      return { title, url: location.href, html, images };
     },
   });
   const source = extracted.result;
   if (!source?.html?.trim()) throw new Error('没有可保存的正文。');
   const markdown = markdownEngine().turndown(source.html).trim();
   if (!markdown) throw new Error('转 Markdown 后为空。');
-  return { title: (source.title || '网页').slice(0, 300), url: source.url, content: markdown };
+  return { title: (source.title || '网页').slice(0, 300), url: source.url, content: markdown, images: source.images || [] };
 }
 
 previewBtn.addEventListener('click', async () => {
@@ -63,6 +70,7 @@ previewBtn.addEventListener('click', async () => {
     previewBox.value = source.content;
     previewBox.dataset.title = source.title;
     previewBox.dataset.url = source.url;
+    previewBox.dataset.images = JSON.stringify(source.images || []);
     status.textContent = `已预览 ${source.content.length} 字。确认后点保存。`;
   } catch (error) {
     status.textContent = error.message;
@@ -95,6 +103,7 @@ save.addEventListener('click', async () => {
         url,
         content: markdown.slice(0, 300000),
         topic: topicInput.value,
+        image_urls: (() => { try { return JSON.parse(previewBox.dataset.images || '[]'); } catch { return []; } })(),
       }),
     });
     const result = await response.json();

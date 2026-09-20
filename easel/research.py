@@ -80,8 +80,18 @@ def normalize_url(raw: str, check_network: bool = False) -> tuple[str, str]:
 
 def list_sources(query: str = '') -> list[dict]:
     with connection() as db:
-        rows = db.execute('SELECT id,url,title,platform,topic,state,error,captured_at,asset_path,method,author,kind,cover_url,substr(content,1,220) AS excerpt FROM sources WHERE title LIKE ? OR topic LIKE ? OR content LIKE ? OR author LIKE ? OR kind LIKE ? ORDER BY captured_at DESC LIMIT 200', ('%' + query + '%',) * 5).fetchall()
-    return [dict(row) for row in rows]
+        rows = db.execute('SELECT id,url,title,platform,topic,state,error,captured_at,asset_path,method,author,kind,cover_url,extra_json,substr(content,1,220) AS excerpt FROM sources WHERE title LIKE ? OR topic LIKE ? OR content LIKE ? OR author LIKE ? OR kind LIKE ? ORDER BY captured_at DESC LIMIT 200', ('%' + query + '%',) * 5).fetchall()
+    items = []
+    for row in rows:
+        item = dict(row)
+        raw = item.get('extra_json') or ''
+        if raw:
+            try:
+                item['extra'] = json.loads(raw)
+            except json.JSONDecodeError:
+                item['extra'] = {}
+        items.append(item)
+    return items
 
 
 def get_source(identifier: str) -> dict:
