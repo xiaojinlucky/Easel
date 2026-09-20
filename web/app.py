@@ -3210,7 +3210,7 @@ async def api_ideas_delete(iid: str):
 
 if __name__ == "__main__":
     import uvicorn
-    port = int(os.environ.get("EASEL_PORT", "7860"))
+    port = int(os.environ.get("EASEL_PORT", "7870"))  # 产品合同 7870：与 easel-clipper 扩展硬编码一致
     proxy_url = os.environ.get("VSCODE_PROXY_URI", "").replace("{{port}}", str(port))
     print("\n  ✦ Easel Web")
     print(f"  http://localhost:{port}")

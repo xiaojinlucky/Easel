@@ -143,8 +143,8 @@ def cmd_chat(_args) -> int:
 
 
 def cmd_web(args) -> int:
-    """启动 Web 工作台（FastAPI + React），默认 http://localhost:7860。"""
-    port = getattr(args, "port", 7860)
+    """启动 Web 工作台（FastAPI + React），默认 http://localhost:7870。"""
+    port = getattr(args, "port", 7870)
     env = _proxy_env()
     env["EASEL_PORT"] = str(port)
     script = PROJECT_ROOT / "web" / "app.py"
@@ -196,7 +196,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # web
     p_web = sub.add_parser("web", help="启动 Web UI")
-    p_web.add_argument("--port", type=int, default=7860, help="端口（默认 7860）")
+    p_web.add_argument("--port", type=int, default=7870, help="端口（默认 7870，与采集扩展一致）")
     p_web.set_defaults(func=cmd_web)
 
     args = parser.parse_args(argv)

@@ -26,6 +26,18 @@ def test_grok_guard_present_in_injected_scripts():
     assert "grok" in overlay and "chatgpt" in overlay
 
 
+def test_beav_cloud_endpoints_stay_disabled():
+    """Easel 副本禁止回连 Beav 云：更新源与遥测端点必须为空常量。"""
+    data = json.loads(MANIFEST.read_text(encoding="utf-8-sig"))
+    assert not any("ziz.hk" in origin for origin in data.get("host_permissions", []))
+    text = (ROOT / "extensions" / "beav-capture" / "background.js").read_text(encoding="utf-8")
+    assert 'var PLUGIN_FEEDBACK_ENDPOINT = "";' in text
+    assert 'var UPDATE_SOURCE_API_URL = "";' in text
+    assert 'var UPDATE_SOURCE_DOWNLOAD_URL = "";' in text
+    assert "https://redbox.ziz.hk" not in text
+    assert "https://api.ziz.hk" not in text
+
+
 def test_host_handshake_disables_browser_control():
     import importlib.util
     spec = importlib.util.spec_from_file_location(

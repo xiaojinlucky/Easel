@@ -195,6 +195,15 @@ def _public_http_url(url: str) -> bool:
         return True
 
 
+def ocr_available() -> bool:
+    """只探测 rapidocr 是否可导入，不实例化模型（状态接口高频调用）。"""
+    try:
+        import importlib.util
+        return importlib.util.find_spec('rapidocr_onnxruntime') is not None
+    except Exception:
+        return False
+
+
 def ocr_local_images(rel_paths: list[str]) -> str:
     global _OCR
     try:
@@ -278,7 +287,7 @@ def collection_status() -> dict:
         cooldowns = [dict(row) for row in db.execute('SELECT * FROM cooldowns')]
         total = db.execute("SELECT count(*) FROM sources WHERE state='saved'").fetchone()[0]
     endpoint = research_cdp_endpoint()
-    return {'sampling_mode': 'single_page_no_scroll', 'connection_mode': 'existing_browser' if endpoint else 'managed_research_profile', 'cdp_url': endpoint or f'http://127.0.0.1:{CLOAK_PORT}', 'browser': 'CloakBrowser', 'reader': 'Baoyu / Defuddle', 'min_interval_seconds': MIN_INTERVAL, 'max_interval_seconds': MAX_INTERVAL, 'cooldowns': cooldowns, 'hourly_limit_per_platform': HOURLY_LIMIT, 'cache_hours': CACHE_SECONDS // 3600, 'platforms': sorted(set(PLATFORMS.values())), 'blocked': blocked, 'saved_count': total}
+    return {'sampling_mode': 'single_page_no_scroll', 'ocr_available': ocr_available(), 'connection_mode': 'existing_browser' if endpoint else 'managed_research_profile', 'cdp_url': endpoint or f'http://127.0.0.1:{CLOAK_PORT}', 'browser': 'CloakBrowser', 'reader': 'Baoyu / Defuddle', 'min_interval_seconds': MIN_INTERVAL, 'max_interval_seconds': MAX_INTERVAL, 'cooldowns': cooldowns, 'hourly_limit_per_platform': HOURLY_LIMIT, 'cache_hours': CACHE_SECONDS // 3600, 'platforms': sorted(set(PLATFORMS.values())), 'blocked': blocked, 'saved_count': total}
 
 
 def capture(url: str, topic: str = '') -> dict:
