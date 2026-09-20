@@ -13,29 +13,17 @@
   "permissions": [
     "activeTab",
     "alarms",
-    "bookmarks",
     "contextMenus",
-    "clipboardRead",
     "clipboardWrite",
-    "debugger",
     "downloads",
-    "downloads.ui",
-    "favicon",
-    "history",
     "nativeMessaging",
     "notifications",
-    "readingList",
     "scripting",
-    "sessions",
     "sidePanel",
     "storage",
-    "tabGroups",
-    "tabs",
-    "topSites",
-    "webNavigation"
+    "tabs"
   ],
   "host_permissions": [
-    "<all_urls>",
     "https://www.xiaohongshu.com/*",
     "https://www.rednote.com/*",
     "https://edith.xiaohongshu.com/*",
@@ -48,17 +36,6 @@
     "https://space.bilibili.com/*",
     "https://search.bilibili.com/*",
     "https://b23.tv/*",
-    "https://reddit.com/*",
-    "https://www.reddit.com/*",
-    "https://old.reddit.com/*",
-    "https://x.com/*",
-    "https://www.x.com/*",
-    "https://mobile.x.com/*",
-    "https://twitter.com/*",
-    "https://www.twitter.com/*",
-    "https://mobile.twitter.com/*",
-    "https://instagram.com/*",
-    "https://www.instagram.com/*",
     "https://mp.weixin.qq.com/*",
     "https://zhihu.com/*",
     "https://www.zhihu.com/*",
@@ -82,7 +59,15 @@
       "world": "MAIN"
     },
     {
-      "matches": ["<all_urls>"],
+      "matches": [
+        "https://www.xiaohongshu.com/*",
+        "https://www.rednote.com/*",
+        "https://mp.weixin.qq.com/*",
+        "https://www.zhihu.com/*",
+        "https://zhuanlan.zhihu.com/*",
+        "https://www.douyin.com/*",
+        "https://www.bilibili.com/*"
+      ],
       "js": ["pageObserver.js"],
       "run_at": "document_end"
     }
@@ -90,7 +75,7 @@
   "web_accessible_resources": [
     {
       "resources": ["pageRouteBridge.js", "images/cursor-chat.png"],
-      "matches": ["<all_urls>"]
+      "matches": ["https://www.xiaohongshu.com/*", "https://www.rednote.com/*"]
     }
   ],
   "commands": {

@@ -77,8 +77,13 @@ def _ok_ping() -> dict:
             "connected": True,
             "appVersion": APP_VERSION,
             "availability": "connected",
+            "browserControl": False,
         },
-        "capabilities": {"hostMethods": HOST_METHODS},
+        "capabilities": {
+            "hostMethods": HOST_METHODS,
+            "browserControl": False,
+            "debugger": False,
+        },
     }
 
 

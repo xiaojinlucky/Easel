@@ -1,4 +1,7 @@
 (() => {
+  if (typeof location !== "undefined" && /(?:^|\.)(grok\.com|chatgpt\.com|claude\.ai)$/i.test(String(location.hostname || ""))) {
+    return;
+  }
   // src/pageObserver.js
   var latestPageInfo = null;
   var latestUrl = location.href;
