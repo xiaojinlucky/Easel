@@ -48,7 +48,7 @@ async def download():
     STATE.mkdir(parents=True, exist_ok=True)
     target = STATE / 'easel-clipper.zip'
     with zipfile.ZipFile(target, 'w', zipfile.ZIP_DEFLATED) as archive:
-        for path in folder.iterdir():
-            if path.is_file():
-                archive.write(path, path.name)
+        for path in folder.rglob('*'):
+            if path.is_file() and path.name != 'easel-clipper.zip':
+                archive.write(path, path.relative_to(folder).as_posix())
     return FileResponse(target, filename='easel-clipper.zip', media_type='application/zip')

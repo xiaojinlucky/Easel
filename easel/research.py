@@ -196,7 +196,11 @@ def materialize_images(identifier: str, urls: list[str]) -> list[str]:
         try:
             folder.mkdir(parents=True, exist_ok=True)
             request = urllib.request.Request(url, headers={'User-Agent': 'EaselResearch/1.0'})
-            with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(request, timeout=8) as response:
+            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+            with opener.open(request, timeout=8) as response:
+                final = response.geturl()
+                if not _public_http_url(final):
+                    continue
                 data = response.read(2_000_001)
             if not data or len(data) > 2_000_000:
                 continue

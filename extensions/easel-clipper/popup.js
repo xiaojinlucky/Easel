@@ -20,8 +20,14 @@ function markdownEngine() {
 
 async function readCurrentPage() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab?.id || !/^https?:\/\//.test(tab.url || '')) {
+  const href = tab.url || '';
+  if (!tab?.id || !/^https?:\/\//.test(href)) {
     throw new Error('请在普通网页上使用此扩展，不要在 grok / chrome 设置页上用。');
+  }
+  let host = '';
+  try { host = new URL(href).hostname; } catch { host = ''; }
+  if (/(?:^|\.)(grok\.com|chatgpt\.com|claude\.ai)$/i.test(host)) {
+    throw new Error('不要在 grok / ChatGPT / Claude 页面上采集。请打开要保存的文章或笔记。');
   }
   await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['Readability.js'] });
   const [extracted] = await chrome.scripting.executeScript({

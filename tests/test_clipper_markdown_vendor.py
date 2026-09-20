@@ -17,5 +17,6 @@ def test_clipper_vendors_turndown_and_previews():
     popup = (CLIPPER / 'popup.js').read_text(encoding='utf-8')
     assert 'turndown' in popup.lower()
     assert 'preview' in popup
+    assert 'grok.com' in popup or 'grok' in popup
     html = (CLIPPER / 'popup.html').read_text(encoding='utf-8')
     assert 'textarea' in html
