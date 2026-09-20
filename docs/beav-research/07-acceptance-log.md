@@ -21,8 +21,8 @@
 ```bash
 cd "F:/科研大师兄/自媒体工作台/Easel-beav-kb"
 PY="F:/科研大师兄/自媒体工作台/Easel/.venv/Scripts/python.exe"
-"$PY" -m pytest -q                 # 期望：3 failed, 240 passed, 5 skipped
-"$PY" -m pytest tests/test_research_enrich.py -q   # 期望：8 passed
+"$PY" -m pytest -q                 # 期望：3 failed, 241 passed, 5 skipped
+"$PY" -m pytest tests/test_research_enrich.py -q   # 期望：9 passed
 ```
 
 `tests/test_core.py` 里那 3 个失败（`test_write_baseline_profile`、
@@ -30,7 +30,7 @@ PY="F:/科研大师兄/自媒体工作台/Easel/.venv/Scripts/python.exe"
 `test_job_events_resume_after_event_id`）**在主树同样失败**——已在 `Easel-official` 上跑过同文件比对，
 属于基线问题，不是这条线引入的。
 
-调研线各测试文件通过数：宿主 15 / 治理 6 / 治理路由 2 / 导出+OCR 4 / 加工队列 8 / 扩展安全 6 = 41 条。
+调研线各测试文件通过数：宿主 15 / 治理 6 / 治理路由 2 / 导出+OCR 4 / 加工队列 9 / 扩展安全 6 = 42 条。
 
 前端（worktree 里 `npm ci` 后）：
 
@@ -44,6 +44,8 @@ cd web/frontend && npm run build   # 期望：tsc 无错，vite 产出 ~459KB �
 - 失败重试：模型通道不可用（返回以 `⏳/⏱️/❌` 开头）→ 任务回到 `pending`，三次后 `failed`，`index-status` 里 `enrich_failed` 计数可见，素材摘要保持为空（不会写坏数据）。
 - 幂等：同一素材同一任务只留一行，重复点按钮不会堆队列；`enqueue_missing_enrich` 只补没有摘要的存量。
 - 进程被杀留下的 `running` 僵尸行，超过 30 分钟（`STALE_RUNNING_AFTER`）重新可领。
+- 加工线程本体用假模型通道在进程内跑通：锁被占时 `start_worker()` 返回 False（不并发起第二个），
+  守护线程把 pending 清到 `done` 后自行退出并释放单例锁。
 - 宿主侧：`created/updated` 入库后自动投递 `enrich`，带 `options.transcribe` 的视频再投递 `transcribe`；投递失败只记日志，**不影响入库回执**。
 - 导出：`knowledge/<site>/<id>/meta.json + content.md`（Obsidian 可直接吃）、CSV 带 BOM、JSON 批量；格式非法报 422。
 

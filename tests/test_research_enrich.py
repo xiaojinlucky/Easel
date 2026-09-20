@@ -160,3 +160,42 @@ def test_agent_channel_reuses_loaded_backend(monkeypatch):
     monkeypatch.setattr(sys.modules['__main__'], 'run_agent_sync', None, raising=False)
     with pytest.raises(RuntimeError, match='后端在跑'):
         research_enrich._agent_runner()
+
+
+def test_worker_thread_drains_queue(tmp_path, monkeypatch):
+    import threading
+    import time
+    import types
+
+    monkeypatch.setattr(research, 'DB', tmp_path / 'research.sqlite')
+    monkeypatch.setattr(research, 'ROOT', tmp_path)
+    monkeypatch.setattr(research, 'ocr_local_images', lambda rel: '')
+    fake = types.ModuleType('app')
+    fake.run_agent_sync = lambda msg, timeout=300, session_id=None: (
+        '{"tags": ["求职", "校招"], "summary": "一条关于应届求职的素材。"}')
+    monkeypatch.setitem(sys.modules, 'app', fake)
+
+    research_enrich._WORKER.acquire()
+    try:
+        assert research_enrich.start_worker() is False   # 忙时不并发起第二个
+    finally:
+        research_enrich._WORKER.release()
+
+    saved = research.save_source('', '线程里的素材', '导入摘录', '', '正文：应届秋招')
+    research_enrich.enqueue(saved['id'], 'enrich')
+    assert research_enrich.start_worker() is True
+
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        if research.get_source(saved['id'])['summary']:
+            break
+        time.sleep(0.05)
+    row = research.get_source(saved['id'])
+    assert row['summary'].startswith('一条关于应届求职') and row['tags'] == ['求职', '校招']
+    assert research_enrich.queue_status()['counts'] == {'done': 1}
+    # 线程跑完自己退出并释放单例锁
+    for _ in range(40):
+        if not any(t.name == 'easel-enrich' for t in threading.enumerate()):
+            break
+        time.sleep(0.05)
+    assert research_enrich.start_worker() is True
