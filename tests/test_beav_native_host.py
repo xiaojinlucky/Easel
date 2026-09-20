@@ -16,6 +16,8 @@ def test_ping_reports_bridge_connected():
     assert result['ok'] is True
     assert result['appVersion'].startswith('2.7.')
     assert result['desktopBridge']['connected'] is True
+    assert result['desktopBridge']['browserControl'] is False
+    assert result['capabilities']['browserControl'] is False
 
 
 def test_extracts_knowledge_entry_fields():
