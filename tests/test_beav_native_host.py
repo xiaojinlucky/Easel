@@ -37,9 +37,11 @@ def test_xhs_v2_uses_note_text_and_images():
             'note': {
                 'title': 'V2标题',
                 'text': '笔记正文不该丢',
-                'author': '作者甲',
-                'coverUrl': 'https://example.com/cover.jpg',
-                'imageUrls': ['https://example.com/1.jpg'],
+                'author': {'nickname': '作者甲'},
+                'assets': {
+                    'coverUrl': 'https://example.com/cover.jpg',
+                    'imageUrls': ['https://example.com/1.jpg'],
+                },
             },
             'comments': {'items': [{'author': '乙', 'text': '一条评论'}]},
         }
@@ -49,6 +51,14 @@ def test_xhs_v2_uses_note_text_and_images():
     assert entry['author'] == '作者甲'
     assert entry['cover_url'].endswith('cover.jpg')
     assert '一条评论' in entry['extra']['comments_text']
+
+
+def test_accounts_rpc_is_rejected():
+    try:
+        handle('accounts.createImportSession', {'payload': {'homepageUrl': 'https://www.xiaohongshu.com/user/profile/x'}})
+        raise AssertionError('should reject')
+    except ValueError as exc:
+        assert '账号档案' in str(exc)
 
 
 def test_zhihu_answer_uses_nested_text():

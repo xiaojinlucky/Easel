@@ -135,19 +135,36 @@ def extract_entry(method: str, params: dict) -> dict:
         or inner.get("text")
         or ""
     ).strip()
+    note_assets = _as_dict(note.get("assets"))
+    author_obj = note.get("author") if isinstance(note.get("author"), dict) else {}
     author = str(
-        note.get("author")
+        author_obj.get("nickname")
+        or note.get("author")
         or content.get("author")
         or answer.get("author")
         or article.get("author")
         or ""
     ).strip()
+    if author.startswith("{") and "nickname" in author:
+        author = ""
     images = []
     for key in ("imageUrls", "images"):
-        value = assets.get(key) or note.get(key) or article.get(key) or inner.get(key)
+        value = (
+            note_assets.get(key)
+            or assets.get(key)
+            or note.get(key)
+            or article.get(key)
+            or inner.get(key)
+        )
         if isinstance(value, list):
             images.extend(str(item) for item in value if item)
-    cover = str(assets.get("coverUrl") or note.get("coverUrl") or article.get("coverUrl") or (images[0] if images else "")).strip()
+    cover = str(
+        note_assets.get("coverUrl")
+        or assets.get("coverUrl")
+        or note.get("coverUrl")
+        or article.get("coverUrl")
+        or (images[0] if images else "")
+    ).strip()
     if method == "knowledge.ingestMediaAssets":
         items = inner.get("items") if isinstance(inner.get("items"), list) else []
         for item in items:
@@ -243,8 +260,8 @@ def handle(method: str, params: dict) -> dict:
                 except Exception as exc:  # noqa: BLE001
                     items.append({"success": False, "error": str(exc)})
             return {"success": True, "results": items}
-        if method == "accounts.completeImportSession":
-            return {"success": True}
+        if method.startswith("accounts."):
+            raise ValueError("账号档案导入尚未接到 Easel，请用保存笔记/网页。")
         return _ingest(params if isinstance(params, dict) else {}, method)
     raise ValueError(f"unsupported method: {method}")
 
