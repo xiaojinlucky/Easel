@@ -1383,6 +1383,10 @@
     recordNativeTelemetry("connect_started", { hostName, force: options.force === true, silent: options.silent === true });
     try {
       nativePort = chrome.runtime.connectNative(hostName);
+      const connectError = chrome.runtime.lastError?.message;
+      if (connectError) {
+        throw new Error(connectError);
+      }
     } catch (error) {
       const errorCode = recordNativeFailure(error, "native_connect");
       recordNativeTelemetry("connect_failed", { hostName, errorCode, error: describeError(error), phase: "native_connect" });
@@ -7098,7 +7102,9 @@
     const tabId = requireTabId5(action);
     const prepare = action.prepareContentScript === true || action.prepare === true || action.injectIfMissing === true;
     const includeContentScriptState = action.includeContentScriptState !== false;
-    const navFrames = await chrome.webNavigation.getAllFrames({ tabId }).catch(() => [{ frameId: 0, parentFrameId: -1, url: "" }]);
+    const navFrames = chrome.webNavigation?.getAllFrames
+      ? await chrome.webNavigation.getAllFrames({ tabId }).catch(() => [{ frameId: 0, parentFrameId: -1, url: "" }])
+      : [{ frameId: 0, parentFrameId: -1, url: "" }];
     const frames = Array.isArray(navFrames) && navFrames.length ? navFrames : [{ frameId: 0, parentFrameId: -1, url: "" }];
     const injectableFrames = frames.filter((frame) => isControllableFrameUrl(frame?.url));
     if (prepare && injectableFrames.length) {
@@ -12392,6 +12398,9 @@ ${page.text || htmlToText(page.html)}
     const search = { text: query, maxResults };
     search.startTime = action.from == null ? 0 : parseHistoryDate(action.from, "from");
     if (action.to != null) search.endTime = parseHistoryDate(action.to, "to");
+    if (!chrome.history?.search) {
+      return { success: true, unavailable: true, limit: maxResults, targetShape: "array", entries: [], history: [], targetHistory: [] };
+    }
     const items = await chrome.history.search(search);
     const entries = items.flatMap(normalizeHistoryEntry);
     return {
@@ -12406,6 +12415,7 @@ ${page.text || htmlToText(page.html)}
   async function listUserBookmarks(action = {}) {
     const limit = normalizeLimit(action.limit ?? action.maxResults, 200, 1, 1e3, "getUserBookmarks");
     const query = String(action.query || "").trim();
+    if (!chrome.bookmarks) return { success: true, unavailable: true, bookmarks: [] };
     const nodes = query ? await chrome.bookmarks.search(query) : flattenBookmarkNodes(await chrome.bookmarks.getTree());
     return {
       success: true,
@@ -12414,6 +12424,7 @@ ${page.text || htmlToText(page.html)}
   }
   async function listTopSites(action = {}) {
     const limit = normalizeLimit(action.limit ?? action.maxResults, 50, 1, 100, "getUserTopSites");
+    if (!chrome.topSites?.get) return { success: true, unavailable: true, sites: [] };
     const sites = await chrome.topSites.get();
     return {
       success: true,
@@ -12444,6 +12455,7 @@ ${page.text || htmlToText(page.html)}
   }
   async function listRecentlyClosedSessions(action = {}) {
     const maxResults = normalizeLimit(action.limit ?? action.maxResults, 25, 1, 100, "getUserSessions");
+    if (!chrome.sessions?.getRecentlyClosed) return { success: true, unavailable: true, sessions: [] };
     const sessions = await chrome.sessions.getRecentlyClosed({ maxResults });
     return {
       success: true,
@@ -12452,6 +12464,7 @@ ${page.text || htmlToText(page.html)}
   }
   async function listSessionDevices(action = {}) {
     const maxResults = normalizeLimit(action.limit ?? action.maxResults, 25, 1, 100, "getUserSessions");
+    if (!chrome.sessions?.getDevices) return { success: true, unavailable: true, devices: [] };
     const devices = await chrome.sessions.getDevices({ maxResults });
     return {
       success: true,
@@ -14661,7 +14674,9 @@ ${page.text || htmlToText(page.html)}
     return { success: true, capture };
   }
   async function readAllFrames(tabId, options) {
-    const navFrames = await chrome.webNavigation.getAllFrames({ tabId }).catch(() => [{ frameId: 0 }]);
+    const navFrames = chrome.webNavigation?.getAllFrames
+      ? await chrome.webNavigation.getAllFrames({ tabId }).catch(() => [{ frameId: 0 }])
+      : [{ frameId: 0 }];
     await ensureContentScript(tabId, { allFrames: true });
     const frames = [];
     for (const frame of navFrames || [{ frameId: 0 }]) {
@@ -18284,36 +18299,42 @@ ${text}`.slice(0, 6e3);
   }
   function ensureContextMenus() {
     chrome.contextMenus.removeAll(() => {
-      chrome.contextMenus.create({
+      void chrome.runtime.lastError;
+      const addMenu = (item) => {
+        chrome.contextMenus.create(item, () => {
+          void chrome.runtime.lastError;
+        });
+      };
+      addMenu({
         id: MENU_ROOT_ID,
         title: "保存到 Easel",
         contexts: ["page", "selection", "link", "image", "video"]
       });
-      chrome.contextMenus.create({
+      addMenu({
         id: MENU_PAGE_ID,
         parentId: MENU_ROOT_ID,
         title: "保存当前页面内容到 Easel 素材库",
         contexts: ["page"]
       });
-      chrome.contextMenus.create({
+      addMenu({
         id: MENU_SELECTION_ID,
         parentId: MENU_ROOT_ID,
         title: "保存选中文字到 Easel 素材库",
         contexts: ["selection"]
       });
-      chrome.contextMenus.create({
+      addMenu({
         id: MENU_LINK_ID,
         parentId: MENU_ROOT_ID,
         title: "保存当前链接到 Easel 素材库",
         contexts: ["link"]
       });
-      chrome.contextMenus.create({
+      addMenu({
         id: MENU_IMAGE_ID,
         parentId: MENU_ROOT_ID,
         title: "保存当前图片到素材库",
         contexts: ["image"]
       });
-      chrome.contextMenus.create({
+      addMenu({
         id: MENU_VIDEO_ID,
         parentId: MENU_ROOT_ID,
         title: "保存当前视频到 Easel 素材库",

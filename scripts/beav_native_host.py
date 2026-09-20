@@ -19,7 +19,7 @@ def _project_root() -> Path:
         return Path(env)
     sidecar = Path(__file__).with_name("easel-root.txt")
     if sidecar.is_file():
-        return Path(sidecar.read_text(encoding="utf-8").strip())
+        return Path(sidecar.read_text(encoding="utf-8-sig").strip())
     return Path(__file__).resolve().parents[1]
 
 

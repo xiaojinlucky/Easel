@@ -11,6 +11,14 @@ _text_from_payload = mod._text_from_payload
 handle = mod.handle
 
 
+def test_project_root_ignores_utf8_bom():
+    bom_path = b"\xef\xbb\xbfF:\\easel-official\r\n"
+    resolved = Path(bom_path.decode("utf-8-sig").strip())
+    assert resolved.name == "easel-official"
+    text = (ROOT / "scripts" / "beav_native_host.py").read_text(encoding="utf-8")
+    assert 'encoding="utf-8-sig"' in text
+
+
 def test_ping_reports_bridge_connected():
     result = handle('ping', {})
     assert result['ok'] is True

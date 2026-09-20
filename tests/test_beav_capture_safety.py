@@ -36,3 +36,23 @@ def test_host_handshake_disables_browser_control():
     ping = mod.handle("ping", {})
     assert ping["capabilities"]["browserControl"] is False
     assert ping["desktopBridge"]["browserControl"] is False
+
+
+def test_service_worker_checks_native_connect_last_error():
+    text = (ROOT / "extensions" / "beav-capture" / "background.js").read_text(encoding="utf-8")
+    assert "chrome.runtime.connectNative(hostName)" in text
+    assert "chrome.runtime.lastError?.message" in text
+    assert "if (!chrome.history?.search)" in text
+    assert "if (!chrome.bookmarks)" in text
+    assert "chrome.webNavigation?.getAllFrames" in text
+
+
+def test_native_host_installer_uses_ascii_localappdata():
+    text = (ROOT / "scripts" / "install_beav_native_host.ps1").read_text(encoding="utf-8")
+    assert r"easel-native-host" in text
+    assert "LOCALAPPDATA" in text
+    assert "Test-AsciiPath" in text
+    assert "com.redbox.browser_control" in text
+    assert r".runtime\beav-native-host.cmd" not in text
+    assert "UTF8Encoding]::new($false)" in text
+    assert "Set-Content -LiteralPath (Join-Path $hostDir 'easel-root.txt')" not in text
