@@ -75,7 +75,7 @@ ${host}` : "未检测到可操作页面";
       return {
         kind: "wechat-article",
         action: "save-page-link",
-        label: "保存公众号文章到知识库",
+        label: "保存公众号文章到 Easel 素材库",
         description: "当前页面已识别为公众号文章，将完整保存正文、图片和排版。",
         primaryEnabled: true,
         detected: true
@@ -87,7 +87,7 @@ ${host}` : "未检测到可操作页面";
         return {
           kind: "youtube",
           action: "save-youtube",
-          label: "保存YouTube视频到知识库",
+          label: "保存YouTube视频到 Easel 素材库",
           description: "当前页面已识别为 YouTube 视频页。",
           primaryEnabled: true,
           detected: true
@@ -127,7 +127,7 @@ ${host}` : "未检测到可操作页面";
       if (!result?.success) {
         throw new Error(result?.error || "保存失败");
       }
-      const detail = result.duplicate ? result.updated ? "已存在于知识库，已更新已有内容。" : "已存在于知识库，已跳过重复保存。" : `保存成功${result.noteId ? `：${result.noteId}` : ""}`;
+      const detail = result.duplicate ? result.updated ? "已存在于 Easel 素材库，已更新已有内容。" : "已存在于 Easel 素材库，已跳过重复保存。" : `保存成功${result.noteId ? `：${result.noteId}` : ""}`;
       showResult(detail, "success");
     } catch (error) {
       showResult(error instanceof Error ? error.message : String(error), "error");
@@ -247,7 +247,7 @@ ${description}
     const pageInfo = normalizePageInfo(inspect?.pageInfo || inferPageInfoFromUrl(url));
     primaryActionType = pageInfo.action || "save-page-link";
     actionSupport.primary = Boolean(activeTab?.id) && pageInfo.primaryEnabled !== false;
-    buttons.primary.textContent = pageInfo.label || "保存到知识库";
+    buttons.primary.textContent = pageInfo.label || "保存到 Easel 素材库";
     buttons.primary.classList.toggle("btn-primary", Boolean(pageInfo.detected));
     buttons.primary.classList.toggle("btn-secondary", !pageInfo.detected);
     if (actionHintEl) {
@@ -313,13 +313,13 @@ ${description}
       return { state: "recovering", ingestAllowed: false, context: null };
     }
     const nativeFailureHints = {
-      NATIVE_HOST_NOT_REGISTERED: "本机连接未注册，请重启 Beav 后重新加载插件",
-      NATIVE_HOST_FORBIDDEN: "浏览器拒绝本机连接，请使用官方插件并重启 Beav",
-      NATIVE_HOST_START_FAILED: "本机连接程序无法启动，请重启或重新安装 Beav",
-      NATIVE_HOST_EXITED: "本机连接程序已退出，正在重试；请确认 Beav 已更新",
-      NATIVE_REQUEST_TIMEOUT: "本机连接响应超时，正在重试；请重启 Beav 后重新加载插件",
-      NATIVE_RESPONSE_INVALID: "本机连接返回异常，请重启 Beav 后重新加载插件",
-      DESKTOP_BRIDGE_ERROR: "桌面桥接连接失败，请重启 Beav 后重新加载插件"
+      NATIVE_HOST_NOT_REGISTERED: "本机连接未注册，请先在调研页注册宿主并刷新扩展",
+      NATIVE_HOST_FORBIDDEN: "浏览器拒绝本机连接，请使用调研页登记的解压扩展并刷新",
+      NATIVE_HOST_START_FAILED: "本机连接程序无法启动，请重新注册 Easel 宿主",
+      NATIVE_HOST_EXITED: "本机连接程序已退出，正在重试；请确认已注册 Easel 宿主",
+      NATIVE_REQUEST_TIMEOUT: "本机连接响应超时，正在重试；请先在调研页注册宿主并刷新扩展",
+      NATIVE_RESPONSE_INVALID: "本机连接返回异常，请先在调研页注册宿主并刷新扩展",
+      DESKTOP_BRIDGE_ERROR: "桌面桥接连接失败，请先在调研页注册宿主并刷新扩展"
     };
     if (nativeFailureHints[code]) {
       return { state: "attention", ingestAllowed: false, context: null, hint: nativeFailureHints[code] };
@@ -335,7 +335,7 @@ ${description}
   function renderDesktopConnection() {
     const spaceName = normalizeText(desktopConnection.context?.space?.name);
     if (desktopConnection.state === "ready") {
-      serverStatusEl.textContent = desktopConnection.context?.supported === false ? "已连接 · 可保存到知识库" : spaceName ? `已连接 · 当前空间：${spaceName}` : "已连接 · 当前空间已准备就绪";
+      serverStatusEl.textContent = desktopConnection.context?.supported === false ? "已连接 · 可保存到 Easel 素材库" : spaceName ? `已连接 · 当前空间：${spaceName}` : "已连接 · 当前空间已准备就绪";
       serverStatusEl.className = "status ok";
       return;
     }
@@ -345,16 +345,16 @@ ${description}
       return;
     }
     if (desktopConnection.state === "recovering") {
-      serverStatusEl.textContent = "Beav 正在恢复连接，请稍候…";
+      serverStatusEl.textContent = "正在连接 Easel 宿主，请稍候…";
       serverStatusEl.className = "status";
       return;
     }
     if (desktopConnection.state === "attention") {
-      serverStatusEl.textContent = desktopConnection.hint || "连接需要处理，请升级 Beav 或重新加载插件";
+      serverStatusEl.textContent = desktopConnection.hint || "连接需要处理，请刷新扩展或重新注册宿主";
       serverStatusEl.className = "status error";
       return;
     }
-    serverStatusEl.textContent = "未连接 · 请打开 Beav";
+    serverStatusEl.textContent = "未连接 · 请先在调研页注册宿主";
     serverStatusEl.className = "status error";
   }
   function normalizePageInfo(pageInfo) {
@@ -364,8 +364,8 @@ ${description}
     return {
       kind: pageInfo.kind || "generic",
       action: pageInfo.action || "save-page-link",
-      label: pageInfo.label || "仅保存链接到知识库",
-      description: pageInfo.description || "当前页面可作为链接收藏保存到知识库。",
+      label: pageInfo.label || "仅保存链接到 Easel 素材库",
+      description: pageInfo.description || "当前页面可作为链接收藏保存到 Easel 素材库。",
       primaryEnabled: pageInfo.primaryEnabled !== false,
       detected: Boolean(pageInfo.detected),
       statusText: pageInfo.statusText || "未检测到内容"
@@ -375,8 +375,8 @@ ${description}
     return {
       kind: "generic",
       action: "save-page-link",
-      label: "仅保存链接到知识库",
-      description: "当前页面可作为链接收藏保存到知识库。",
+      label: "仅保存链接到 Easel 素材库",
+      description: "当前页面可作为链接收藏保存到 Easel 素材库。",
       primaryEnabled: true,
       detected: false,
       statusText: "未检测到内容",

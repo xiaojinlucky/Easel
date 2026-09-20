@@ -189,7 +189,7 @@
     const origin = String(options.origin || "").trim();
     const pageRole = String(options.pageRole || "").trim();
     const sessionName = String(options.sessionName || options.name || "").trim();
-    const baseLabel = String(options.label || "").trim() || "Beav 控制中";
+    const baseLabel = String(options.label || "").trim() || "Easel 控制中";
     const label = sessionName ? `${baseLabel} · ${sessionName}` : baseLabel;
     return {
       visible: options.visible !== false && options.badge !== false && state === "active",
@@ -197,7 +197,7 @@
       origin,
       pageRole,
       label: label.slice(0, 40),
-      title: sessionName ? `Beav browser-control: ${sessionName}` : "Beav browser-control"
+      title: sessionName ? `Easel capture: ${sessionName}` : "Easel capture"
     };
   }
   function ensureOverlayRoot() {

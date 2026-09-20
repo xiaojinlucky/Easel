@@ -267,7 +267,7 @@
     const captureConnected = captureHealth?.success === true;
     const browserControlConnected = browserControlHealth?.success === true;
     if (!captureConnected && !browserControlConnected) {
-      elements.serverStatus.textContent = "未连接，请打开Beav";
+      elements.serverStatus.textContent = "未连接，请先在调研页注册宿主";
       elements.serverStatus.className = "status error";
       return;
     }
@@ -383,7 +383,7 @@
       return;
     }
     if (!isHealthy) {
-      renderCaptureStatus("未链接，请打开Beav", "error");
+      renderCaptureStatus("未连接，请先在调研页注册宿主", "error");
       return;
     }
     renderCaptureStatus(config.hint || "点击按钮后任务会进入下方队列", "idle");
@@ -705,7 +705,7 @@ ${description}
       });
     } else if (!nextContext?.health?.success) {
       renderBloggerNotesProgress({
-        label: "未链接，请打开Beav",
+        label: "未连接，请先在调研页注册宿主",
         meta: "",
         status: "error"
       });
@@ -735,7 +735,7 @@ ${description}
     if (!tab.url) {
       return {
         variant: "empty",
-        title: "Beav 页面采集",
+        title: "Easel 页面采集",
         subtitle: "打开网页后自动识别",
         actions: []
       };
@@ -743,7 +743,7 @@ ${description}
     if (platform === "xhs" && pageType === "profile") {
       return {
         variant: "xhs-profile",
-        title: "Beav 博主采集",
+        title: "Easel 博主采集",
         subtitle: "小红书博主页",
         actions: [
           { label: "采集博主笔记", action: "bloggerNotes", primary: true, title: "采集当前博主主页笔记" }
@@ -753,86 +753,86 @@ ${description}
     if (platform === "xhs" && pageType === "note") {
       return {
         variant: "xhs-note",
-        title: "Beav 笔记采集",
+        title: "Easel 笔记采集",
         subtitle: "小红书笔记页",
         actions: [
-          { label: "保存笔记", action: "save", primary: true, title: "保存当前笔记到 Beav" }
+          { label: "保存笔记", action: "save", primary: true, title: "保存当前笔记到 Easel" }
         ]
       };
     }
     if (platform === "xhs") {
       return {
         variant: "xhs-page",
-        title: "Beav 小红书采集",
+        title: "Easel 小红书采集",
         subtitle: "当前页面",
         actions: [
-          { label: "保存网页", action: "savePageLink", primary: true, title: "保存当前页面链接到 Beav" }
+          { label: "保存网页", action: "savePageLink", primary: true, title: "保存当前页面链接到 Easel" }
         ]
       };
     }
     if (platform === "youtube") {
       return {
         variant: "youtube",
-        title: "Beav 视频采集",
+        title: "Easel 视频采集",
         subtitle: "YouTube",
         actions: [
-          { label: "保存视频", action: "saveYoutube", primary: true, title: "保存当前 YouTube 视频到 Beav" }
+          { label: "保存视频", action: "saveYoutube", primary: true, title: "保存当前 YouTube 视频到 Easel" }
         ]
       };
     }
     if (platform === "douyin") {
       return {
         variant: "douyin",
-        title: "Beav 视频采集",
+        title: "Easel 视频采集",
         subtitle: "抖音",
         actions: [
-          { label: "保存视频", action: "saveDouyin", primary: true, title: "保存当前抖音视频到 Beav" }
+          { label: "保存视频", action: "saveDouyin", primary: true, title: "保存当前抖音视频到 Easel" }
         ]
       };
     }
     if (platform === "wechat" && pageType === "article") {
       return {
         variant: "wechat",
-        title: "Beav 文章采集",
+        title: "Easel 文章采集",
         subtitle: "微信公众号",
         actions: [
-          { label: "保存文章", action: "savePageLink", primary: true, title: "保存当前公众号文章到 Beav" }
+          { label: "保存文章", action: "savePageLink", primary: true, title: "保存当前公众号文章到 Easel" }
         ]
       };
     }
     if (platform === "zhihu" && pageInfo?.kind === "zhihu-answer") {
       return {
         variant: "zhihu",
-        title: "Beav 回答采集",
+        title: "Easel 回答采集",
         subtitle: "知乎",
         actions: [
-          { label: "保存回答", action: "saveZhihuAnswer", primary: true, title: "保存当前知乎回答到 Beav" }
+          { label: "保存回答", action: "saveZhihuAnswer", primary: true, title: "保存当前知乎回答到 Easel" }
         ]
       };
     }
     if (platform === "zhihu" && pageInfo?.kind === "zhihu-article") {
       return {
         variant: "zhihu",
-        title: "Beav 文章采集",
+        title: "Easel 文章采集",
         subtitle: "知乎专栏",
         actions: [
-          { label: "保存文章", action: "saveZhihuArticle", primary: true, title: "保存当前知乎专栏文章到 Beav" }
+          { label: "保存文章", action: "saveZhihuArticle", primary: true, title: "保存当前知乎专栏文章到 Easel" }
         ]
       };
     }
     const platformMap = {
-      bilibili: { subtitle: "Bilibili", label: pageType === "video" ? "保存视频" : "保存页面", action: "saveBilibili", title: "保存当前 Bilibili 内容到 Beav" },
-      kuaishou: { subtitle: "快手", label: pageType === "video" ? "保存视频" : "保存页面", action: "saveKuaishou", title: "保存当前快手内容到 Beav" },
-      tiktok: { subtitle: "TikTok", label: pageType === "video" ? "保存视频" : "保存页面", action: "saveTiktok", title: "保存当前 TikTok 内容到 Beav" },
-      reddit: { subtitle: "Reddit", label: pageType === "post" ? "保存帖子" : "保存页面", action: "saveReddit", title: "保存当前 Reddit 内容到 Beav" },
-      x: { subtitle: "X", label: pageType === "post" ? "保存推文" : "保存页面", action: "saveX", title: "保存当前 X 内容到 Beav" },
-      instagram: { subtitle: "Instagram", label: pageType === "post" || pageType === "video" ? "保存内容" : "保存页面", action: "saveInstagram", title: "保存当前 Instagram 内容到 Beav" }
+      bilibili: { subtitle: "Bilibili", label: pageType === "video" ? "保存视频" : "保存页面", action: "saveBilibili", title: "保存当前 Bilibili 内容到 Easel" },
+      kuaishou: { subtitle: "快手", label: pageType === "video" ? "保存视频" : "保存页面", action: "saveKuaishou", title: "保存当前快手内容到 Easel" },
+      tiktok: { subtitle: "TikTok", label: pageType === "video" ? "保存视频" : "保存页面", action: "saveTiktok", title: "保存当前 TikTok 内容到 Easel" },
+      reddit: { subtitle: "Reddit", label: pageType === "post" ? "保存帖子" : "保存页面", action: "saveReddit", title: "保存当前 Reddit 内容到 Easel" },
+      x: { subtitle: "X", label: pageType === "post" ? "保存推文" : "保存页面", action: "saveX", title: "保存当前 X 内容到 Easel" },
+      instagram: { subtitle: "Instagram", label: pageType === "post" || pageType === "video" ? "保存内容" : "保存页面", action: "saveInstagram", title: "保存当前 Instagram 内容到 Easel" }
     };
     if (platformMap[platform]) {
       const item = platformMap[platform];
       return {
         variant: platform,
-        title: "Beav 页面采集",
+        title: "Easel 页面采集",
         subtitle: item.subtitle,
         actions: [
           { label: item.label, action: item.action, primary: true, title: item.title }
@@ -841,22 +841,22 @@ ${description}
     }
     return {
       variant: "generic",
-      title: "Beav 页面采集",
+      title: "Easel 页面采集",
       subtitle: tab.hostname || "当前网页",
       actions: [
-        { label: "保存网页", action: pageInfo?.action === "save-page-auto" ? "savePageAuto" : "savePageLink", primary: true, title: "保存当前网页到 Beav" }
+        { label: "保存网页", action: pageInfo?.action === "save-page-auto" ? "savePageAuto" : "savePageLink", primary: true, title: "保存当前网页到 Easel" }
       ]
     };
   }
   function getCaptureActionMeta(action) {
     const map = {
-      save: { type: "save-xhs", pending: "保存中...", done: "已保存到 Beav" },
+      save: { type: "save-xhs", pending: "保存中...", done: "已保存到 Easel" },
       download: { type: "xhs:download-current-note", pending: "下载中...", done: "已创建下载任务" },
-      comments: { type: "xhs:collect-current-comments", pending: "采集中...", done: "评论已写入知识库" },
+      comments: { type: "xhs:collect-current-comments", pending: "采集中...", done: "评论已写入 Easel 素材库" },
       bloggerNotes: { type: "xhs:collect-blogger-notes", pending: "采集中...", done: "已采集主页笔记" },
       exportJson: { type: "xhs:export-current-note-json", pending: "导出中...", done: "已导出 JSON" },
-      savePageAuto: { type: "save-page-auto", pending: "保存中...", done: "已保存到 Beav" },
-      savePageLink: { type: "save-page-link", pending: "保存中...", done: "已保存到 Beav" },
+      savePageAuto: { type: "save-page-auto", pending: "保存中...", done: "已保存到 Easel" },
+      savePageLink: { type: "save-page-link", pending: "保存中...", done: "已保存到 Easel" },
       saveYoutube: { type: "save-youtube", pending: "保存中...", done: "已保存 YouTube 视频" },
       saveDouyin: { type: "save-douyin", pending: "保存中...", done: "已保存抖音视频" },
       saveZhihuAnswer: { type: "save-zhihu-answer", pending: "保存中...", done: "已保存知乎回答" },
@@ -872,7 +872,7 @@ ${description}
   }
   function summarizeActionResponse(response, fallback) {
     if (response?.noteId) {
-      return response.duplicate ? "知识库中已存在" : "已保存到 Beav";
+      return response.duplicate ? "Easel 素材库中已存在" : "已保存到 Easel";
     }
     if (response?.mode === "xhs-blogger-notes") {
       return `博主笔记 ${Number(response.count || 0)} 条，失败 ${Number(response.failed || 0)} 条`;
@@ -884,7 +884,7 @@ ${description}
       return `评论 ${Number(response.count || 0)} 条`;
     }
     if (/^(bilibili|kuaishou|tiktok|reddit|x|instagram)-/.test(String(response?.mode || ""))) {
-      return response.duplicate ? "知识库中已存在这条内容" : fallback;
+      return response.duplicate ? "Easel 素材库中已存在这条内容" : fallback;
     }
     return fallback || "操作完成";
   }

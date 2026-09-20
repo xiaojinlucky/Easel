@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Beav采集 → Easel（个人非商用）",
-  "description": "将网页、链接、选中文字、图片、视频和评论保存到本机 Beav 创作工作区。",
+  "description": "将网页、链接、选中文字、图片、视频和评论保存到本机 Easel 素材库（个人非商用）。",
   "version": "2.7.18.65535",
   "version_name": "2.7.18",
   "icons": {
@@ -99,14 +99,14 @@
         "default": "Ctrl+Shift+Y",
         "mac": "Command+Shift+Y"
       },
-      "description": "Open Beav browser control side panel"
+      "description": "Open Easel capture side panel"
     },
     "open-codex-side-panel": {
       "description": "Open Codex-compatible browser control side panel"
     }
   },
   "action": {
-    "default_title": "Beav",
+    "default_title": "Easel 采集",
     "default_popup": "popup.html",
     "default_icon": {
       "16": "icons/icon16.png",

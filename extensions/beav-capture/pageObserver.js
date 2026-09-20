@@ -69,8 +69,8 @@
     return {
       kind: "generic",
       action: "save-page-link",
-      label: "仅保存链接到知识库",
-      description: "当前页面可作为链接收藏保存到知识库。",
+      label: "仅保存链接到 Easel 素材库",
+      description: "当前页面可作为链接收藏保存到 Easel 素材库。",
       primaryEnabled: true,
       detected: false,
       statusText: "未检测到内容",
@@ -398,7 +398,7 @@
     return {
       kind: isVideoNote ? "xhs-video" : "xhs-image",
       action: "save-xhs",
-      label: isVideoNote ? "保存小红书视频笔记到知识库" : "保存小红书图文到知识库",
+      label: isVideoNote ? "保存小红书视频笔记到 Easel 素材库" : "保存小红书图文到 Easel 素材库",
       description: isVideoNote ? "当前页面已识别为小红书视频笔记。" : "当前页面已识别为小红书图文笔记。",
       primaryEnabled: true,
       detected: true
@@ -411,7 +411,7 @@
       return {
         kind: "wechat-article",
         action: "save-page-link",
-        label: "保存公众号文章到知识库",
+        label: "保存公众号文章到 Easel 素材库",
         description: "当前页面已识别为公众号文章，将完整保存正文、图片和排版。",
         primaryEnabled: true,
         detected: true
@@ -424,7 +424,7 @@
           kind: "zhihu-article",
           platform: "zhihu",
           action: "save-zhihu-article",
-          label: "保存知乎文章到知识库",
+          label: "保存知乎文章到 Easel 素材库",
           description: "当前页面已识别为知乎专栏文章，将保存正文和专栏信息。",
           primaryEnabled: true,
           detected: true
@@ -443,7 +443,7 @@
           kind: "zhihu-answer",
           platform: "zhihu",
           action: "save-zhihu-answer",
-          label: "保存知乎回答到知识库",
+          label: "保存知乎回答到 Easel 素材库",
           description: "当前页面已识别为知乎回答页，将保存问题和最高赞回答。",
           primaryEnabled: true,
           detected: true
@@ -466,7 +466,7 @@
       return {
         kind: "youtube",
         action: "save-youtube",
-        label: "保存YouTube视频到知识库",
+        label: "保存YouTube视频到 Easel 素材库",
         description: "当前页面已识别为 YouTube 视频页。",
         primaryEnabled: true,
         detected: true
@@ -477,7 +477,7 @@
         return {
           kind: "xhs-profile",
           action: "xhs:collect-current-blogger",
-          label: "保存小红书博主资料到知识库",
+          label: "保存小红书博主资料到 Easel 素材库",
           description: "当前页面已识别为小红书博主页。",
           primaryEnabled: true,
           detected: true
@@ -498,7 +498,7 @@
         return {
           kind: "douyin-video",
           action: "save-douyin",
-          label: "保存抖音视频到知识库",
+          label: "保存抖音视频到 Easel 素材库",
           description: "当前页面已识别为抖音视频页。",
           primaryEnabled: true,
           detected: true
@@ -517,7 +517,7 @@
         kind: isVideoPage ? "bilibili-video" : isSpacePage ? "bilibili-profile" : isSearchPage ? "bilibili-search" : "bilibili-page",
         platform: "bilibili",
         action: "save-bilibili",
-        label: isVideoPage ? "保存 Bilibili 视频页到知识库" : "保存 Bilibili 页面到知识库",
+        label: isVideoPage ? "保存 Bilibili 视频页到 Easel 素材库" : "保存 Bilibili 页面到 Easel 素材库",
         description: isVideoPage ? "当前页面已识别为 Bilibili 视频页。" : "当前页面已识别为 Bilibili 页面。",
         primaryEnabled: true,
         detected: true
@@ -529,7 +529,7 @@
         kind: isVideoPage ? "kuaishou-video" : "kuaishou-page",
         platform: "kuaishou",
         action: "save-kuaishou",
-        label: isVideoPage ? "保存快手视频页到知识库" : "保存快手页面到知识库",
+        label: isVideoPage ? "保存快手视频页到 Easel 素材库" : "保存快手页面到 Easel 素材库",
         description: isVideoPage ? "当前页面已识别为快手视频页。" : "当前页面已识别为快手页面。",
         primaryEnabled: true,
         detected: true
@@ -541,7 +541,7 @@
         kind: isVideoPage ? "tiktok-video" : "tiktok-page",
         platform: "tiktok",
         action: "save-tiktok",
-        label: isVideoPage ? "保存 TikTok 视频页到知识库" : "保存 TikTok 页面到知识库",
+        label: isVideoPage ? "保存 TikTok 视频页到 Easel 素材库" : "保存 TikTok 页面到 Easel 素材库",
         description: isVideoPage ? "当前页面已识别为 TikTok 视频页。" : "当前页面已识别为 TikTok 页面。",
         primaryEnabled: true,
         detected: true
@@ -553,7 +553,7 @@
         kind: isPostPage ? "reddit-post" : "reddit-page",
         platform: "reddit",
         action: "save-reddit",
-        label: isPostPage ? "保存 Reddit 帖子到知识库" : "保存 Reddit 页面到知识库",
+        label: isPostPage ? "保存 Reddit 帖子到 Easel 素材库" : "保存 Reddit 页面到 Easel 素材库",
         description: isPostPage ? "当前页面已识别为 Reddit 帖子。" : "当前页面已识别为 Reddit 页面。",
         primaryEnabled: true,
         detected: true
@@ -565,7 +565,7 @@
         kind: isPostPage ? "x-post" : "x-page",
         platform: "x",
         action: "save-x",
-        label: isPostPage ? "保存 X 推文到知识库" : "保存 X 页面到知识库",
+        label: isPostPage ? "保存 X 推文到 Easel 素材库" : "保存 X 页面到 Easel 素材库",
         description: isPostPage ? "当前页面已识别为 X 推文。" : "当前页面已识别为 X 页面。",
         primaryEnabled: true,
         detected: true
@@ -577,7 +577,7 @@
         kind: isPostPage ? "instagram-post" : "instagram-page",
         platform: "instagram",
         action: "save-instagram",
-        label: isPostPage ? "保存 Instagram 内容到知识库" : "保存 Instagram 页面到知识库",
+        label: isPostPage ? "保存 Instagram 内容到 Easel 素材库" : "保存 Instagram 页面到 Easel 素材库",
         description: isPostPage ? "当前页面已识别为 Instagram 内容页。" : "当前页面已识别为 Instagram 页面。",
         primaryEnabled: true,
         detected: true
@@ -677,8 +677,8 @@
         }
       </style>
 	      <div class="zone" data-visible="false" data-state="idle">
-	        <div class="eyebrow">Beav</div>
-	        <div class="title">保存图片到 Beav</div>
+	        <div class="eyebrow">Easel</div>
+	        <div class="title">保存图片到 Easel</div>
 	        <div class="meta">松手后会直接保存到素材库，并保留来源域名与原页面链接。</div>
 	      </div>
 	    `;
@@ -695,7 +695,7 @@
   function setDragZoneState(state, payload, message) {
     ensureDragDropUi();
     if (!dragOverlayHost || !dragZoneElement || !dragZoneTitleElement || !dragZoneMetaElement) return;
-    const title = normalizeText(payload?.title) || "保存图片到 Beav";
+    const title = normalizeText(payload?.title) || "保存图片到 Easel";
     dragOverlayHost.style.display = "block";
     dragZoneElement.dataset.visible = "true";
     dragZoneElement.dataset.state = state;
@@ -714,7 +714,7 @@
       dragZoneMetaElement.textContent = message || "当前图片暂时无法导入。";
       return;
     }
-    dragZoneTitleElement.textContent = "保存图片到 Beav";
+    dragZoneTitleElement.textContent = "保存图片到 Easel";
     dragZoneMetaElement.textContent = message || title;
   }
   function showDragZone(payload) {
@@ -905,9 +905,9 @@
   function summarizeActionResponse(response, fallback) {
     if (response?.noteId) {
       if (response.duplicate) {
-        return response.updated ? "知识库中已存在，已更新" : "知识库中已存在";
+        return response.updated ? "Easel 素材库中已存在，已更新" : "Easel 素材库中已存在";
       }
-      return "已保存到 Beav";
+      return "已保存到 Easel";
     }
     if (response?.mode === "xhs-link-batch") {
       return `成功 ${Number(response.count || 0)} 条，失败 ${Number(response.failed || 0)} 条`;
@@ -926,7 +926,7 @@
     }
     if (/^(bilibili|kuaishou|tiktok|reddit|x|instagram)-/.test(String(response?.mode || ""))) {
       if (response.duplicate) {
-        return response.updated ? "知识库中已存在，已更新" : "知识库中已存在";
+        return response.updated ? "Easel 素材库中已存在，已更新" : "Easel 素材库中已存在";
       }
       return fallback;
     }
@@ -967,16 +967,16 @@ ${description}
   async function runXhsDomAction(action, options = {}) {
     if (!USER_PROFILE_FEATURE_ENABLED && (action === "blogger" || action === "bloggerNotes")) return;
     const actionMap = {
-      save: { type: "save-xhs", pending: "保存中...", done: "已保存到 Beav" },
+      save: { type: "save-xhs", pending: "保存中...", done: "已保存到 Easel" },
       download: { type: "xhs:download-current-note", pending: "下载中...", done: "已创建下载任务" },
       downloadZip: { type: "xhs:download-current-note-zip", pending: "打包中...", done: "已创建压缩包下载" },
-      comments: { type: "xhs:collect-current-comments", pending: "采集中...", done: "评论已写入知识库" },
+      comments: { type: "xhs:collect-current-comments", pending: "采集中...", done: "评论已写入 Easel 素材库" },
       blogger: { type: "xhs:collect-current-blogger", pending: "采集中...", done: "已保存博主资料" },
       bloggerNotes: { type: "xhs:collect-blogger-notes", pending: "采集中...", done: "已采集主页笔记" },
       exportJson: { type: "xhs:export-current-note-json", pending: "导出中...", done: "已导出 JSON" },
       collectLink: { type: "xhs:collect-note-links", pending: "采集中...", done: "已采集" },
-      savePageAuto: { type: "save-page-auto", pending: "保存中...", done: "已保存到 Beav" },
-      savePageLink: { type: "save-page-link", pending: "保存中...", done: "已保存到 Beav" },
+      savePageAuto: { type: "save-page-auto", pending: "保存中...", done: "已保存到 Easel" },
+      savePageLink: { type: "save-page-link", pending: "保存中...", done: "已保存到 Easel" },
       saveYoutube: { type: "save-youtube", pending: "保存中...", done: "已保存 YouTube 视频" },
       saveDouyin: { type: "save-douyin", pending: "保存中...", done: "已保存抖音视频" },
       saveZhihuAnswer: { type: "save-zhihu-answer", pending: "保存中...", done: "已保存知乎回答" },
@@ -1303,7 +1303,7 @@ ${description}
     saveButton.type = "button";
     saveButton.dataset.redboxAction = "save";
     saveButton.textContent = "保存笔记";
-    saveButton.title = "保存当前小红书笔记到 Beav";
+    saveButton.title = "保存当前小红书笔记到 Easel";
     const zipButton = document.createElement("button");
     zipButton.type = "button";
     zipButton.dataset.redboxAction = "downloadZip";
@@ -1401,7 +1401,7 @@ ${description}
     status.className = "redbox-xhs-status";
     status.hidden = true;
     if (ACCOUNT_BINDING_FEATURE_ENABLED) {
-      container.append(makeXhsDomButton("保存博主", "blogger", { primary: true, statusTarget: container, title: "保存当前小红书博主资料到 Beav" }));
+      container.append(makeXhsDomButton("保存博主", "blogger", { primary: true, statusTarget: container, title: "保存当前小红书博主资料到 Easel" }));
     }
     container.append(
       makeXhsDomButton("采集博主笔记", "bloggerNotes", { primary: !ACCOUNT_BINDING_FEATURE_ENABLED, statusTarget: container, title: "采集当前博主主页全部可加载笔记" }),
@@ -1448,7 +1448,7 @@ ${description}
       button.type = "button";
       button.className = "redbox-xhs-card-btn";
       button.textContent = "采集";
-      button.title = "采集这条小红书笔记到 Beav";
+      button.title = "采集这条小红书笔记到 Easel";
       const status = document.createElement("span");
       status.className = "redbox-xhs-card-status redbox-xhs-status";
       status.hidden = true;

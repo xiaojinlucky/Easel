@@ -1525,7 +1525,7 @@
     const connectionState = classifyDesktopBridgeHandshake(handshake);
     const desktopBridgeConnected = connectionState === "connected";
     nativeStatus.currentAttempt.phase = desktopBridgeConnected ? "connected" : "desktop_bridge";
-    const connectionError = connectionState === "upgrade_required" ? "当前 Beav 版本不支持 Desktop Bridge，请升级 Beav" : connectionState === "bridge_error" ? `Beav Desktop Bridge handshake failed: ${handshake?.desktopBridge?.errorCode || "unknown"}` : desktopBridgeConnected ? "" : "Beav desktop app is not connected";
+    const connectionError = connectionState === "upgrade_required" ? "当前 Beav 版本不支持 Desktop Bridge，请刷新扩展" : connectionState === "bridge_error" ? `Beav Desktop Bridge handshake failed: ${handshake?.desktopBridge?.errorCode || "unknown"}` : desktopBridgeConnected ? "" : "Easel host is not connected; register it on the Research page";
     recordNativeTelemetry(connectionState, {
       hostName,
       handshake: true,
@@ -1561,7 +1561,7 @@
     const actualCompatibility = actual.split(".")[0];
     if (!expected || !actual || expectedCompatibility !== actualCompatibility) {
       throw new Error(
-        `Native host major version mismatch: extension ${expected || "unknown"}, host ${actual || "unknown"}. Restart Beav and reload the extension.`
+        `Native host major version mismatch: extension ${expected || "unknown"}, host ${actual || "unknown"}. Register the Easel host on the Research page and reload the extension.`
       );
     }
     return true;
@@ -1848,7 +1848,7 @@
         }
         await setNativeStatus(connectionState, {
           handshake,
-          error: connectionState === "upgrade_required" ? "当前 Beav 版本不支持 Desktop Bridge，请升级 Beav" : connectionState === "bridge_error" ? `Beav Desktop Bridge handshake failed: ${handshake?.desktopBridge?.errorCode || "unknown"}` : "Beav desktop app is not connected",
+          error: connectionState === "upgrade_required" ? "当前 Beav 版本不支持 Desktop Bridge，请刷新扩展" : connectionState === "bridge_error" ? `Beav Desktop Bridge handshake failed: ${handshake?.desktopBridge?.errorCode || "unknown"}` : "Easel host is not connected; register it on the Research page",
           errorCode: connectionState === "upgrade_required" ? "NATIVE_HOST_UPGRADE_REQUIRED" : connectionState === "bridge_error" ? String(handshake?.desktopBridge?.errorCode || "DESKTOP_BRIDGE_ERROR") : "APP_NOT_RUNNING",
           nextRetryMs: BRIDGE_HEALTH_CHECK_DELAY_MS
         });
@@ -11034,12 +11034,12 @@ ${page.text || htmlToText(page.html)}
     const deliverable = finalized.filter((item) => item.status === "deliverable").map((item) => item.tabId);
     if (handoff.length) {
       const groupId = await chrome.tabs.group({ tabIds: handoff });
-      await chrome.tabGroups.update(groupId, { title: "Beav Handoff", color: "blue" }).catch(() => {
+      await chrome.tabGroups.update(groupId, { title: "Easel Handoff", color: "blue" }).catch(() => {
       });
     }
     if (deliverable.length) {
       const groupId = await chrome.tabs.group({ tabIds: deliverable });
-      await chrome.tabGroups.update(groupId, { title: "Beav Deliverable", color: "green" }).catch(() => {
+      await chrome.tabGroups.update(groupId, { title: "Easel Deliverable", color: "green" }).catch(() => {
       });
     }
   }
@@ -11361,7 +11361,7 @@ ${page.text || htmlToText(page.html)}
     return {
       visible: true,
       state: "active",
-      label: "Beav 控制中",
+      label: "Easel 控制中",
       sessionName: String(session.name || "").trim(),
       sessionId: lease.sessionId || "",
       turnId: lease.turnId || "",
@@ -14218,7 +14218,7 @@ ${page.text || htmlToText(page.html)}
   async function resolveApiBase(force = false) {
     void force;
     cachedBaseUrl = null;
-    throw new Error("Beav browser-control HTTP bridge has been retired; use Native Messaging");
+    throw new Error("Easel capture HTTP bridge has been retired; use Native Messaging");
   }
   async function registerPlugin(force) {
     const status = await connectNativeTransport2({ force: force === true });
@@ -18274,8 +18274,8 @@ ${text}`.slice(0, 6e3);
     return {
       kind: "generic",
       action: "save-page-link",
-      label: "仅保存链接到知识库",
-      description: "当前页面可作为链接收藏保存到知识库。",
+      label: "仅保存链接到 Easel 素材库",
+      description: "当前页面可作为链接收藏保存到 Easel 素材库。",
       primaryEnabled: true,
       detected: false,
       statusText: "未检测到内容",
@@ -18286,25 +18286,25 @@ ${text}`.slice(0, 6e3);
     chrome.contextMenus.removeAll(() => {
       chrome.contextMenus.create({
         id: MENU_ROOT_ID,
-        title: "保存到 Beav",
+        title: "保存到 Easel",
         contexts: ["page", "selection", "link", "image", "video"]
       });
       chrome.contextMenus.create({
         id: MENU_PAGE_ID,
         parentId: MENU_ROOT_ID,
-        title: "保存当前页面内容到知识库",
+        title: "保存当前页面内容到 Easel 素材库",
         contexts: ["page"]
       });
       chrome.contextMenus.create({
         id: MENU_SELECTION_ID,
         parentId: MENU_ROOT_ID,
-        title: "保存选中文字到知识库",
+        title: "保存选中文字到 Easel 素材库",
         contexts: ["selection"]
       });
       chrome.contextMenus.create({
         id: MENU_LINK_ID,
         parentId: MENU_ROOT_ID,
-        title: "保存当前链接到知识库",
+        title: "保存当前链接到 Easel 素材库",
         contexts: ["link"]
       });
       chrome.contextMenus.create({
@@ -18316,7 +18316,7 @@ ${text}`.slice(0, 6e3);
       chrome.contextMenus.create({
         id: MENU_VIDEO_ID,
         parentId: MENU_ROOT_ID,
-        title: "保存当前视频到知识库",
+        title: "保存当前视频到 Easel 素材库",
         contexts: ["video"]
       });
     });
@@ -18709,7 +18709,7 @@ ${text}`.slice(0, 6e3);
       return {
         kind: "wechat-article",
         action: "save-page-link",
-        label: "保存公众号文章到知识库",
+        label: "保存公众号文章到 Easel 素材库",
         description: "当前页面已识别为公众号文章，将完整保存正文、图片和排版。",
         detected: true
       };
@@ -18721,7 +18721,7 @@ ${text}`.slice(0, 6e3);
           kind: "zhihu-article",
           platform: "zhihu",
           action: "save-zhihu-article",
-          label: "保存知乎文章到知识库",
+          label: "保存知乎文章到 Easel 素材库",
           description: "当前页面已识别为知乎专栏文章，将保存正文和专栏信息。",
           detected: true
         };
@@ -18739,7 +18739,7 @@ ${text}`.slice(0, 6e3);
           kind: "zhihu-answer",
           platform: "zhihu",
           action: "save-zhihu-answer",
-          label: "保存知乎回答到知识库",
+          label: "保存知乎回答到 Easel 素材库",
           description: "当前页面已识别为知乎回答页，将保存问题和最高赞回答。",
           detected: true
         };
@@ -18756,7 +18756,7 @@ ${text}`.slice(0, 6e3);
         return {
           kind: "youtube",
           action: "save-youtube",
-          label: "保存YouTube视频到知识库",
+          label: "保存YouTube视频到 Easel 素材库",
           description: "当前页面已识别为 YouTube 视频页。",
           detected: true
         };
@@ -18771,7 +18771,7 @@ ${text}`.slice(0, 6e3);
         return {
           kind: "xhs-profile",
           action: "xhs:collect-current-blogger",
-          label: "保存小红书博主资料到知识库",
+          label: "保存小红书博主资料到 Easel 素材库",
           description: "当前页面已识别为小红书博主页。",
           detected: true
         };
@@ -18780,7 +18780,7 @@ ${text}`.slice(0, 6e3);
         return {
           kind: "xhs-note",
           action: "save-xhs",
-          label: "保存小红书笔记到知识库",
+          label: "保存小红书笔记到 Easel 素材库",
           description: "当前页面已识别为小红书笔记页。",
           detected: true
         };
@@ -18796,7 +18796,7 @@ ${text}`.slice(0, 6e3);
           kind: "douyin-video",
           platform: "douyin",
           action: "save-douyin",
-          label: "保存抖音视频到知识库",
+          label: "保存抖音视频到 Easel 素材库",
           description: "当前页面已识别为抖音视频页。",
           detected: true
         };
@@ -18815,7 +18815,7 @@ ${text}`.slice(0, 6e3);
         kind: isVideoPage ? "bilibili-video" : isSpacePage ? "bilibili-profile" : isSearchPage ? "bilibili-search" : "bilibili-page",
         platform: "bilibili",
         action: "save-bilibili",
-        label: isVideoPage ? "保存 Bilibili 视频页到知识库" : "保存 Bilibili 页面到知识库",
+        label: isVideoPage ? "保存 Bilibili 视频页到 Easel 素材库" : "保存 Bilibili 页面到 Easel 素材库",
         description: isVideoPage ? "当前页面已识别为 Bilibili 视频页。" : "当前页面已识别为 Bilibili 页面。",
         detected: true
       };
@@ -18826,7 +18826,7 @@ ${text}`.slice(0, 6e3);
         kind: isVideoPage ? "kuaishou-video" : "kuaishou-page",
         platform: "kuaishou",
         action: "save-kuaishou",
-        label: isVideoPage ? "保存快手视频页到知识库" : "保存快手页面到知识库",
+        label: isVideoPage ? "保存快手视频页到 Easel 素材库" : "保存快手页面到 Easel 素材库",
         description: isVideoPage ? "当前页面已识别为快手视频页。" : "当前页面已识别为快手页面。",
         detected: true
       };
@@ -18837,7 +18837,7 @@ ${text}`.slice(0, 6e3);
         kind: isVideoPage ? "tiktok-video" : "tiktok-page",
         platform: "tiktok",
         action: "save-tiktok",
-        label: isVideoPage ? "保存 TikTok 视频页到知识库" : "保存 TikTok 页面到知识库",
+        label: isVideoPage ? "保存 TikTok 视频页到 Easel 素材库" : "保存 TikTok 页面到 Easel 素材库",
         description: isVideoPage ? "当前页面已识别为 TikTok 视频页。" : "当前页面已识别为 TikTok 页面。",
         detected: true
       };
@@ -18848,7 +18848,7 @@ ${text}`.slice(0, 6e3);
         kind: isPostPage ? "reddit-post" : "reddit-page",
         platform: "reddit",
         action: "save-reddit",
-        label: isPostPage ? "保存 Reddit 帖子到知识库" : "保存 Reddit 页面到知识库",
+        label: isPostPage ? "保存 Reddit 帖子到 Easel 素材库" : "保存 Reddit 页面到 Easel 素材库",
         description: isPostPage ? "当前页面已识别为 Reddit 帖子。" : "当前页面已识别为 Reddit 页面。",
         detected: true
       };
@@ -18859,7 +18859,7 @@ ${text}`.slice(0, 6e3);
         kind: isPostPage ? "x-post" : "x-page",
         platform: "x",
         action: "save-x",
-        label: isPostPage ? "保存 X 推文到知识库" : "保存 X 页面到知识库",
+        label: isPostPage ? "保存 X 推文到 Easel 素材库" : "保存 X 页面到 Easel 素材库",
         description: isPostPage ? "当前页面已识别为 X 推文。" : "当前页面已识别为 X 页面。",
         detected: true
       };
@@ -18870,7 +18870,7 @@ ${text}`.slice(0, 6e3);
         kind: isPostPage ? "instagram-post" : "instagram-page",
         platform: "instagram",
         action: "save-instagram",
-        label: isPostPage ? "保存 Instagram 内容到知识库" : "保存 Instagram 页面到知识库",
+        label: isPostPage ? "保存 Instagram 内容到 Easel 素材库" : "保存 Instagram 页面到 Easel 素材库",
         description: isPostPage ? "当前页面已识别为 Instagram 内容页。" : "当前页面已识别为 Instagram 页面。",
         detected: true
       };
@@ -19736,13 +19736,13 @@ ${text}`.slice(0, 6e3);
       return `评论 ${Number(result.count || 0)} 条`;
     }
     if (result?.mode === "xhs-blogger") {
-      return "博主资料已写入知识库";
+      return "博主资料已写入 Easel 素材库";
     }
     if (/^(bilibili|kuaishou|tiktok|reddit|x|instagram)-/.test(String(result?.mode || ""))) {
-      return result.duplicate ? "重复内容已跳过" : "平台内容已写入知识库";
+      return result.duplicate ? "重复内容已跳过" : "平台内容已写入 Easel 素材库";
     }
     if (result?.noteId) {
-      return result.duplicate ? "重复内容已跳过" : "已写入知识库";
+      return result.duplicate ? "重复内容已跳过" : "已写入 Easel 素材库";
     }
     return "任务已完成";
   }
@@ -20438,7 +20438,7 @@ ${text}`.slice(0, 6e3);
     const host = await requestNativeHost("ping", {}, 1500);
     const bridge = host?.desktopBridge && typeof host.desktopBridge === "object" ? host.desktopBridge : null;
     if (!bridge?.connected) {
-      const error = new Error("Beav desktop bridge is not connected");
+      const error = new Error("Easel host is not connected");
       error.code = normalizeText(bridge?.errorCode) || (bridge?.availability === "bridge_error" ? "DESKTOP_BRIDGE_ERROR" : "APP_BRIDGE_UNAVAILABLE");
       error.phase = normalizeText(bridge?.phase) || "bridge";
       error.retryable = true;
@@ -22909,7 +22909,7 @@ ${payload.images.join("\n")}` : ""
       title: `评论采集：${normalizeText(payload?.title) || "小红书笔记"}`,
       status: "completed",
       count: comments.length,
-      summary: `已采集 ${comments.length} 条评论并写入知识库`,
+      summary: `已采集 ${comments.length} 条评论并写入 Easel 素材库`,
       payload: {
         source: payload?.source || "",
         noteId: payload?.noteId || "",
@@ -26056,8 +26056,8 @@ ${text}`;
       return {
         kind: "generic",
         action: "save-page-link",
-        label: "仅保存链接到知识库",
-        description: "当前页面可作为链接收藏保存到知识库。",
+        label: "仅保存链接到 Easel 素材库",
+        description: "当前页面可作为链接收藏保存到 Easel 素材库。",
         primaryEnabled: true,
         detected: false,
         statusText: "未检测到内容",
@@ -26072,7 +26072,7 @@ ${text}`;
         return {
           kind: "youtube",
           action: "save-youtube",
-          label: "保存YouTube视频到知识库",
+          label: "保存YouTube视频到 Easel 素材库",
           description: "当前页面已识别为 YouTube 视频页。",
           detected: true
         };
@@ -26312,7 +26312,7 @@ ${text}`;
         return {
           kind: isVideoNote ? "xhs-video" : "xhs-image",
           action: "save-xhs",
-          label: isVideoNote ? "保存小红书视频笔记到知识库" : "保存小红书图文到知识库",
+          label: isVideoNote ? "保存小红书视频笔记到 Easel 素材库" : "保存小红书图文到 Easel 素材库",
           description: isVideoNote ? "当前页面已识别为小红书视频笔记。" : "当前页面已识别为小红书图文笔记。",
           detected: true
         };
@@ -26322,7 +26322,7 @@ ${text}`;
         return {
           kind: "xhs-article",
           action: "save-xhs",
-          label: "保存小红书图文到知识库",
+          label: "保存小红书图文到 Easel 素材库",
           description: "当前页面已识别为小红书图文内容页。",
           detected: true
         };
@@ -26356,7 +26356,7 @@ ${text}`;
           kind: "douyin-video",
           platform: "douyin",
           action: "save-douyin",
-          label: "保存抖音视频到知识库",
+          label: "保存抖音视频到 Easel 素材库",
           description: "当前页面已识别为抖音视频页。",
           detected: true
         };
@@ -26376,7 +26376,7 @@ ${text}`;
         kind: isVideoPage ? "bilibili-video" : isSpacePage ? "bilibili-profile" : isSearchPage ? "bilibili-search" : "bilibili-page",
         platform: "bilibili",
         action: "save-bilibili",
-        label: isVideoPage ? "保存 Bilibili 视频页到知识库" : "保存 Bilibili 页面到知识库",
+        label: isVideoPage ? "保存 Bilibili 视频页到 Easel 素材库" : "保存 Bilibili 页面到 Easel 素材库",
         description: isVideoPage ? "当前页面已识别为 Bilibili 视频页。" : "当前页面已识别为 Bilibili 页面。",
         detected: true
       };
@@ -26388,7 +26388,7 @@ ${text}`;
         kind: isVideoPage ? "kuaishou-video" : "kuaishou-page",
         platform: "kuaishou",
         action: "save-kuaishou",
-        label: isVideoPage ? "保存快手视频页到知识库" : "保存快手页面到知识库",
+        label: isVideoPage ? "保存快手视频页到 Easel 素材库" : "保存快手页面到 Easel 素材库",
         description: isVideoPage ? "当前页面已识别为快手视频页。" : "当前页面已识别为快手页面。",
         detected: true
       };
@@ -26400,7 +26400,7 @@ ${text}`;
         kind: isVideoPage ? "tiktok-video" : "tiktok-page",
         platform: "tiktok",
         action: "save-tiktok",
-        label: isVideoPage ? "保存 TikTok 视频页到知识库" : "保存 TikTok 页面到知识库",
+        label: isVideoPage ? "保存 TikTok 视频页到 Easel 素材库" : "保存 TikTok 页面到 Easel 素材库",
         description: isVideoPage ? "当前页面已识别为 TikTok 视频页。" : "当前页面已识别为 TikTok 页面。",
         detected: true
       };
@@ -26412,7 +26412,7 @@ ${text}`;
         kind: isPostPage ? "reddit-post" : "reddit-page",
         platform: "reddit",
         action: "save-reddit",
-        label: isPostPage ? "保存 Reddit 帖子到知识库" : "保存 Reddit 页面到知识库",
+        label: isPostPage ? "保存 Reddit 帖子到 Easel 素材库" : "保存 Reddit 页面到 Easel 素材库",
         description: isPostPage ? "当前页面已识别为 Reddit 帖子。" : "当前页面已识别为 Reddit 页面。",
         detected: true
       };
@@ -26424,7 +26424,7 @@ ${text}`;
         kind: isPostPage ? "x-post" : "x-page",
         platform: "x",
         action: "save-x",
-        label: isPostPage ? "保存 X 推文到知识库" : "保存 X 页面到知识库",
+        label: isPostPage ? "保存 X 推文到 Easel 素材库" : "保存 X 页面到 Easel 素材库",
         description: isPostPage ? "当前页面已识别为 X 推文。" : "当前页面已识别为 X 页面。",
         detected: true
       };
@@ -26436,7 +26436,7 @@ ${text}`;
         kind: isPostPage ? "instagram-post" : "instagram-page",
         platform: "instagram",
         action: "save-instagram",
-        label: isPostPage ? "保存 Instagram 内容到知识库" : "保存 Instagram 页面到知识库",
+        label: isPostPage ? "保存 Instagram 内容到 Easel 素材库" : "保存 Instagram 页面到 Easel 素材库",
         description: isPostPage ? "当前页面已识别为 Instagram 内容页。" : "当前页面已识别为 Instagram 页面。",
         detected: true
       };
@@ -26445,7 +26445,7 @@ ${text}`;
       return {
         kind: "wechat-article",
         action: "save-page-link",
-        label: "保存公众号文章到知识库",
+        label: "保存公众号文章到 Easel 素材库",
         description: "当前页面已识别为公众号文章，将完整保存正文、图片和排版。",
         detected: true
       };
@@ -26456,8 +26456,8 @@ ${text}`;
       return {
         kind: "link-article",
         action: "save-page-link",
-        label: "保存链接文章到知识库",
-        description: "将提取正文、来源和封面保存到知识库。",
+        label: "保存链接文章到 Easel 素材库",
+        description: "将提取正文、来源和封面保存到 Easel 素材库。",
         detected: true
       };
     }
