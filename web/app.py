@@ -1961,9 +1961,7 @@ async def api_media(path: str):
     return FileResponse(full)
 
 
-# 系统数据目录/文件——不允许从内容库删除（删了会丢登录态/日历/发布记录）
-PROTECTED_OUTPUTS = {"_login", "_analytics", "_schedule.json", "_ideas.json",
-                     "_publish", "_publish.log"}
+# 系统数据：顶层以 _ 或 . 开头，或 analytics。白名单会漏掉 _sessions / _profile_build。
 UPLOAD_EXTS = IMAGE_EXTS | VIDEO_EXTS | {
     ".pdf", ".txt", ".md", ".markdown", ".csv", ".json", ".srt", ".vtt",
     ".docx", ".doc", ".xlsx", ".xls", ".pptx", ".ppt", ".mp3", ".wav", ".m4a"}
@@ -2002,12 +2000,12 @@ def _is_protected(full: Path) -> bool:
         rel = full.relative_to(OUTPUTS_DIR.resolve())
     except ValueError:
         return True
-    return bool(rel.parts) and rel.parts[0] in PROTECTED_OUTPUTS
+    return (not rel.parts) or rel.parts[0].startswith(('_', '.')) or rel.parts[0] in SYSTEM_TOPLEVEL_DIRS
 
 
 @app.delete("/api/output/{path:path}")
 async def api_output_delete(path: str):
-    """删除内容库里的单个文件或整个项目目录。系统数据（_login/_analytics/日历/发布记录）受保护。"""
+    """删除内容库里的单个文件或整个项目目录。_sessions/_login 等系统顶层不可删。"""
     full = _safe_output_target(path)
     if _is_protected(full):
         raise HTTPException(403, '系统数据受保护，不可从内容库删除')
