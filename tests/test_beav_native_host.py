@@ -1,6 +1,8 @@
 import importlib.util
 from pathlib import Path
 
+from easel import research  # noqa: E402  （宿主模块导入时已把仓库根加入 sys.path）
+
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location(
     'beav_native_host', ROOT / 'scripts' / 'beav_native_host.py'
@@ -99,3 +101,111 @@ def test_zhihu_answer_uses_nested_text():
     })
     assert '回答正文' in entry['text']
     assert entry['author'] == '答主'
+
+
+def _isolate(tmp_path, monkeypatch):
+    monkeypatch.setattr(research, 'DB', tmp_path / 'research.sqlite')
+    monkeypatch.setattr(research, 'ROOT', tmp_path)
+    monkeypatch.setattr(research, 'ocr_local_images', lambda rel: '')
+
+
+def test_ingest_receipt_created_then_duplicate(tmp_path, monkeypatch):
+    _isolate(tmp_path, monkeypatch)
+    payload = {'payload': {
+        'source': {'sourceUrl': 'https://www.xiaohongshu.com/explore/abc', 'externalId': 'note-1'},
+        'note': {'title': '幂等测试', 'text': '同样的正文'},
+    }}
+    first = handle('knowledge.ingestXhsEntryV2', payload)
+    assert first['created'] is True and first['duplicate'] is False
+    assert first['storageStatus'] == 'stored' and first['readBack'] is True
+    second = handle('knowledge.ingestXhsEntryV2', payload)
+    assert second['id'] == first['id']
+    assert second['duplicate'] is True and second['created'] is False
+    row = research.get_source(first['id'])
+    assert row['content'] == '同样的正文'
+
+
+def test_operation_id_replays_receipt(tmp_path, monkeypatch):
+    _isolate(tmp_path, monkeypatch)
+    params = {
+        'operationId': 'op-42',
+        'payload': {
+            'source': {'sourceUrl': 'https://www.zhihu.com/question/9/answer/8'},
+            'answer': {'text': '只应落库一次', 'author': '甲'},
+        },
+    }
+    first = handle('knowledge.ingestZhihuAnswer', params)
+    second = handle('knowledge.ingestZhihuAnswer', params)
+    assert second['replayed'] is True and second['id'] == first['id']
+    with research.connection() as db:
+        assert db.execute("SELECT count(*) FROM sources WHERE state='saved'").fetchone()[0] == 1
+
+
+def test_data_images_are_decoded_not_stored(tmp_path, monkeypatch):
+    _isolate(tmp_path, monkeypatch)
+    tiny = 'data:image/png;base64,AAAA'
+    payload = {'payload': {
+        'source': {'sourceUrl': 'https://www.xiaohongshu.com/explore/img1'},
+        'note': {'title': '内联图', 'text': '短', 'assets': {'coverUrl': tiny, 'imageUrls': [tiny]}},
+    }}
+    receipt = handle('knowledge.ingestXhsEntryV2', payload)
+    row = research.get_source(receipt['id'])
+    local_images = row['extra'].get('local_images') or []
+    assert local_images and all((tmp_path / 'outputs' / p).is_file() for p in local_images)
+    assert 'data_images' not in row['extra']
+    assert 'data:image' not in row['content']
+    assert 'data:image' not in (row['extra_json'] or '')
+
+
+def test_video_url_and_transcribe_task_extracted():
+    entry = mod.extract_entry('knowledge.ingestEntry', {'payload': {
+        'source': {'sourceUrl': 'https://www.bilibili.com/video/BV1xx'},
+        'content': {'title': '一个视频', 'text': '简介'},
+        'assets': {'videoUrl': 'https://example.com/stream.m4s'},
+        'options': {'transcribe': True},
+    }})
+    assert entry['extra']['video_url'].endswith('stream.m4s')
+    assert entry['extra']['pending_tasks'] == ['transcribe']
+    assert entry['platform'] == '哔哩哔哩'
+
+
+def test_kind_and_platform_normalized():
+    xhs = mod.extract_entry('knowledge.ingestXhsEntryV2', {'payload': {
+        'source': {'sourceUrl': 'https://www.xiaohongshu.com/explore/a'},
+        'note': {'title': 't', 'text': 'x'},
+    }})
+    assert xhs['kind'] == 'redbook-note' and xhs['platform'] == '小红书'
+    zhihu = mod.extract_entry('knowledge.ingestZhihuArticle', {'payload': {
+        'source': {'sourceUrl': 'https://zhuanlan.zhihu.com/p/123'},
+        'article': {'text': '文'},
+    }})
+    assert zhihu['kind'] == 'zhihu-article' and zhihu['platform'] == '知乎'
+
+
+def test_media_assets_text_never_leaks_data_urls():
+    entry = mod.extract_entry('knowledge.ingestMediaAssets', {'payload': {
+        'source': {'sourceUrl': 'https://www.xiaohongshu.com/explore/m1'},
+        'items': [{'source': 'data:image/png;base64,AAAA', 'title': '图'}],
+    }})
+    assert not entry['text'].startswith('data:')
+    assert entry['extra']['data_images'] == ['data:image/png;base64,AAAA']
+    assert entry['extra']['image_urls'] == []
+
+
+def test_desktop_health_reports_real_counts(tmp_path, monkeypatch):
+    _isolate(tmp_path, monkeypatch)
+    handle('knowledge.ingestZhihuAnswer', {'payload': {
+        'source': {'sourceUrl': 'https://www.zhihu.com/question/5/answer/6'},
+        'answer': {'text': '一条素材'},
+    }})
+    result = handle('desktop.health', {})
+    counts = result['knowledge']['counts']
+    assert counts['saved'] == 1
+    assert counts['kinds'].get('zhihu-answer') == 1
+    assert counts['platforms'].get('知乎') == 1
+
+
+def test_desktop_context_reports_ready_state():
+    context = handle('desktop.context', {})
+    assert context['initialization'] == {'ready': True, 'state': 'ready'}
+    assert context['ingest']['allowed'] is True

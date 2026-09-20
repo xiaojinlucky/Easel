@@ -1,4 +1,5 @@
 """A local collection adapter: CloakBrowser + Baoyu's maintained reader + Easel assets."""
+import base64
 import hashlib
 import ipaddress
 import json
@@ -46,6 +47,7 @@ def connection() -> sqlite3.Connection:
     db.execute('CREATE TABLE IF NOT EXISTS visits (platform TEXT, at REAL)')
     db.execute('CREATE TABLE IF NOT EXISTS blocked (platform TEXT PRIMARY KEY, reason TEXT, at REAL)')
     db.execute('CREATE TABLE IF NOT EXISTS cooldowns (platform TEXT PRIMARY KEY, next_at REAL)')
+    db.execute('CREATE TABLE IF NOT EXISTS operations (operation_id TEXT PRIMARY KEY, receipt TEXT, at REAL)')
     existing = {row[1] for row in db.execute('PRAGMA table_info(sources)').fetchall()}
     for column, decl in (
         ('author', 'TEXT NOT NULL DEFAULT \'\''),
@@ -112,7 +114,8 @@ def get_source(identifier: str) -> dict:
 
 
 def save_source(url: str, title: str, platform: str, topic: str, content: str, method: str = 'manual', state: str = 'saved', error: str = '', author: str = '', kind: str = '', cover_url: str = '', extra: dict | None = None) -> dict:
-    extra = extra or {}
+    extra = dict(extra or {})
+    data_images = [str(item) for item in (extra.pop('data_images', None) or []) if str(item).strip()]
     external_id = str(extra.get('external_id') or '').strip()
     if method == 'FreshRSS':
         identity = 'rss\n' + url
@@ -137,7 +140,7 @@ def save_source(url: str, title: str, platform: str, topic: str, content: str, m
             if previous:
                 error = '刷新失败，保留上次素材：' + error
                 db.execute('UPDATE sources SET error=? WHERE id=?', (error, identifier))
-                return {**dict(previous), 'error': error, 'refresh_failed': True}
+                return {**dict(previous), 'error': error, 'refresh_failed': True, 'save_status': 'preserved'}
     asset_path = ''
     captured_at = time.time()
     if state == 'saved':
@@ -152,6 +155,7 @@ def save_source(url: str, title: str, platform: str, topic: str, content: str, m
         if cover_url:
             header += f'封面：{cover_url}\n'
         local_images = materialize_images(identifier, ([cover_url] if cover_url else []) + list(images))
+        local_images += materialize_data_images(identifier, data_images)
         extra['local_images'] = local_images
         ocr_text = ocr_local_images(local_images) if local_images and len(str(content or '')) < 800 else ''
         if ocr_text:
@@ -167,6 +171,14 @@ def save_source(url: str, title: str, platform: str, topic: str, content: str, m
         header += '\n---\n\n'
         target.write_text(header + content, encoding='utf-8')
         asset_path = target.relative_to(ROOT / 'outputs').as_posix()
+    save_status = 'created'
+    if state == 'saved':
+        with connection() as db:
+            earlier = db.execute("SELECT content,title FROM sources WHERE id=? AND state='saved'", (identifier,)).fetchone()
+        if earlier:
+            same_content = (earlier['content'] or '') == content
+            same_title = (earlier['title'] or '') == title[:500]
+            save_status = 'unchanged' if same_content and same_title else 'updated'
     extra_json = json.dumps(extra, ensure_ascii=False) if extra else ''
     with connection() as db:
         db.execute(
@@ -178,7 +190,9 @@ def save_source(url: str, title: str, platform: str, topic: str, content: str, m
             'extra_json=excluded.extra_json',
             (identifier, url, title[:500], platform, topic, content, state, error, captured_at, asset_path, method, author, kind, cover_url, extra_json),
         )
-    return get_source(identifier)
+    result = get_source(identifier)
+    result['save_status'] = save_status
+    return result
 
 
 def _public_http_url(url: str) -> bool:
@@ -279,6 +293,68 @@ def materialize_images(identifier: str, urls: list[str]) -> list[str]:
         except (OSError, ValueError):
             continue
     return saved
+
+
+def materialize_data_images(identifier: str, items: list[str]) -> list[str]:
+    """把插件抓到的 base64 内联图片解码落盘，与 materialize_images 同等上限。"""
+    folder = ROOT / 'outputs' / '研究素材' / identifier
+    saved: list[str] = []
+    for index, raw in enumerate(items):
+        if len(saved) >= 8:
+            break
+        url = str(raw or '').strip()
+        header, _, blob = url.partition(',')
+        if not header.startswith('data:image/') or not header.endswith(';base64'):
+            continue
+        suffix = {'png': '.png', 'webp': '.webp', 'gif': '.gif'}.get(
+            header[len('data:image/'):].split(';')[0].lower(), '.jpg')
+        try:
+            data = base64.b64decode(blob, validate=False)
+        except ValueError:
+            continue
+        if not data or len(data) > 2_000_000:
+            continue
+        target = folder / f'inline{index:02d}{suffix}'
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+            saved.append(target.relative_to(ROOT / 'outputs').as_posix())
+        except OSError:
+            continue
+    return saved
+
+
+def knowledge_counts() -> dict:
+    """素材库真实统计，供 Native Host desktop.health 上报。"""
+    with connection() as db:
+        saved = db.execute("SELECT count(*) FROM sources WHERE state='saved'").fetchone()[0]
+        kinds = {str(row[0] or ''): row[1] for row in db.execute(
+            "SELECT kind,count(*) FROM sources WHERE state='saved' GROUP BY kind")}
+        platforms = {str(row[0] or ''): row[1] for row in db.execute(
+            "SELECT platform,count(*) FROM sources WHERE state='saved' GROUP BY platform")}
+    return {'saved': saved, 'total': saved, 'kinds': kinds, 'platforms': platforms}
+
+
+def get_operation(operation_id: str) -> dict | None:
+    if not operation_id:
+        return None
+    with connection() as db:
+        row = db.execute('SELECT receipt FROM operations WHERE operation_id=?', (operation_id,)).fetchone()
+    if row is None:
+        return None
+    try:
+        receipt = json.loads(row['receipt'])
+    except json.JSONDecodeError:
+        return None
+    return receipt if isinstance(receipt, dict) else None
+
+
+def put_operation(operation_id: str, receipt: dict) -> None:
+    if not operation_id:
+        return
+    with connection() as db:
+        db.execute('INSERT OR REPLACE INTO operations (operation_id,receipt,at) VALUES (?,?,?)',
+                   (operation_id[:128], json.dumps(receipt, ensure_ascii=False), time.time()))
 
 
 def collection_status() -> dict:
