@@ -42,17 +42,24 @@ def test_service_worker_checks_native_connect_last_error():
     text = (ROOT / "extensions" / "beav-capture" / "background.js").read_text(encoding="utf-8")
     assert "chrome.runtime.connectNative(hostName)" in text
     assert "chrome.runtime.lastError?.message" in text
+    assert "await connectNativeTransport2({ silent: true })" not in text
     assert "if (!chrome.history?.search)" in text
     assert "if (!chrome.bookmarks)" in text
     assert "chrome.webNavigation?.getAllFrames" in text
+    assert 'pluginWarn("healthcheck-failed"' in text
+    assert 'pluginError("healthcheck-failed"' not in text
 
 
-def test_native_host_installer_uses_ascii_localappdata():
+def test_native_host_installer_uses_ascii_exe_launcher():
     text = (ROOT / "scripts" / "install_beav_native_host.ps1").read_text(encoding="utf-8")
     assert r"easel-native-host" in text
     assert "LOCALAPPDATA" in text
     assert "Test-AsciiPath" in text
     assert "com.redbox.browser_control" in text
+    assert "host.exe" in text
+    assert "beav_native_host_stub.go" in text
     assert r".runtime\beav-native-host.cmd" not in text
     assert "UTF8Encoding]::new($false)" in text
-    assert "Set-Content -LiteralPath (Join-Path $hostDir 'easel-root.txt')" not in text
+    stub = (ROOT / "scripts" / "beav_native_host_stub.go").read_text(encoding="utf-8")
+    assert "cmd.Stdin = os.Stdin" in stub
+    assert "cmd.Stdout = os.Stdout" in stub

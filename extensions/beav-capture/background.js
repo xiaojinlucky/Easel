@@ -1653,6 +1653,10 @@
   }
   async function requestNativeHost(method, params = {}, timeoutMs = 12e3) {
     if (!nativePort) {
+      await connectNativeTransport({ silent: true }).catch(() => {
+      });
+    }
+    if (!nativePort) {
       const cause = nativeStatus.lastFailure;
       const details = {
         nativeState: nativeStatus.state,
@@ -14148,7 +14152,7 @@ ${page.text || htmlToText(page.html)}
     initializationPhase = "restore_native_status";
     await restoreNativeStatus();
     initializationPhase = "native_connect";
-    await connectNativeTransport2({ silent: true }).catch(() => {
+    await clearNativeReconnectAlarm().catch(() => {
     });
     initializationPhase = "restore_browser_observers";
     lastClientHeartbeatState = await getBrowserClientHeartbeatState().catch(() => null);
@@ -20418,7 +20422,7 @@ ${text}`.slice(0, 6e3);
       const nativeStatus3 = getNativeStatus();
       const code = normalizeText(error?.code);
       const causeCode = code === "NATIVE_TRANSPORT_DISCONNECTED" ? normalizeText(error?.details?.causeCode) || nativeStatus3.errorCode || code : code || "NATIVE_REQUEST_FAILED";
-      pluginError("healthcheck-failed", {
+      pluginWarn("healthcheck-failed", {
         error: describeError7(error),
         code: causeCode,
         phase: error?.phase || "native_messaging",
