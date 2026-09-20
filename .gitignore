@@ -82,3 +82,6 @@ skill-test/
 
 # 公众号发布器用户凭证配置（含 AppID/AppSecret），只提交 .example 模板
 skills/openclaw/skill-wechat-publisher/wechat-publisher.yaml
+
+# 素材库导出的知识库目录（Beav 式布局，本机产物）
+knowledge/

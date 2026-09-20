@@ -4,12 +4,12 @@ type Source = {
   id: string; url: string; title: string; platform: string; topic: string;
   content?: string; excerpt?: string; state: string; error: string; captured_at: number;
   method: string; cached?: boolean; author?: string; kind?: string; cover_url?: string;
-  tags?: string[]; pinned?: number; save_status?: string;
-  extra?: { image_urls?: string[]; local_images?: string[]; comments_text?: string; ocr_text?: string; likes?: number; collects?: number; comments?: number; tags?: string[]; pending_tasks?: string[] };
+  tags?: string[]; pinned?: number; save_status?: string; summary?: string;
+  extra?: { image_urls?: string[]; local_images?: string[]; comments_text?: string; ocr_text?: string; likes?: number; collects?: number; comments?: number; tags?: string[]; pending_tasks?: string[]; video_url?: string };
 };
 type SourcePage = { items: Source[]; total: number; kindCounts: Record<string, number>; limit: number; offset: number; engine: string };
 type Status = { saved_count: number; blocked: { platform: string; reason: string }[]; platforms: string[] };
-type IndexInfo = { total: number; fts_indexed: number; trash: number; pending_transcribe: number; ocr_available: boolean };
+type IndexInfo = { total: number; fts_indexed: number; trash: number; pending_transcribe: number; ocr_available: boolean; enrich_pending?: number; enrich_failed?: number; transcribe_pending?: number; transcribe_failed?: number };
 type TrashItem = { id: string; title: string; platform: string; kind: string; tags: string; deleted_at: number; captured_at: number };
 type Workflow = { id: string; label: string; stage: string; task: string };
 
@@ -23,9 +23,10 @@ const WORKFLOWS: Workflow[] = [
   { id: 'comments', label: '评论里找需求', stage: 'plan', task: '只根据素材里已有的评论和互动数据，归纳真实需求、分歧和可以做成内容的问题。没有评论就明说，不要编用户画像。' },
 ];
 
-async function api<T>(path: string, body?: unknown, method = 'GET'): Promise<T> {
-  const init: RequestInit = method === 'GET' ? {} : { method, headers: { 'Content-Type': 'application/json' } };
-  if (method !== 'GET' && body !== undefined) init.body = JSON.stringify(body);
+async function api<T>(path: string, body?: unknown, method?: string): Promise<T> {
+  const verb = method ?? (body === undefined ? 'GET' : 'POST');
+  const init: RequestInit = verb === 'GET' ? {} : { method: verb, headers: { 'Content-Type': 'application/json' } };
+  if (verb !== 'GET' && body !== undefined) init.body = JSON.stringify(body);
   const response = await fetch('/api/research' + path, init);
   const value = await response.json();
   if (!response.ok) throw new Error(typeof value.detail === 'string' ? value.detail : '请求失败');
@@ -80,6 +81,7 @@ export default function ResearchPage({ onCreate, persona = '' }: { onCreate: (pr
   const [view, setView] = useState<'library' | 'capture' | 'trash'>('library');
   const [kindFilter, setKindFilter] = useState('');
   const [trash, setTrash] = useState<TrashItem[]>([]);
+  const [exportNote, setExportNote] = useState('');
   const knownIds = useRef<Set<string>>(new Set());
   const firstLoad = useRef(true);
   const filtersRef = useRef({ query, kindFilter });
@@ -247,10 +249,30 @@ export default function ResearchPage({ onCreate, persona = '' }: { onCreate: (pr
       <div className="research-index-status">
         <span>全文索引 {indexInfo ? `${indexInfo.fts_indexed}/${indexInfo.total}` : '…'}</span>
         <span>OCR {indexInfo?.ocr_available ? '可用' : '未装（rapidocr）'}</span>
-        <span>转写待办 {indexInfo?.pending_transcribe ?? 0}</span>
+        <span>AI 加工 {indexInfo?.enrich_pending ?? 0}{indexInfo?.enrich_failed ? ` · 失败 ${indexInfo.enrich_failed}` : ''}</span>
+        <span>转写 {indexInfo?.transcribe_pending ?? 0}{indexInfo?.transcribe_failed ? ` · 失败 ${indexInfo.transcribe_failed}` : ''}</span>
         {engine === 'fts5+jieba' && <span className="engine">当前结果：分词检索</span>}
         {engine === 'like' && <span className="engine">当前结果：兜底模糊匹配</span>}
         <button className="btn" disabled={busy} onClick={async () => { setBusy(true); try { const r = await api<{ indexed: number }>('/reindex', {}); await refresh(); setMessage(`已重建 ${r.indexed} 条索引。`); } catch (e) { setError((e as Error).message); } finally { setBusy(false); } }}>重建索引</button>
+        <button className="btn" disabled={busy} onClick={async () => { setBusy(true); try { const r = await api<{ queued: number; workerStarted: boolean }>('/enrich', {}); await refresh(); setMessage(r.workerStarted ? `已排队 ${r.queued} 条打标任务，后台正在跑（需要 Easel 对话后端在线）。` : `已排队 ${r.queued} 条，等当前任务跑完自动接上。`); } catch (e) { setError((e as Error).message); } finally { setBusy(false); } }}>AI 打标摘要</button>
+        <button className="btn" disabled={busy} onClick={async () => { setBusy(true); try { const r = await api<{ processed: number; with_text: number }>('/refresh-ocr', {}); await refresh(); setMessage(r.processed ? `已补识别 ${r.processed} 条，其中 ${r.with_text} 条提取到图片文字。` : '没有待识别的图片素材。'); } catch (e) { setError((e as Error).message); } finally { setBusy(false); } }}>批量识别图片</button>
+        <button className="btn" disabled={busy || !sources.length} onClick={async () => {
+          setBusy(true); setExportNote('');
+          const ids = (selected.length ? selected : sources.map(s => s.id)).slice(0, 500);
+          try {
+            const r = await api<{ file?: string; folder?: string; count: number; items?: { folder: string }[] }>('/export', { ids, format: 'csv' });
+            setExportNote(r.file ? `/api/media/${r.file}` : ''); setMessage(`已导出 ${r.count} 条为 CSV。`);
+          } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
+        }}>导出 CSV</button>
+        <button className="btn" disabled={busy || !sources.length} onClick={async () => {
+          setBusy(true); setExportNote('');
+          const ids = (selected.length ? selected : sources.map(s => s.id)).slice(0, 500);
+          try {
+            const r = await api<{ items?: { folder: string }[] }>('/export', { ids, format: 'folder' });
+            setMessage(`已导出 ${r.items?.length ?? 0} 条到 knowledge/ 知识库目录（meta.json+content.md，Obsidian 可直接打开）。`);
+          } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
+        }}>导出知识库夹</button>
+        {exportNote && <a href={exportNote} download>下载导出文件</a>}
       </div>
       <div className="research-kinds"><button className={kindFilter === '' ? 'selected' : ''} onClick={() => { setKindFilter(''); refresh(query, '').catch(() => {}); }}>全部 {total}</button>{kindChips.map(([k, n]) => <button key={k} className={kindFilter === k ? 'selected' : ''} onClick={() => { setKindFilter(k); refresh(query, k).catch(() => {}); }}>{k} {n}</button>)}</div>
       <div className="research-workflows">
@@ -299,10 +321,11 @@ export default function ResearchPage({ onCreate, persona = '' }: { onCreate: (pr
           <button className="btn" disabled={busy} onClick={() => togglePin(preview)}>{preview.pinned ? '取消置顶' : '置顶'}</button>
           <button className="btn" disabled={busy} onClick={() => setEditingBody(editingBody === null ? (preview.content || '') : null)}>{editingBody === null ? '编辑正文' : '取消编辑'}</button>
           {editingBody !== null && <button className="btn btn-primary" disabled={busy} onClick={saveBody}>保存正文</button>}
+          {!!preview.extra?.video_url && <button className="btn" disabled={busy} onClick={async () => { setBusy(true); try { const r = await api<{ queued: boolean; workerStarted: boolean }>('/sources/' + preview.id + '/transcribe', {}); setMessage(r.workerStarted ? '转写任务已排队，后台先拉字幕、没有字幕再跑 Whisper，完成后自动写回正文。' : '转写任务已排队，等当前任务跑完自动接上。'); } catch (e) { setError((e as Error).message); } finally { setBusy(false); } }}>转写视频</button>}
           <button className="btn btn-danger" disabled={busy} onClick={() => trashSource(preview)}>移入回收站</button>
         </div>
       </div>
-      {(preview.extra?.pending_tasks || []).includes('transcribe') && <p className="research-hint">转写任务已登记，阶段 2 队列上线后自动处理。</p>}
+      {preview.summary ? <p className="research-hint">AI 摘要：{preview.summary}</p> : (preview.extra?.pending_tasks || []).includes('transcribe') ? <p className="research-hint">这条带视频，点「转写视频」可拉字幕或跑 Whisper 转写。</p> : null}
       {!!(preview.extra?.local_images?.length || preview.extra?.image_urls?.length) && <div className="research-gallery">{(preview.extra.local_images?.length ? preview.extra.local_images.map(p => '/api/media/' + p) : preview.extra.image_urls || []).map(src => <img key={src} src={src} alt="" />)}</div>}
       {editingBody !== null ? <textarea className="research-edit" rows={12} value={editingBody} onChange={e => setEditingBody(e.target.value)} /> : preview.content ? <pre>{preview.content}</pre> : null}
       {editingBody === null && !preview.content && preview.error ? <pre>{preview.error}</pre> : null}

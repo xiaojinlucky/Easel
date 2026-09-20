@@ -342,6 +342,16 @@ def _ingest(params: dict, method: str = "") -> dict:
     }
     if row.get("refresh_failed"):
         receipt["preserved"] = True
+    if status in {"created", "updated"}:
+        try:
+            from easel import research_enrich
+
+            source_id = str(row.get("id") or "")
+            research_enrich.enqueue(source_id, "enrich")
+            if "transcribe" in (entry["extra"].get("pending_tasks") or []):
+                research_enrich.enqueue(source_id, "transcribe")
+        except Exception:  # noqa: BLE001  加工队列故障不能挡入库
+            _log("enqueue enrich/transcribe failed for " + str(row.get("id")))
     put_operation(operation_id, receipt)
     return receipt
 

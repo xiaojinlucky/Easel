@@ -114,6 +114,92 @@ async def migrate_kinds():
     return await asyncio.to_thread(research.migrate_legacy_kinds)
 
 
+class OcrRequest(BaseModel):
+    ids: list[str] = Field(default_factory=list, max_length=200)
+    limit: int = Field(default=20, ge=1, le=100)
+
+
+@router.post('/refresh-ocr')
+async def refresh_ocr(request: OcrRequest):
+    if request.ids:
+        def run():
+            done = texts = 0
+            for identifier in request.ids:
+                try:
+                    item = research.refresh_ocr(identifier)
+                except research.CollectionError:
+                    continue
+                done += 1
+                if (item.get('extra') or {}).get('ocr_text'):
+                    texts += 1
+            return {'processed': done, 'with_text': texts}
+        return await asyncio.to_thread(run)
+    return await asyncio.to_thread(research.refresh_ocr_batch, request.limit)
+
+
+@router.get('/sources/{identifier}/export-folder')
+async def export_source_folder(identifier: str):
+    try:
+        return await asyncio.to_thread(research.export_folder, identifier)
+    except research.CollectionError as exc:
+        raise HTTPException(exc.status, str(exc)) from exc
+
+
+class ExportRequest(BaseModel):
+    ids: list[str] = Field(default_factory=list, max_length=500)
+    format: str = Field(default='json', pattern='^(folder|json|csv)$')
+
+
+@router.post('/export')
+async def export_sources(request: ExportRequest):
+    if not request.ids:
+        raise HTTPException(422, '请勾选要导出的素材。')
+    try:
+        return await asyncio.to_thread(research.export_batch, request.ids, request.format)
+    except research.CollectionError as exc:
+        raise HTTPException(exc.status, str(exc)) from exc
+
+
+class EnrichRequest(BaseModel):
+    ids: list[str] = Field(default_factory=list, max_length=200)
+    limit: int = Field(default=50, ge=1, le=200)
+
+
+@router.post('/enrich')
+async def enrich(request: EnrichRequest):
+    from easel import research_enrich
+    queued = 0
+    if request.ids:
+        for identifier in request.ids:
+            try:
+                research.get_source(identifier)
+            except research.CollectionError as exc:
+                raise HTTPException(exc.status, str(exc)) from exc
+            research_enrich.enqueue(identifier, 'enrich')
+            queued += 1
+    else:
+        queued = await asyncio.to_thread(research_enrich.enqueue_missing_enrich, request.limit)
+    started = research_enrich.start_worker()
+    return {'queued': queued, 'workerStarted': started}
+
+
+@router.get('/enrich/status')
+async def enrich_status():
+    from easel import research_enrich
+    return await asyncio.to_thread(research_enrich.queue_status)
+
+
+@router.post('/sources/{identifier}/transcribe')
+async def transcribe_source(identifier: str):
+    from easel import research_enrich
+    try:
+        research.get_source(identifier)
+        research_enrich.enqueue(identifier, 'transcribe')
+    except research.CollectionError as exc:
+        raise HTTPException(exc.status, str(exc)) from exc
+    return {'queued': True, 'id': identifier, 'workerStarted': research_enrich.start_worker()}
+
+
 @router.post('/feeds/sync')
 async def sync_feeds():
     try:

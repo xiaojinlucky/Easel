@@ -1,6 +1,8 @@
 """A local collection adapter: CloakBrowser + Baoyu's maintained reader + Easel assets."""
 import base64
+import csv
 import hashlib
+import io
 import ipaddress
 import json
 import re
@@ -51,6 +53,7 @@ def connection() -> sqlite3.Connection:
     db.execute('CREATE TABLE IF NOT EXISTS blocked (platform TEXT PRIMARY KEY, reason TEXT, at REAL)')
     db.execute('CREATE TABLE IF NOT EXISTS cooldowns (platform TEXT PRIMARY KEY, next_at REAL)')
     db.execute('CREATE TABLE IF NOT EXISTS operations (operation_id TEXT PRIMARY KEY, receipt TEXT, at REAL)')
+    db.execute('CREATE TABLE IF NOT EXISTS enrich_tasks (id INTEGER PRIMARY KEY AUTOINCREMENT, source_id TEXT, task TEXT, status TEXT NOT NULL DEFAULT \'pending\', error TEXT DEFAULT \'\', result_json TEXT DEFAULT \'\', attempts INTEGER NOT NULL DEFAULT 0, created_at REAL, updated_at REAL, UNIQUE(source_id, task))')
     db.execute('CREATE VIRTUAL TABLE IF NOT EXISTS sources_fts USING fts5(source_id UNINDEXED, tokens)')
     existing = {row[1] for row in db.execute('PRAGMA table_info(sources)').fetchall()}
     for column, decl in (
@@ -377,8 +380,12 @@ def refresh_ocr(identifier: str) -> dict:
     item = get_source(identifier)
     extra = dict(item.get('extra') or {})
     ocr_text = ocr_local_images(list(extra.get('local_images') or []))
+    extra['ocr_attempted'] = True
     if not ocr_text:
-        return item
+        with connection() as db:
+            db.execute('UPDATE sources SET extra_json=? WHERE id=?',
+                       (json.dumps(extra, ensure_ascii=False), identifier))
+        return get_source(identifier)
     extra['ocr_text'] = ocr_text
     content = item.get('content') or ''
     if '[图片文字]' not in content:
@@ -488,6 +495,122 @@ def put_operation(operation_id: str, receipt: dict) -> None:
     with connection() as db:
         db.execute('INSERT OR REPLACE INTO operations (operation_id,receipt,at) VALUES (?,?,?)',
                    (operation_id[:128], json.dumps(receipt, ensure_ascii=False), time.time()))
+
+
+def refresh_ocr_batch(limit: int = 20) -> dict:
+    """给有本地图但没做过 OCR 的存量素材补识别（直接回应 Beav Issue #27 的批量诉求）。"""
+    try:
+        limit = max(1, min(int(limit), 100))
+    except (TypeError, ValueError):
+        limit = 20
+    with connection() as db:
+        rows = db.execute(
+            "SELECT id FROM sources WHERE state='saved' AND deleted_at=0 "
+            "AND extra_json LIKE '%local_images%' AND extra_json NOT LIKE '%ocr_attempted%' "
+            'ORDER BY captured_at DESC LIMIT ?', (limit,)).fetchall()
+    processed = with_text = 0
+    for row in rows:
+        try:
+            item = refresh_ocr(row['id'])
+        except CollectionError:
+            continue
+        processed += 1
+        if (item.get('extra') or {}).get('ocr_text'):
+            with_text += 1
+    return {'processed': processed, 'with_text': with_text}
+
+
+SITE_BY_DOMAIN = (
+    ('xiaohongshu.com', 'xiaohongshu'), ('xhslink.com', 'xiaohongshu'), ('xhslink.cn', 'xiaohongshu'),
+    ('zhihu.com', 'zhihu'), ('mp.weixin.qq.com', 'wechat-mp'), ('bilibili.com', 'bilibili'),
+    ('douyin.com', 'douyin'), ('weibo.com', 'weibo'), ('youtube.com', 'youtube'), ('youtu.be', 'youtube'),
+)
+SITE_BY_PLATFORM = {'小红书': 'xiaohongshu', '知乎': 'zhihu', '公众号': 'wechat-mp', '哔哩哔哩': 'bilibili',
+                    '抖音': 'douyin', '微博': 'weibo', 'X': 'x', 'Reddit': 'reddit', 'GitHub': 'github'}
+
+
+def _knowledge_site(item: dict) -> str:
+    host = (urlsplit(str(item.get('url') or '')).hostname or '').lower()
+    for domain, slug in SITE_BY_DOMAIN:
+        if host == domain or host.endswith('.' + domain):
+            return slug
+    slug = SITE_BY_PLATFORM.get(str(item.get('platform') or ''))
+    if slug:
+        return slug
+    cleaned = re.sub(r'[^a-z0-9]+', '-', host).strip('-')
+    return cleaned or 'imported'
+
+
+def export_folder(identifier: str) -> dict:
+    """照 Beav 目录约定导出：knowledge/<site>/<id>/meta.json+content.md（Obsidian 可直接吃）。"""
+    item = get_source(identifier)
+    site = _knowledge_site(item)
+    folder = ROOT / 'knowledge' / site / identifier
+    folder.mkdir(parents=True, exist_ok=True)
+    extra = item.get('extra') or {}
+    meta = {
+        'id': identifier, 'kind': item.get('kind') or 'document-source', 'title': item.get('title'),
+        'url': item.get('url'), 'platform': item.get('platform'), 'site': site,
+        'tags': item.get('tags'), 'author': item.get('author'), 'cover': item.get('cover_url'),
+        'capturedAt': item.get('captured_at'), 'method': item.get('method'), 'topic': item.get('topic'),
+        'stats': {'likes': extra.get('likes'), 'collects': extra.get('collects'), 'comments': extra.get('comments')},
+        'localImages': extra.get('local_images'), 'storageStatus': 'stored',
+    }
+    body = str(item.get('content') or '')
+    if extra.get('comments_text'):
+        body += '\n\n## 评论\n\n' + str(extra['comments_text'])
+    (folder / 'meta.json').write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding='utf-8')
+    quoted = str(item.get('title') or '').replace('"', "'")
+    tags_front = ', '.join(f'"{t}"' for t in item.get('tags') or [])
+    date = time.strftime('%Y-%m-%d', time.localtime(item.get('captured_at') or time.time()))
+    front = f'---\ntitle: "{quoted}"\nsource: "{item.get("url") or ""}"\ntags: [{tags_front}]\ndate: {date}\n---\n\n'
+    (folder / 'content.md').write_text(front + f'# {quoted}\n\n{body}\n', encoding='utf-8')
+    return {'id': identifier, 'folder': folder.relative_to(ROOT).as_posix(), 'files': ['meta.json', 'content.md']}
+
+
+def export_batch(ids: list[str], fmt: str = 'json') -> dict:
+    """批量导出：folder=知识库目录；json/csv 落 outputs/导出/ 走 /api/media 下载。"""
+    clean_ids = [str(x) for x in ids if str(x).strip()][:500]
+    if fmt == 'folder':
+        items = []
+        for identifier in clean_ids:
+            try:
+                items.append(export_folder(identifier))
+            except CollectionError:
+                continue
+        return {'format': 'folder', 'count': len(items), 'items': items}
+    if fmt not in ('json', 'csv'):
+        raise CollectionError('导出格式仅支持 folder / json / csv。')
+    rows = []
+    for identifier in clean_ids:
+        try:
+            rows.append(get_source(identifier))
+        except CollectionError:
+            continue
+    stamp = time.strftime('%Y%m%d-%H%M%S')
+    fields = ('id', 'title', 'url', 'platform', 'kind', 'author', 'topic', 'tags', 'likes', 'collects',
+              'comments', 'state', 'method', 'captured_at', 'content')
+    records = []
+    for row in rows:
+        extra = row.get('extra') or {}
+        records.append({
+            'id': row.get('id'), 'title': row.get('title'), 'url': row.get('url'), 'platform': row.get('platform'),
+            'kind': row.get('kind'), 'author': row.get('author'), 'topic': row.get('topic'),
+            'tags': ','.join(row.get('tags') or []), 'likes': extra.get('likes'), 'collects': extra.get('collects'),
+            'comments': extra.get('comments'), 'state': row.get('state'), 'method': row.get('method'),
+            'captured_at': row.get('captured_at'), 'content': row.get('content'),
+        })
+    target = ROOT / 'outputs' / '导出' / f'素材库-{stamp}.{fmt}'
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if fmt == 'csv':
+        buffer = io.StringIO()
+        writer = csv.DictWriter(buffer, fieldnames=fields, extrasaction='ignore')
+        writer.writeheader()
+        writer.writerows(records)
+        target.write_text('\ufeff' + buffer.getvalue(), encoding='utf-8')
+    else:
+        target.write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding='utf-8')
+    return {'format': fmt, 'count': len(records), 'file': target.relative_to(ROOT / 'outputs').as_posix()}
 
 
 def update_source(identifier: str, title=None, topic=None, content=None, summary=None,
@@ -629,8 +752,16 @@ def index_status() -> dict:
         trash = db.execute('SELECT count(*) FROM sources WHERE deleted_at>0').fetchone()[0]
         pending = db.execute(
             "SELECT count(*) FROM sources WHERE deleted_at=0 AND extra_json LIKE '%transcribe%'").fetchone()[0]
+        queued = {str(row[0]): {'pending': row[1], 'running': row[2], 'failed': row[3]} for row in db.execute(
+            "SELECT task, SUM(status='pending'), SUM(status='running'), SUM(status='failed') "
+            'FROM enrich_tasks GROUP BY task').fetchall()}
+    enrich = queued.get('enrich', {'pending': 0, 'running': 0, 'failed': 0})
+    transcribe = queued.get('transcribe', {'pending': 0, 'running': 0, 'failed': 0})
     return {'total': total, 'fts_indexed': indexed, 'trash': trash,
-            'pending_transcribe': pending, 'ocr_available': ocr_available()}
+            'pending_transcribe': pending, 'ocr_available': ocr_available(),
+            'enrich_pending': enrich['pending'] + enrich['running'], 'enrich_failed': enrich['failed'],
+            'transcribe_pending': transcribe['pending'] + transcribe['running'],
+            'transcribe_failed': transcribe['failed']}
 
 
 def collection_status() -> dict:
