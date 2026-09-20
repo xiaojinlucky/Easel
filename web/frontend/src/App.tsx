@@ -9,7 +9,9 @@ import AccountsPage from './components/AccountsPage';
 import ProfilePage from './components/ProfilePage';
 import DashboardPage from './components/DashboardPage';
 import ModelSettingsPage from './components/ModelSettingsPage';
+import ResearchPage from './components/ResearchPage';
 import './styles/model-settings.css';
+import './styles/research.css';
 import TrendsPage from './components/TrendsPage';
 import CalendarPage from './components/CalendarPage';
 import IdeasPage from './components/IdeasPage';
@@ -825,6 +827,8 @@ export default function App() {
         return <PublishPage persona={selectedPersona} />;
       case 'breakdown':
         return <BreakdownPage persona={selectedPersona} />;
+      case 'research':
+        return <ResearchPage onCreate={(prompt) => handleDraftToChat(prompt, 'plan')} />;
       case 'skills':
         return <SkillPage persona={selectedPersona} onDraftToChat={handleDraftToChat} />;
       case 'workflows':

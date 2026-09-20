@@ -42,6 +42,10 @@ from easel.skill_route import route as route_skills, suggest_recipe, summarize a
 from easel import skill_state as skillstate
 from easel import workflow as wfstore
 from easel.timeouts import TIMEOUT_CHAT, TIMEOUT_DIRECT, TIMEOUT_PRODUCE
+if str(PROJECT_ROOT / "web") not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT / "web"))
+from research_api import router as research_router
+from clipper_api import router as clipper_router
 try:
     from easel.gateway_questions import (
         GatewayClient, GatewayQuestionError, GatewayUnsupportedError,
@@ -330,6 +334,8 @@ AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"}
 app = FastAPI(title="Easel", docs_url=None, redoc_url=None)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 app.include_router(settings_router)
+app.include_router(research_router)
+app.include_router(clipper_router)
 
 
 def list_personas() -> list[dict]:
