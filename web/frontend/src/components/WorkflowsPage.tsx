@@ -189,7 +189,7 @@ export default function WorkflowsPage({
 
   useEffect(() => {
     reloadList();
-    fetchSkills().then(setSkills).catch(() => setSkills([]));
+    fetchSkills().then((list) => setSkills(list.filter((s) => s.enabled !== false))).catch(() => setSkills([]));
     return () => abortRef.current?.abort();
   }, []);
 

@@ -11,6 +11,10 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SKILLS_DIR = PROJECT_ROOT / "skills" / "openclaw"
+SKILL_ROOTS = (
+    PROJECT_ROOT / "skills" / "openclaw",
+    PROJECT_ROOT / "skills" / "extensions",
+)
 
 LAYER_LABEL = {
     "discover": "发现",
@@ -94,34 +98,37 @@ def _parse_frontmatter(path: Path) -> tuple[str, str]:
 
 
 def _catalog_stamp() -> tuple[int, int]:
-    if not SKILLS_DIR.is_dir():
-        return (0, 0)
     newest = 0
     count = 0
-    for child in SKILLS_DIR.iterdir():
-        skill = child / "SKILL.md"
-        if child.is_dir() and skill.is_file():
-            count += 1
-            newest = max(newest, int(skill.stat().st_mtime_ns))
+    for root in SKILL_ROOTS:
+        if not root.is_dir():
+            continue
+        for child in root.iterdir():
+            skill = child / "SKILL.md"
+            if child.is_dir() and skill.is_file():
+                count += 1
+                newest = max(newest, int(skill.stat().st_mtime_ns))
     return (count, newest)
 
 
 @lru_cache(maxsize=4)
 def _catalog_cached(_stamp: tuple[int, int]) -> tuple[dict, ...]:
     items: list[dict] = []
-    if not SKILLS_DIR.is_dir():
-        return tuple()
-    for child in sorted(SKILLS_DIR.iterdir()):
-        skill = child / "SKILL.md"
-        if not (child.is_dir() and skill.is_file()):
+    for root in SKILL_ROOTS:
+        if not root.is_dir():
             continue
-        desc, layer = _parse_frontmatter(skill)
-        items.append({
-            "name": child.name,
-            "description": desc,
-            "layer": layer or "general",
-            "path": f"skills/openclaw/{child.name}/SKILL.md",
-        })
+        rel_root = root.relative_to(PROJECT_ROOT).as_posix()
+        for child in sorted(root.iterdir()):
+            skill = child / "SKILL.md"
+            if not (child.is_dir() and skill.is_file()):
+                continue
+            desc, layer = _parse_frontmatter(skill)
+            items.append({
+                "name": child.name,
+                "description": desc,
+                "layer": layer or "general",
+                "path": f"{rel_root}/{child.name}/SKILL.md",
+            })
     return tuple(items)
 
 
@@ -259,6 +266,11 @@ def route(
     pin: str | None = None,
 ) -> list[dict]:
     items = catalog()
+    if not items:
+        return []
+    from easel.skill_state import disabled_names
+    blocked = disabled_names()
+    items = [item for item in items if item["name"] not in blocked]
     if not items:
         return []
     q = clean_query(query)

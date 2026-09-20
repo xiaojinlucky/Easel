@@ -38,7 +38,8 @@ from easel.openclaw_cmd import openclaw_base_cmd
 from easel.model_runtime import agent_options
 from easel.model_settings_api import router as settings_router
 from easel.persona import load_profile_text, persona_prefix, chat_turn_message, profile_exists, _FILE_ORDER
-from easel.skill_route import route as route_skills, suggest_recipe, summarize as skill_summarize
+from easel.skill_route import route as route_skills, suggest_recipe, summarize as skill_summarize, SKILL_ROOTS
+from easel import skill_state as skillstate
 from easel import workflow as wfstore
 from easel.timeouts import TIMEOUT_CHAT, TIMEOUT_DIRECT, TIMEOUT_PRODUCE
 try:
@@ -353,9 +354,20 @@ def list_personas() -> list[dict]:
 def find_skill(name: str) -> str | None:
     """查找 SKILL，返回完整名或 None。与 CLI skill.py 一致。"""
     cands = [name, f'skill-{name}'] if not name.startswith('skill-') else [name]
-    for cand in cands:
-        if (SKILLS_DIR / 'openclaw' / cand / 'SKILL.md').is_file():
-            return cand
+    for root in SKILL_ROOTS:
+        for cand in cands:
+            if (root / cand / 'SKILL.md').is_file():
+                return cand
+    return None
+
+
+def _skill_md_path(name: str) -> Path | None:
+    cands = [name, f'skill-{name}'] if not name.startswith('skill-') else [name]
+    for root in SKILL_ROOTS:
+        for cand in cands:
+            path = root / cand / 'SKILL.md'
+            if path.is_file():
+                return path
     return None
 
 
@@ -410,9 +422,11 @@ def _parse_skill_md(path: Path) -> tuple[str, str, str]:
 def get_skills() -> list[dict]:
     env = _read_env()
     result = []
-    sd = SKILLS_DIR / 'openclaw'
-    if sd.is_dir():
-        for d in sorted(sd.iterdir()):
+    blocked = skillstate.disabled_names()
+    for root in SKILL_ROOTS:
+        if not root.is_dir():
+            continue
+        for d in sorted(root.iterdir()):
             if d.is_dir() and (d / 'SKILL.md').is_file():
                 desc, layer, _ = _parse_skill_md(d / 'SKILL.md')
                 needs_api = d.name in SKILL_API_REQUIREMENTS
@@ -423,6 +437,7 @@ def get_skills() -> list[dict]:
                     'layer': layer,
                     'needsApi': needs_api,
                     'apiConfigured': _skill_api_configured(d.name, env) if needs_api else True,
+                    'enabled': d.name not in blocked,
                 })
     return result
 
@@ -857,7 +872,21 @@ async def api_persona_delete(name: str):
 
 @app.get("/api/skills")
 async def api_skills():
+    skillstate.ensure_defaults()
     return get_skills()
+
+
+class SkillEnabledRequest(BaseModel):
+    enabled: bool
+
+
+@app.post("/api/skills/{name}/enabled")
+async def api_skill_set_enabled(name: str, req: SkillEnabledRequest):
+    full = find_skill(name)
+    if full is None:
+        raise HTTPException(404, f"SKILL '{name}' 不存在")
+    skillstate.set_enabled(full, bool(req.enabled))
+    return {"ok": True, "name": full, "enabled": skillstate.is_enabled(full)}
 
 
 @app.get("/api/skills/route")
@@ -891,7 +920,10 @@ async def api_skill_detail(name: str):
     full = find_skill(name)
     if full is None:
         raise HTTPException(404, f"SKILL '{name}' 不存在")
-    desc, layer, body = _parse_skill_md(SKILLS_DIR / "openclaw" / full / "SKILL.md")
+    md = _skill_md_path(full)
+    if md is None:
+        raise HTTPException(404, f"SKILL '{name}' 不存在")
+    desc, layer, body = _parse_skill_md(md)
     needs_api = full in SKILL_API_REQUIREMENTS
     env = _read_env()
     return {
@@ -1787,6 +1819,8 @@ async def api_skill(req: SkillRequest):
     skill_full = find_skill(req.skill)
     if skill_full is None:
         raise HTTPException(404, f"SKILL '{req.skill}' 不存在")
+    if not skillstate.is_enabled(skill_full):
+        raise HTTPException(403, f"技能「{skill_full}」在备选归档中，启用后才能运行")
     message = f"{_persona_prefix(req.persona)}请执行 /{skill_full}，内容如下：\n\n{req.input}"
     # 统一给足超时：制作类 SKILL（生视频/多镜合成）可能跑很久，取安全上界
     timeout = TIMEOUT_PRODUCE
@@ -1883,6 +1917,8 @@ async def _run_skill_node(node: dict, text: str, persona: str | None, session_id
     title = node.get("title") or skill or node.get("id")
     if not skill_full:
         return {"id": node["id"], "title": title, "skill": skill, "ok": False, "output": "", "error": f"技能 {skill or '（空）'} 不存在"}
+    if not skillstate.is_enabled(skill_full):
+        return {"id": node["id"], "title": title, "skill": skill_full, "ok": False, "output": "", "error": f"技能「{skill_full}」在备选归档中，启用后才能运行"}
     message = f"{_persona_prefix(persona)}请执行 /{skill_full}，内容如下：\n\n{text}"
     loop = asyncio.get_event_loop()
     try:

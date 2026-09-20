@@ -622,6 +622,28 @@ textarea.field { resize: vertical; min-height: 90px; }
   display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
 }
 .skill-card-foot { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-top: 2px; }
+.skill-card.is-archived {
+  opacity: 0.72;
+  background: color-mix(in srgb, var(--surface-2) 70%, var(--bg));
+}
+.skill-card-toggle {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.skill-card-toggle.is-on {
+  border-color: transparent;
+  background: var(--green-soft, color-mix(in srgb, var(--green) 18%, transparent));
+  color: var(--green);
+}
+.skills-archive { margin-top: 36px; padding-top: 8px; }
+.skills-archive-head {
+  display: flex; align-items: baseline; gap: 10px; margin: 0 0 14px;
+}
+.skills-archive-head h2 {
+  margin: 0; font-size: 15px; font-weight: 650; letter-spacing: 0.04em;
+  text-transform: uppercase; color: var(--text-tertiary);
+}
+.skills-archive-head span { font-size: 14px; color: var(--text-tertiary); }
 .skill-card-alert {
   position: absolute; top: 12px; right: 12px;
   width: 20px; height: 20px; border-radius: 50%;

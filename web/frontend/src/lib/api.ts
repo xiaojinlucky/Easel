@@ -47,6 +47,7 @@ export interface SkillItem {
   layer: string;
   needsApi: boolean;
   apiConfigured: boolean;
+  enabled?: boolean;
 }
 
 export interface ApiKeySpec {
@@ -233,6 +234,14 @@ export function deleteIdea(id: string): Promise<{ ok: boolean }> {
 
 export function fetchSkills(): Promise<SkillItem[]> {
   return request<SkillItem[]>('/api/skills');
+}
+
+export function setSkillEnabled(name: string, enabled: boolean): Promise<{ ok: boolean; name: string; enabled: boolean }> {
+  return request(`/api/skills/${encodeURIComponent(name)}/enabled`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled }),
+  });
 }
 
 export interface SkillRouteHit {
