@@ -22,8 +22,8 @@ def test_manifest_cannot_inject_every_site_or_attach_debugger():
 def test_grok_guard_present_in_injected_scripts():
     observer = (ROOT / "extensions" / "beav-capture" / "pageObserver.js").read_text(encoding="utf-8")
     overlay = (ROOT / "extensions" / "beav-capture" / "browserControlContent.js").read_text(encoding="utf-8")
-    assert "grok.com" in observer
-    assert "grok.com" in overlay
+    assert "grok" in observer and "chatgpt" in observer
+    assert "grok" in overlay and "chatgpt" in overlay
 
 
 def test_host_handshake_disables_browser_control():
