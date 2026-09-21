@@ -97,3 +97,36 @@ Luna 监测主 Codex 周窗口。最终读取时间为北京时间 2026-09-10 05
 - 已清理本轮未启动的镜像检查容器和已导入的 WeRSS tar；保留生产镜像、源补丁、部署、用户输出和既有备份。未触碰历史被拒绝清理的目录。
 
 桌面增量最终复验：10 项全部通过，包含无需账号的本地排版、切页保留正文、WeRSS 内嵌管理真实渲染及既有模型设置/热点/Postiz/FreshRSS。结果见 `.runtime/desktop-check/result.json`，启动时间 2026-09-10T04:46:46.518Z；原生窗口截图 `wechat.png` 已查看。早期失败为测试脚本的转义、文案匹配及就绪等待问题，修正后通过。
+
+## 2026-09-21 三条线合并与上游欠账回收（集成树 `integrate/20260921`）
+
+工作目录：`F:\科研大师兄\自媒体工作台\Easel-integrate`（从 `snapshot/official-active-0919` 切出）。现役 7870 进程、`Easel-official`、`Easel-beav-kb`、`Easel-merge-wip` 全程未被写入，未做任何推送。
+
+### 事实（可复核）
+
+- 提交链：`aa4f7f5` 合入 Beav 知识库线 13 个提交 → `36c1fbd` 合入两树吸收线 → `efeb1dd` 还原 29 个纯上游文件 + 三方合并 `weixin_mp_stats.py` + 补声明依赖 → `eecd31d` 前向合并 `web/app.py`（22 处冲突）与 `easel/persona.py`。
+- 全量测试：**472 passed / 5 skipped / 0 failed**。本轮起点是 `90 failed / 352 passed / 17 errors`。
+  复核：`cd 'F:/科研大师兄/自媒体工作台/Easel-integrate'; & 'F:/科研大师兄/自媒体工作台/Easel-official/.venv/Scripts/python.exe' -m pytest -q`
+- 那 90 条红测试不是合并造成的：同一 venv 在 `Easel-merge-wip` 自己分支上按同批文件跑，得到 `90 failed / 77 passed / 17 errors`。它们是 `22878d5` 那次"保留文件、丢内容"的报警器——上游 `web/app.py` 少 44 个函数 / 10 个接口和整套本机边界。
+- 监听收紧已在分支上生效（默认 `127.0.0.1` + Origin 白名单 + `TrustedHostMiddleware` + 写请求 `local_write_guard`）。真机复核（备用端口，不碰 7870/18789）：
+  `& '...Easel-official/.venv/Scripts/python.exe' -m uvicorn web.app:app --host 127.0.0.1 --port 7999`
+  期望：`netstat -ano | Select-String ':7999'` 只有 `127.0.0.1`；GET `/api/research/sources` → 200；`POST /api/research/beav-host` 带 `Origin: https://evil.example` → 403；带 `Host: 192.168.1.5:7999` → 400；带 `Origin: http://127.0.0.1:7870` 的 POST → 200。实测结果与期望逐条一致。
+- 收敛性：`git merge-base --is-ancestor 0b22a04 HEAD` 为真；相对 fork main `0 behind / 43 ahead`（本轮后 ahead 增加），相对 09-19 快照 `0 behind / 91 ahead`。回 main 是快进，不需要改写历史。
+- 备份：`F:\科研大师兄\自媒体工作台\merge-backup-20260921\three-branches.bundle`（合并前三条分支 tip）。
+
+### 三处同名实现，这次明确选了一边
+
+1. `/api/model-settings` 用 `easel.model_settings_api`（`determined_models()`：换型号才重新验证，只改推理强度沿用上次结果）。上游 `web/settings_api.py` 那份没有这个行为，已停止在 `app.py` 中段覆盖同名 router。
+2. `agent_options` 用 `easel.model_runtime`（认 `EASEL_THINKING_LEVEL`）；`easel.runtime` 那份不认。
+3. `OPENCLAW_PROFILE` 随上游变成 `easel-studio`（会话目录 `~/.openclaw-easel-studio`）。本机两个 profile 目录都没有 transcript，切换不影响历史数据，但这条会改变运行时读写哪个 profile 目录。
+
+### 推断
+
+- 余下的 `web/settings_api.py` 与 `easel/model_settings_api.py`、`easel/runtime.py` 与 `easel/model_runtime.py` 属于同一功能两份实现。本次只保证被引用那份的行为正确，没有删另一份；真正收敛需要一次专门的取舍。
+
+### 未验证
+
+- 真机 Chrome 采集扩展 → Native Host → 本分支后端的端到端（本轮只跑了 pytest 与本机 HTTP 探针）。
+- 真实 OpenClaw 对话一轮（`--json` / `agent_reply` / 停止生成整链）、真实 yt-dlp 下载与转写、真实公众号发布。
+- 前端 `vite build` 在本轮 app.py 合并后未重跑（改动全在后端与 Python 侧，产物无输入变化）。
+- 现役 7870 进程仍是合并前的 `0.0.0.0` + `allow_origins=["*"]`，收紧要等这条分支合并后重启才生效。
