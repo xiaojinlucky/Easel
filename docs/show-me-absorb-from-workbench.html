@@ -139,7 +139,7 @@ flowchart LR
       <h3>公众号：先看见排版，再送草稿</h3>
       <p>原版发布中心已经能：标题 + Markdown + 封面 → 本地排版 → 扫码会话送草稿箱。缺的是二次开发工作区里那一块：<b>本页编辑、生成本地 HTML 预览、确认后再送</b>。</p>
       <p>不要整页搬：AppID 大表单、按日官方取数、WeRSS 内嵌、账号诊断会话，都不是发稿最小集。</p>
-      <p><small>二次开发真源：<code>WechatPage.tsx</code> 的「生成排版预览」+ <code>POST /api/wechat/draft</code>。</small></p>
+      <p><small>二次开发真源：<code>web/wechat_api.py</code> 的 <code>POST /api/wechat/draft</code>（排版预览那版前端页 <code>WechatPage.tsx</code> 从未接进 App，已随死代码清理移除，需要时从 <code>merge/easel-into-official</code> 分支取回）。</small></p>
     </div>
     <div class="card take">
       <div class="tag tag-take">3 · 值得搬 · 砍掉第三步</div>

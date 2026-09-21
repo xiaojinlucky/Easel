@@ -272,6 +272,13 @@ Cloak 可执行文件：`C:\Users\Administrator\.cloakbrowser\chromium-146.0.768
 **遗留决定**：上游 `SettingsPanel`/`EnvBoard` 与本机 `ModelSettingsPage` 是两套模型设置 UI，功能重叠，
 需要产品级去重（我的建议：上游做默认入口，本机页折进去当一个分区），未动。
 
+> **2026-09-21 结案**：这条按「删死代码」处理，不是按去重设计处理。吸收线带进来的 `SettingsPanel.tsx`、
+> `EnvBoard.tsx`、`settingsIcons.tsx`、`WechatPage.tsx`、`AccountProfilePanel.tsx`、`AuthGuide.tsx`、
+> `CapabilitiesPage.tsx`、`BrushEntry.tsx`，以及只被它们引用的 `lib/capabilityMenu.ts`、`lib/skillDisplayNames.ts`
+> 共 10 个文件已删除。判定依据：这批文件没有任何外部 import（簇内互引除外），`tsc -b` 的 85 个错全部落在其中，
+> 删除后 `tsc -b` 0 错、`vite build` 通过、后端 472 条测试通过。现役模型设置入口仍是 `ModelSettingsPage.tsx`。
+> 需要参考实现时从 `merge/easel-into-official` 分支取回，不要在集成树上复活第二份。
+
 ---
 
 ## 6. 当前问题
