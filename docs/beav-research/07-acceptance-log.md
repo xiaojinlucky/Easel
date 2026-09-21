@@ -28,12 +28,17 @@
 
 | 解释器 | pytest | rapidocr | 备注 |
 |---|---|---|---|
-| `Easel-official/.venv`（现役，App 实际就靠它跑） | **没装** | 1.4.4 有 | `HANDOFF.md` 已记这条坑 |
-| `Easel/.venv`（隔壁待吸收树） | 有 | **没装** | 本文件全部测试数字在这上面跑 |
+| `Easel-official/.venv`（现役，App 实际就靠它跑） | **已装 9.1.1**（2026-09-21 用户授权，清华镜像） | 1.4.4 有 | `HANDOFF.md` 里"没装 pytest"那条已过期 |
+| `Easel/.venv`（隔壁待吸收树） | 有 | **没装** | 本文件数字原先只在这上面跑 |
+
+**用现役解释器复跑过，数字完全一致**：`3 failed, 268 passed, 5 skipped`；
+`tests/test_research_enrich.py` = `32 passed`。所以下面这些期望值在"真跑 App 的那个环境"里成立，
+不是旧环境专供（唯一区别：现役环境里 `ocr_available()` 为 True，隔壁为 False；用例只断言它是 bool，不受影响）。
 
 ```bash
 cd "F:/科研大师兄/自媒体工作台/Easel-beav-kb"
-PY="F:/科研大师兄/自媒体工作台/Easel/.venv/Scripts/python.exe"
+PY="F:/科研大师兄/自媒体工作台/Easel-official/.venv/Scripts/python.exe"   # 现役环境（推荐）
+# 备选：PY="F:/科研大师兄/自媒体工作台/Easel/.venv/Scripts/python.exe"    # 缺 rapidocr
 "$PY" -m pytest -q                 # 期望：3 failed, 268 passed, 5 skipped
 "$PY" -m pytest tests/test_research_enrich.py -q   # 期望：32 passed
 ```
@@ -265,9 +270,9 @@ cd web/frontend && npm run build   # 期望：tsc 无错；单 JS 460.22 kB(gzip
   ```
 - Native Host 落库位置由 `%LOCALAPPDATA%\easel-native-host\easel-root.txt` 单点决定（`01-ours.md` 行 23），
   三条 worktree 都点过"注册到本工作台"的话最后一次说了算——合并/试跑前先确认它指向哪棵树。
-- 合并前动手顺序建议：先备份 `outputs/`（老库补列迁移只练过假库），再在**当前 HEAD 上**跑一遍本文件的 pytest 期望值，
-  数字对不上先想环境差：跑测试的 `Easel/.venv` 缺 rapidocr（影响 `ocr_available()` 的显示值，不影响用例通过），
-  现役 `Easel-official/.venv` 缺 pytest（同一条命令在那儿直接跑不起来）。
+- 合并前动手顺序建议：先备份 `outputs/`（老库补列迁移只练过假库），再在**当前 HEAD 上**跑一遍本文件的 pytest 期望值。
+  两个解释器现在都能跑同一套（现役 `.venv` 已补装 pytest 9.1.1），唯一残留差别是隔壁 `Easel/.venv` 缺 rapidocr，
+  在那上面跑会让 `ocr_available()` 显示 False——只影响显示值，不影响用例通过。
 
 ## 推断（读了代码，没跑起来）
 
