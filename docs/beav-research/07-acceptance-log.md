@@ -19,6 +19,8 @@
 就整支 `git merge --squash research/beav-kb-parity`；想保留三轮修复的演进过程，就按上表逐个 cherry-pick。
 两种都不自动做，等你发话。
 
+修复轮三的提交号不写在正文里（自己引用自己的哈希拿不到）：`git log --oneline research/beav-kb-parity` 最上面那条即本轮。
+
 ## 已验证事实（可复制复核）
 
 环境：worktree 没有自带虚拟环境，测试借用主项目 venv。工作目录切到 worktree 根。
