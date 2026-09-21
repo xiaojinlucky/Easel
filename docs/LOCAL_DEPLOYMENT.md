@@ -1,6 +1,6 @@
 # Easel 本机工作台
 
-2026-09-10 部署于 `F:\科研大师兄\Easel`。保留完整 Easel 的 112 个技能，组合 8 个有许可的扩展、Postiz 和 FreshRSS。最终验收记录见 [验收记录](ACCEPTANCE.md)，复用与调研见 [复用报告](REUSE_AND_RESEARCH.md)。
+2026-09-10 部署于 `<旧树目录>`。保留完整 Easel 的 112 个技能，组合 8 个有许可的扩展、Postiz 和 FreshRSS。最终验收记录见 [验收记录](ACCEPTANCE.md)，复用与调研见 [复用报告](REUSE_AND_RESEARCH.md)。
 
 ## 打开与启动
 
@@ -59,7 +59,7 @@ Postiz 本地账号是 `studio@easel.local`，随机密码在 `.runtime/postiz-a
 | 容器 | Ubuntu-24.04 WSL，Docker 29.1.3 / Compose 2.40.3，项目 easel-postiz |
 | Caddy | 官方 2.11.4，SHA-512 核验，Windows 回环代理至 WSL 私有地址 |
 
-OpenClaw 配置在 `C:\Users\Administrator\.openclaw-easel-studio`，工作区为 `C:\Users\Administrator\.openclaw\workspace-easel`，skills / outputs / profiles 指向项目目录。会话使用官方 SQLite catalog；未接入旧版 sessions.json 修复器。原有全局 openclaw-cn 保持独立。
+OpenClaw 配置在 `%USERPROFILE%\.openclaw-easel-studio`，工作区为 `%USERPROFILE%\.openclaw\workspace-easel`，skills / outputs / profiles 指向项目目录。会话使用官方 SQLite catalog；未接入旧版 sessions.json 修复器。原有全局 openclaw-cn 保持独立。
 
 备份需包含：`outputs/`（包括 `_sessions/`）、`profiles/`、`.runtime/research.sqlite*`、`.runtime/model-settings.json`、`.runtime/postiz.env`、`.runtime/postiz-account.json`、OpenClaw 独立配置，以及 WSL 中 easel-postiz 的数据卷。容器数据不在 Windows `.runtime` 内，只复制源码不能备份发布数据库/媒体。停止不会删卷，禁止把 `docker compose down -v` 当重启。已提供[备份与恢复步骤](BACKUP_RESTORE.md)，含真实隔离数据库恢复演练。
 

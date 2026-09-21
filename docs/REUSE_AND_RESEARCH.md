@@ -86,4 +86,4 @@ Reddit 返回 network security / 403，小红书搜索要求登录，Linux.do �
 
 早期核验的官方资料：https://beav.me/about 、https://beav.me/docs 。官方文档强调共享工作空间、来源保留、Task Brief、稿件与媒体结果回存；并未据此确认所有平台均支持自动发布和统计。商业版当前精确身份和本次实际交互以对比报告的午后证据为准。
 
-历史入口曾指向 `C:/Users/Administrator/AppData/Local/Beav/beav.exe`，当前使用用户新装的 `D:/Beav/beav.exe`；版本均为2.7.20，版本号本身不是执行路线证明。午后商业创作会话记录已确认官方账号供应方；实际底层模型仍未知。早期16×16辅助窗口和旧本地订阅桥不再作为当前商业版证据。
+历史入口曾指向 `%USERPROFILE%/AppData/Local/Beav/beav.exe`，当前使用用户新装的 `<Beav 安装目录>/beav.exe`；版本均为2.7.20，版本号本身不是执行路线证明。午后商业创作会话记录已确认官方账号供应方；实际底层模型仍未知。早期16×16辅助窗口和旧本地订阅桥不再作为当前商业版证据。

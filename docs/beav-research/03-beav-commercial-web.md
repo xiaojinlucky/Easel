@@ -11,7 +11,7 @@
 1. **[已核实] 产品身份成立**：`Jamailar/Beav` 是真实仓库（1,687 star / 228 fork，创建于 2025-06-04，最近 push 2026-09-19），README 自述「AI 自媒体工作台」，主页 `https://getbeav.com/`，下载 CDN 就是插件里那个 `redbox.ziz.hk`。来源：https://github.com/Jamailar/Beav 、`gh api repos/Jamailar/Beav`
 2. **[已核实] 「商业版」不是一个独立分支，而是同一产品的官方发布线**：桌面端 + 浏览器插件 + 官网 + 支付/积分体系；开源仓库 MIT-NC，README 明说「生产安装包与本仓库并非同步版本……开源版本通常会有一定滞后」。来源：https://github.com/Jamailar/Beav/blob/main/README.md#%E5%BC%80%E6%BA%90%E7%89%88%E6%9C%AC%E8%AF%B4%E6%98%8E
 3. **[已核实] 版本对应关系**：当前生产 App = `2.8.4`（2026-09-17），浏览器插件 = `2.7.18`（2026-09-18 上架 Chrome 商店，500KiB，333 用户，无评分）。我们本地副本 `2.7.18.65535 / version_name 2.7.18` 与之对齐。来源：https://www.getbeav.com/download 、https://chromewebstore.google.com/detail/dhfphfekcjahljnefpdjoidehnhhoeie
-4. **[已核实] Native Host 归属确认**：插件更新/上报域为 `redbox.ziz.hk`（`/api/updates/plugin`、`/download`）、`api.ziz.hk`（`/beav/v1/public-feedback`）；`com.redbox.browser_control` 即这条产品线的宿主名。来源：本机 `F:\科研大师兄\自媒体工作台\Easel-official\extensions\beav-capture\manifest.json` + `background.js` 内 `native://beav/knowledge`
+4. **[已核实] Native Host 归属确认**：插件更新/上报域为 `redbox.ziz.hk`（`/api/updates/plugin`、`/download`）、`api.ziz.hk`（`/beav/v1/public-feedback`）；`com.redbox.browser_control` 即这条产品线的宿主名。来源：本机 `<仓库根目录>\extensions\beav-capture\manifest.json` + `background.js` 内 `native://beav/knowledge`
 5. **[已核实] 知识库不是云盘，是本地文件库 + 索引层**：隐私政策原文「本地工作区、素材、稿件、知识库、配置、日志等默认保存在您的设备上」「仅当您使用官方 AI、云端处理、联网模型或反馈上传时，这些内容才会离开本地设备」。来源：https://www.getbeav.com/privacy
 6. **[已核实] 知识库检索已从向量转向「Agentic Search（文件系统 + grep/FTS）」**：仓库 ROADMAP 里程碑「2026-01-30 - Agentic Search 与知识库聊天：**移除向量检索**，转向 Agentic Search」；技术债条目「Embedding 检索残留 / 已清理完毕」。来源：https://github.com/Jamailar/Beav/blob/main/ROADMAP.md
 7. **[已核实] 收费边界是「授权 + 积分」两条线，且互相独立**：用户协议原文「会员身份与积分账户相互独立。购买、持有或升级会员**不代表**获得免费 AI 调用额度，不免除积分消耗」。来源：https://github.com/Jamailar/Beav/blob/main/desktop/src/features/legal/legalDocuments.ts（与官网 https://www.getbeav.com/privacy 同源条款）
@@ -308,5 +308,5 @@ Issues
 - https://xm.hongbaohe.com/ · https://play.google.com/store/apps/details?id=com.redbox.iot.app.redbox&hl=zh_CN · https://play.google.com/store/apps/details?id=mv.com.redboxapp&hl=zh_CN
 
 本机
-- `F:\科研大师兄\自媒体工作台\Easel-official\extensions\beav-capture\manifest.json` / `background.js` / `sidepanel.js`
-- `F:\科研大师兄\自媒体工作台\Easel\docs\BEAV_COMPARISON_20260910.md`（未展开，属另一条调研线）
+- `<仓库根目录>\extensions\beav-capture\manifest.json` / `background.js` / `sidepanel.js`
+- `<旧树目录>\docs\BEAV_COMPARISON_20260910.md`（未展开，属另一条调研线）

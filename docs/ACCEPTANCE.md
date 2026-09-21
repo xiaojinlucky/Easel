@@ -1,6 +1,6 @@
 # 本机交付与验收记录
 
-验收日期：2026-09-10。项目：`F:\科研大师兄\Easel`。结论：本机创作、素材、订阅、媒体交接和运行恢复闭环通过；三路独立审查发现的实际缺陷已修复并复核。没有对外发布，也没有把未登录的平台写成已验收。
+验收日期：2026-09-10。项目：`<旧树目录>`。结论：本机创作、素材、订阅、媒体交接和运行恢复闭环通过；三路独立审查发现的实际缺陷已修复并复核。没有对外发布，也没有把未登录的平台写成已验收。
 
 ## 2026-09-10 午后账号档案与商业版实测（最新）
 
@@ -17,7 +17,7 @@
 ## 用户入口
 
 - [工作台](http://127.0.0.1:7860/)、[Postiz](http://localhost:4007/)、[FreshRSS](http://localhost:8089/)。
-- 桌面快捷方式：`D:\Desktop\Easel 自媒体工作台.lnk`。
+- 桌面快捷方式：`<桌面>\Easel 自媒体工作台.lnk`。
 - [部署说明](LOCAL_DEPLOYMENT.md)、[复用与社区研究](REUSE_AND_RESEARCH.md)、[备份恢复](BACKUP_RESTORE.md)。
 
 后续桌面交付：已增加 Electron 独立 Windows 程序，桌面与开始菜单快捷方式直接指向 `Easel.exe`。冷启动、三页实际渲染、标签状态保留、关闭后后台继续、重复启动单实例通过；两路独立审查通过。详见 [桌面版说明](DESKTOP.md)。原版浏览器对话列表和浏览器登录态不自动迁移，业务数据与后端配置继续共用。
@@ -100,19 +100,19 @@ Luna 监测主 Codex 周窗口。最终读取时间为北京时间 2026-09-10 05
 
 ## 2026-09-21 三条线合并与上游欠账回收（集成树 `integrate/20260921`）
 
-工作目录：`F:\科研大师兄\自媒体工作台\Easel-integrate`（从 `snapshot/official-active-0919` 切出）。现役 7870 进程、`Easel-official`、`Easel-beav-kb`、`Easel-merge-wip` 全程未被写入，未做任何推送。
+工作目录：`<仓库根目录>`（从 `snapshot/official-active-0919` 切出）。现役 7870 进程、`Easel-official`、`Easel-beav-kb`、`Easel-merge-wip` 全程未被写入，未做任何推送。
 
 ### 事实（可复核）
 
 - 提交链：`aa4f7f5` 合入 Beav 知识库线 13 个提交 → `36c1fbd` 合入两树吸收线 → `efeb1dd` 还原 29 个纯上游文件 + 三方合并 `weixin_mp_stats.py` + 补声明依赖 → `eecd31d` 前向合并 `web/app.py`（22 处冲突）与 `easel/persona.py`。
 - 全量测试：**472 passed / 5 skipped / 0 failed**。本轮起点是 `90 failed / 352 passed / 17 errors`。
-  复核：`cd 'F:/科研大师兄/自媒体工作台/Easel-integrate'; & 'F:/科研大师兄/自媒体工作台/Easel-official/.venv/Scripts/python.exe' -m pytest -q`
+  复核：`cd '<仓库根目录>'; & '<仓库根目录>/.venv/Scripts/python.exe' -m pytest -q`
 - 那 90 条红测试不是合并造成的：同一 venv 在 `Easel-merge-wip` 自己分支上按同批文件跑，得到 `90 failed / 77 passed / 17 errors`。它们是 `22878d5` 那次"保留文件、丢内容"的报警器——上游 `web/app.py` 少 44 个函数 / 10 个接口和整套本机边界。（该工作树已于同日收尾时删除，分支 `merge/easel-into-official` 仍在；要复现这条结论，重新 `git worktree add` 那个分支再按文件跑一遍。）
 - 监听收紧已在分支上生效（默认 `127.0.0.1` + Origin 白名单 + `TrustedHostMiddleware` + 写请求 `local_write_guard`）。真机复核（备用端口，不碰 7870/18789）：
   `& '...Easel-official/.venv/Scripts/python.exe' -m uvicorn web.app:app --host 127.0.0.1 --port 7999`
   期望：`netstat -ano | Select-String ':7999'` 只有 `127.0.0.1`；GET `/api/research/sources` → 200；`POST /api/research/beav-host` 带 `Origin: https://evil.example` → 403；带 `Host: 192.168.1.5:7999` → 400；带 `Origin: http://127.0.0.1:7870` 的 POST → 200。实测结果与期望逐条一致。
 - 收敛性：`git merge-base --is-ancestor 0b22a04 HEAD` 为真；相对 fork main `0 behind / 43 ahead`（本轮后 ahead 增加），相对 09-19 快照 `0 behind / 91 ahead`。回 main 是快进，不需要改写历史。
-- 备份：`F:\科研大师兄\自媒体工作台\merge-backup-20260921\three-branches.bundle`（合并前三条分支 tip）。
+- 备份：`<工作区>\merge-backup-20260921\three-branches.bundle`（合并前三条分支 tip）。
 
 ### 三处同名实现，这次明确选了一边
 
@@ -138,7 +138,7 @@ Luna 监测主 Codex 周窗口。最终读取时间为北京时间 2026-09-10 05
 ### 已经清掉的（都有复核方式）
 
 - 工作树 `Easel-beav-kb`（549M）与 `Easel-merge-wip`（459M）已删除。删除前逐条验证：两条分支 `research/beav-kb-parity`、`merge/easel-into-official` 都已包含在本分支（`git merge-base --is-ancestor <分支> HEAD` 为真）、`git status --short` 为空、`git stash list` 为 0。分支本身和合并前备份 `merge-backup-20260921/three-branches.bundle` 都保留，要恢复目录只需 `git worktree add`。
-  复核：`git -C 'F:/科研大师兄/自媒体工作台/Easel-integrate' worktree list` → 只剩 `Easel-official` 和 `Easel-integrate` 两棵。
+  复核：`git -C '<仓库根目录>' worktree list` → 只剩 `Easel-official` 和 `Easel-integrate` 两棵。
 - 吸收线带进来的 10 个前端死文件已删（`6421a2e`）：`WechatPage/SettingsPanel/AccountProfilePanel/AuthGuide/EnvBoard/CapabilitiesPage/BrushEntry/settingsIcons.tsx` + `lib/capabilityMenu.ts` + `lib/skillDisplayNames.ts`。判据是零外部 import、`tsc -b` 的 85 个错全部落在这批文件内、`vite build` 产物哈希与删除前一致；删后 `tsc -b` 归零。
 - 三棵树的 `__pycache__` 与 `.pytest_cache` 共 30 个目录已清空（约 5M，Python 会自动重建）。
 - 现役树里 6 个调试脚本（`_build_fe.py`、`_cleanup.py`、`_find_node.py`、`_qna_e2e.py`、`_restart_web.py`、`_shot_guide.py`）与 `Easel/.runtime/_cleanup_tmp.txt`（早期清理循环的一次性清单）已删除。
@@ -152,10 +152,10 @@ Luna 监测主 Codex 周窗口。最终读取时间为北京时间 2026-09-10 05
 
 ### 明确保留的（含原因）
 
-- 旧树 `F:\科研大师兄\自媒体工作台\Easel`（7.7G）整体不动，用户要求不归档。它的 `.runtime`（5.5G）里有真实浏览器 profile、登录态和 `images/`（3.8G）素材，`.runtime` 内的 `_old_app.py`、`before-auth-migration.json.bak` 属迁移期回滚件，按回滚材料保留。
+- 旧树 `<旧树目录>`（7.7G）整体不动，用户要求不归档。它的 `.runtime`（5.5G）里有真实浏览器 profile、登录态和 `images/`（3.8G）素材，`.runtime` 内的 `_old_app.py`、`before-auth-migration.json.bak` 属迁移期回滚件，按回滚材料保留。
   收尾时按命令行查过进程：当前监听 18789 的 openclaw 网关（pid 46380）**就是从 `Easel\.runtime\node_modules\...` 启动的**，所以旧树 `.runtime/node_modules`（669M）是在用资源，不是可回收缓存，不能删。
 - 根目录 `AGENTS.md`、`CLAUDE.md`、`工具复用台账.md`（AGENTS 明确把它钉在根目录）留在原地。
-- 5 份已完成使命的历史交付物移到了 `F:\科研大师兄\自媒体工作台\archive\2026-09-合并与调研\`（4 份 show-me HTML + `两树合并方案-2026-09-19.md`），内容未改，旁边放了一份 `README.md` 说明各自作用和被谁取代。
+- 5 份已完成使命的历史交付物移到了 `<工作区>\archive\2026-09-合并与调研\`（4 份 show-me HTML + `两树合并方案-2026-09-19.md`），内容未改，旁边放了一份 `README.md` 说明各自作用和被谁取代。
 - 根目录其余同级项目目录（`RedBox`、`beav-appdata`、`beav-workspace`、`inspiration_collector_v0`、`publisher-assistant`、`workbuddy-studio`、`xhs_content_workbench`、`炉子`）不属于本次"工作台各版本"范围，只读了大小和内容，未做任何修改。
 
 ### 收尾后仍挂着的事

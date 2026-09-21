@@ -1,6 +1,6 @@
 # 07 · 验收记录：阶段 0/1/2 交付清单与复核方式（worktree 内，未合主树）
 
-> 分支 `research/beav-kb-parity`，worktree `F:\科研大师兄\自媒体工作台\Easel-beav-kb`。
+> 分支 `research/beav-kb-parity`，worktree `<仓库根目录>`。
 > 每阶段一个提交，等你点头后才 cherry-pick 回 `Easel-official`；本文件只记录已经落盘的东西和**怎么自己验**。
 > 三档分开写：**已验证事实**（跑过命令、有期望值）、**推断**（读代码得出、没跑）、**未做**（明确不在本轮范围）。
 
@@ -36,9 +36,9 @@
 不是旧环境专供（唯一区别：现役环境里 `ocr_available()` 为 True，隔壁为 False；用例只断言它是 bool，不受影响）。
 
 ```bash
-cd "F:/科研大师兄/自媒体工作台/Easel-beav-kb"
-PY="F:/科研大师兄/自媒体工作台/Easel-official/.venv/Scripts/python.exe"   # 现役环境（推荐）
-# 备选：PY="F:/科研大师兄/自媒体工作台/Easel/.venv/Scripts/python.exe"    # 缺 rapidocr
+cd "<仓库根目录>"
+PY="<仓库根目录>/.venv/Scripts/python.exe"   # 现役环境（推荐）
+# 备选：PY="<旧树目录>/.venv/Scripts/python.exe"    # 缺 rapidocr
 "$PY" -m pytest -q                 # 期望：3 failed, 268 passed, 5 skipped
 "$PY" -m pytest tests/test_research_enrich.py -q   # 期望：32 passed
 ```
@@ -247,7 +247,7 @@ cd web/frontend && npm run build   # 期望：tsc 无错；单 JS 460.22 kB(gzip
 - **运行时现状（2026-09-21 实测，不是推断）**：`netstat` 显示 **7870 正在 `0.0.0.0` 上监听**（pid 32096，00:02:52 起），
   网关 18789 只绑 `127.0.0.1`。该实例跑的是 official HEAD 的代码（`GET /api/research/index-status` → 404，
   `GET /api/research/status` → 200 且响应里还没有 `ocr_available` 这些本分支才有的字段）。
-  `%LOCALAPPDATA%\easel-native-host\easel-root.txt` 当前内容是 `F:\科研大师兄\自媒体工作台\Easel-official`
+  `%LOCALAPPDATA%\easel-native-host\easel-root.txt` 当前内容是 `<仓库根目录>`
   ——浏览器采集真的落进现役树。合起来意味着：**上面 H1 那条局域网暴露是此刻成立的事实，不是假设**：
   本机无鉴权 `GET http://127.0.0.1:7870/api/research/sources` 实测 **200、约 9.7 KB** 素材数据
   （official HEAD `web/research_api.py:26` 就有这条路由，绑在 `0.0.0.0` 上＝同网段可达）。
@@ -264,7 +264,7 @@ cd web/frontend && npm run build   # 期望：tsc 无错；单 JS 460.22 kB(gzip
   两侧都往里加代码（那条线 +349/−13，本线 +1184/−81），**先合哪边，后合的那边就要手动解**。
   复核命令：
   ```bash
-  cd "F:/科研大师兄/自媒体工作台/Easel-official"
+  cd "<仓库根目录>"
   git worktree list
   comm -12 <(git diff --name-only 21c8e8d...6fdb281 | sort) <(git diff --name-only 21c8e8d...HEAD | sort)
   ```

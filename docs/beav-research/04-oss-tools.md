@@ -211,4 +211,4 @@ Beav 知识库的四个核心体验：**收藏即入库 → 自动标签 → 全
 
 写作/prompt：[StyleLLM](https://github.com/stylellm/stylellm_models) · [promptfoo](https://github.com/promptfoo/promptfoo) · [Langfuse LICENSE](https://github.com/langfuse/langfuse/blob/main/LICENSE) · [Agenta LICENSE](https://github.com/Agenta-AI/agenta) · [promptflow](https://github.com/microsoft/promptflow) · [Dify LICENSE 附加条件](https://github.com/langgenius/dify/blob/main/LICENSE) · [Open WebUI](https://github.com/open-webui/open-webui)
 
-对标件与被替换件：[Jamailar/Beav](https://github.com/Jamailar/Beav)（MIT-NC）· 本地 `F:\科研大师兄\自媒体工作台\Easel-official\extensions\beav-capture\LICENSE.Beav-MIT-NC.txt`、`NOTICE.Easel.txt`
+对标件与被替换件：[Jamailar/Beav](https://github.com/Jamailar/Beav)（MIT-NC）· 本地 `<仓库根目录>\extensions\beav-capture\LICENSE.Beav-MIT-NC.txt`、`NOTICE.Easel.txt`

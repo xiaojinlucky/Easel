@@ -2,7 +2,7 @@
 
 ## 当前结论（2026-09-10 午后增量）
 
-用户新安装的 `D:/Beav/beav.exe` 2.7.20 已完成真实小红书账号建档、定位、写作风格生成和一次后续本地创作。Easel 已增加对应的来源预览、后台诊断、可编辑建议、生效版本和创作版本记录。下面把真实执行、代码行为和仍未验证的事项分开。
+用户新安装的 `<Beav 安装目录>/beav.exe` 2.7.20 已完成真实小红书账号建档、定位、写作风格生成和一次后续本地创作。Easel 已增加对应的来源预览、后台诊断、可编辑建议、生效版本和创作版本记录。下面把真实执行、代码行为和仍未验证的事项分开。
 
 这不是全平台商业等效认证。公众号真实授权、持续同行监测、平台草稿箱写入和发布后指标闭环仍未通过本轮验收；早先对用户自行复刻版的测试保留在本文后半部分，不能算商业版证据。
 
@@ -99,7 +99,7 @@ flowchart LR
 | 本地创作交付 | 官方会话读了定位和写作技能；文件写入与工具读回成功；原生文件链接预览失败 | 实际档案v1进入创作，草稿与创作依据文件、预览和下载API、原生内容库读回均通过 |
 | 稿件与平台版本 | 手动登记并预览成功；同一原稿关联公众号、小红书、口播稿三个未生成版本。小红书/公众号页均显示素材包不可用，发布按钮禁用 | 当前内容库能打开文档，但一个业务稿件下的多平台版本、素材包准备状态和平台草稿回执还未统一 |
 
-手动稿件成品：`C:/Users/Administrator/.redconvert/spaces/default/manuscripts/账号画像联动验收-手动稿件登记.md`；SHA256 `dc366b1e894856e6792c4c71564d128d0182ea1eb42c408ffb575579c26a6033`。此步骤未调用模型、未发布、未排期；记录保存在 `creation-verification.json` 的 `later_manual_manuscript_test`。
+手动稿件成品：`%USERPROFILE%/.redconvert/spaces/default/manuscripts/账号画像联动验收-手动稿件登记.md`；SHA256 `dc366b1e894856e6792c4c71564d128d0182ea1eb42c408ffb575579c26a6033`。此步骤未调用模型、未发布、未排期；记录保存在 `creation-verification.json` 的 `later_manual_manuscript_test`。
 
 清理记录：自动审批拒绝删除8个临时采集调试文件，仅返回 `blocked by policy`；文件保留于 `.runtime/acceptance-20260910/onboarding/`，包括 `xhs-reader-diagnostic/`。不分享其中原始网络记录；本次未绕过拒绝，正式证据与生产服务保留。
 
@@ -120,11 +120,11 @@ flowchart LR
 
 日期：2026-09-10。用户后续明确纠正：本轮打开的 Beav 是其自行复刻版，不是商业版。下文所有 Beav UI、MCP、模型、账户权益和文件结果均仅指该本地复刻版，不能代表商业产品。商业版入口正在重新定位；逐项商业对比尚未完成。真实小红书主页链接已收到，尚未导入商业版。
 
-后续安装核验：用户将新下载商业版安装至 `D:/Beav`，`D:/Desktop/Beav.lnk` 已读回指向 `D:/Beav/beav.exe`，版本2.7.20。新旧exe SHA256相同（`9845ff3747f0d58df373fb270500c8a8bb7b31a7d9a7339be5b29051bbea910b`），仅证明二进制相同，不证明配置、内容目录或测试身份相同。新进程47332没有主窗口，现存窗口3872728及共享连接发现记录仍对应70936；单实例竞争是推断。旧窗口空白，正常关闭动作未生效，已请求用户完全退出后从D盘快捷方式正常打开。商业版账号导入尚未执行。
+后续安装核验：用户将新下载商业版安装至 `<Beav 安装目录>`，`<桌面>/Beav.lnk` 已读回指向 `<Beav 安装目录>/beav.exe`，版本2.7.20。新旧exe SHA256相同（`9845ff3747f0d58df373fb270500c8a8bb7b31a7d9a7339be5b29051bbea910b`），仅证明二进制相同，不证明配置、内容目录或测试身份相同。新进程47332没有主窗口，现存窗口3872728及共享连接发现记录仍对应70936；单实例竞争是推断。旧窗口空白，正常关闭动作未生效，已请求用户完全退出后从D盘快捷方式正常打开。商业版账号导入尚未执行。
 
 ## 已确认的环境与边界
 
-- Beav 快捷方式目标为 `C:/Users/Administrator/AppData/Local/Beav/beav.exe`，版本 2.7.20。Creator MCP 和本地服务属于同一个本地复刻程序进程。后续通过 Windows Computer Use 成功展开原生主窗口，早期“只有辅助窗口”的观察已经过时。
+- Beav 快捷方式目标为 `%USERPROFILE%/AppData/Local/Beav/beav.exe`，版本 2.7.20。Creator MCP 和本地服务属于同一个本地复刻程序进程。后续通过 Windows Computer Use 成功展开原生主窗口，早期“只有辅助窗口”的观察已经过时。
 - 原生账户菜单实际显示“个人免费版”、余额 7.36 积分；博主订阅表单显示预计 19–114 积分。该复刻版界面不能证明商业版账号权益。本轮没有充值、购买、绕过权益或提交该订阅请求，不能据此声称服务端已返回余额不足。
 - Beav 原生模型选择器为 `gpt-5.6-luna`。初次 Creator 请求因本机 18787 订阅桥未启动而失败；启动用户原有 `subscription-bridge/Start-Bridge.ps1` 后，同一任务成功续办。保留服务运行，未更换模型供应商。
 - Easel 使用既有官方 Codex 订阅路径，当前测试配置为 `gpt-6-astra / low`。两边模型不同，样本文案对比不是受控模型性能基准。
@@ -168,7 +168,7 @@ flowchart LR
 
 任务 `acp-run-1789016719276-4`，续办revision2，13:11:18开始，约13:22:58结束。三份文件真实存在于：
 
-`C:/Users/Administrator/.redconvert/spaces/default/archives/acceptance-example-material-to-brief-multiplatform-drafts/`
+`%USERPROFILE%/.redconvert/spaces/default/archives/acceptance-example-material-to-brief-multiplatform-drafts/`
 
 文件为 `brief.md`、`xiaohongshu-draft.md`、`wechat-draft.md`，另有来源和验收记录。独立审查确认三份SHA256与其验收记录一致。因此“没有保存文件”是错误结论；实际缺口是**未登记到 Creator 所要求的产物合同**。Creator只返回一个响应artifact，三项requiredArtifacts均missing。
 

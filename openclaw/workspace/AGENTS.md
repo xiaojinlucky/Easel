@@ -105,7 +105,7 @@ python skills/openclaw/skill-publish-log/scripts/log.py record --platform <平�
 
 ## 运行时项目根
 
-`F:\科研大师兄\自媒体工作台\Easel-official`
+`<仓库根目录>`
 
 技能只在项目根 `skills/openclaw/*/SKILL.md`。对话每轮会附带「技能导航」命中列表；先读这些文件，再按流程执行。不要在 OpenClaw workspace 目录里搜技能。可用 `python skills/shared/scripts/skill_route.py -q "用户原话"` 复核导航。
 
