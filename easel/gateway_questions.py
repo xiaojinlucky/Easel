@@ -31,9 +31,17 @@ from pathlib import Path
 # --- path resolution -------------------------------------------------------
 
 HOME = Path.home()
-# Easel runs OpenClaw under an isolated `easel` profile at ~/.openclaw-easel/;
-# allow an override for non-default setups.
-PROFILE_DIR = Path(os.environ.get("EASEL_OPENCLAW_STATE_DIR") or (HOME / ".openclaw-easel"))
+# Easel runs OpenClaw under an isolated profile; default to the runtime's
+# profile dir (~/.openclaw-easel-studio for PROFILE=easel-studio) instead of
+# a hardcoded `easel` profile, so the question bridge reads the SAME sqlite
+# state DB the running gateway actually uses. EASEL_OPENCLAW_STATE_DIR still
+# wins for non-default setups.
+try:
+    from easel.runtime import PROFILE
+    _DEFAULT_STATE_DIR = HOME / f".openclaw-{PROFILE}"
+except ImportError:  # pragma: no cover - fallback when imported standalone
+    _DEFAULT_STATE_DIR = HOME / ".openclaw-easel"
+PROFILE_DIR = Path(os.environ.get("EASEL_OPENCLAW_STATE_DIR") or _DEFAULT_STATE_DIR)
 PROFILE_STATE_DIR = PROFILE_DIR / "state"
 PROFILE_DB = PROFILE_STATE_DIR / "openclaw.sqlite"
 
@@ -279,7 +287,7 @@ class GatewayClient:
             ws.close()
             raise
 
-        scopes = ["operator.admin", "operator.read", "operator.write"]
+        scopes = ["operator.questions", "operator.read", "operator.write"]
         payload = "|".join([
             "v2", dev["device_id"], "cli", "cli", "operator",
             ",".join(scopes), str(ts), dev["token"], nonce,
@@ -313,6 +321,13 @@ class GatewayClient:
             if msg.get("id") == "1":
                 ok = msg.get("ok", False)
                 if not ok:
+                    err = msg.get("error") or {}
+                    reason = (err.get("details") or {}).get("reason") or err.get("code") or ""
+                    if "scope-upgrade" in str(reason) or "PAIRING_REQUIRED" in str(err.get("code")):
+                        raise GatewayQuestionError(
+                            "网关设备授权不足：问答题卡桥接需要 operator.questions 权限。"
+                            "请在本机 OpenClaw 控制台重新配对/授权该设备（cli），或运行 "
+                            "`easel doctor` 检查网关配对状态。")
                     raise GatewayQuestionError(
                         f"gateway connect failed: {json.dumps(msg.get('error'))[:200]}")
                 break
@@ -362,6 +377,29 @@ class GatewayClient:
     def get_question(self, question_id: str) -> dict | None:
         payload = self._rpc("question.get", {"id": question_id})
         return (payload or {}).get("question")
+
+    def request_question(self, session_key: str, questions: list[dict],
+                         timeout_ms: int = 300000) -> dict:
+        """Register a pending ask_user card (question.request). header is required."""
+        items = []
+        for q in questions:
+            item = {
+                "header": str(q.get("header") or "请选择"),
+                "question": str(q.get("question") or "请选择一项"),
+                "questionId": str(q.get("questionId") or q.get("id") or "q1"),
+            }
+            opts = q.get("options") or []
+            item["options"] = [
+                {"label": str(o.get("label") if isinstance(o, dict) else o),
+                 **({"description": o.get("description")} if isinstance(o, dict) and o.get("description") else {})}
+                for o in opts
+            ]
+            items.append(item)
+        return self._rpc("question.request", {
+            "sessionKey": session_key,
+            "questions": items,
+            "timeoutMs": timeout_ms,
+        }) or {}
 
     def resolve(self, question_id: str, answers: dict,
                 resolved_by: str | None = None) -> dict:

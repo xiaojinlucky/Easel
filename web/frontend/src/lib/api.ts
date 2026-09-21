@@ -43,9 +43,11 @@ export interface PersonaDetail {
 export interface SkillItem {
   name: string;
   description: string;
+  summary?: string;
   layer: string;
   needsApi: boolean;
   apiConfigured: boolean;
+  enabled?: boolean;
 }
 
 export interface ApiKeySpec {
@@ -74,6 +76,7 @@ export interface SkillDetail {
   name: string;
   layer: string;
   description: string;
+  summary?: string;
   body: string;
   needsApi: boolean;
   apiConfigured: boolean;
@@ -233,6 +236,31 @@ export function fetchSkills(): Promise<SkillItem[]> {
   return request<SkillItem[]>('/api/skills');
 }
 
+export function setSkillEnabled(name: string, enabled: boolean): Promise<{ ok: boolean; name: string; enabled: boolean }> {
+  return request(`/api/skills/${encodeURIComponent(name)}/enabled`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled }),
+  });
+}
+
+export interface SkillRouteHit {
+  name: string;
+  layer: string;
+  layerLabel: string;
+  description: string;
+  summary?: string;
+  path: string;
+}
+
+export function fetchSkillRoute(q: string, stage?: string, pin?: string): Promise<{ matches: SkillRouteHit[] }> {
+  const params = new URLSearchParams();
+  if (q.trim()) params.set('q', q.trim());
+  if (stage) params.set('stage', stage);
+  if (pin) params.set('pin', pin);
+  return request(`/api/skills/route?${params.toString()}`);
+}
+
 export function fetchSkillDetail(name: string): Promise<SkillDetail> {
   return request<SkillDetail>(`/api/skill/${encodeURIComponent(name)}`);
 }
@@ -251,6 +279,118 @@ export function executeSkill(skill: string, input: string, persona?: string): Pr
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ skill, input, persona: persona || undefined }),
+  });
+}
+
+export interface WorkflowNode {
+  id: string;
+  type: 'input' | 'skill';
+  title: string;
+  skill: string;
+  prompt: string;
+  layer?: string;
+  x: number;
+  y: number;
+}
+
+export interface WorkflowEdge {
+  id: string;
+  source: string;
+  target: string;
+}
+
+export interface WorkflowSummary {
+  id: string;
+  name: string;
+  updated: number;
+  nodeCount: number;
+  edgeCount: number;
+  stepCount?: number;
+  skills?: string[];
+  persona?: string;
+}
+
+export interface WorkflowGraph {
+  id: string;
+  name: string;
+  updated?: number;
+  persona?: string;
+  nodes: WorkflowNode[];
+  edges: WorkflowEdge[];
+}
+
+export interface WorkflowStep {
+  id: string;
+  title: string;
+  skill: string;
+  ok: boolean;
+  output: string;
+  error: string;
+}
+
+export interface WorkflowRunResult {
+  id: string;
+  name: string;
+  ok: boolean;
+  waves: string[][];
+  steps: WorkflowStep[];
+}
+
+export function fetchWorkflows(): Promise<WorkflowSummary[]> {
+  return request<WorkflowSummary[]>('/api/workflows');
+}
+
+export function fetchWorkflow(id: string): Promise<WorkflowGraph> {
+  return request<WorkflowGraph>(`/api/workflows/${encodeURIComponent(id)}`);
+}
+
+export function createWorkflow(name = '未命名工作流'): Promise<WorkflowGraph> {
+  return request<WorkflowGraph>('/api/workflows', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  });
+}
+
+export function saveWorkflow(graph: WorkflowGraph): Promise<WorkflowGraph> {
+  return request<WorkflowGraph>(`/api/workflows/${encodeURIComponent(graph.id)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(graph),
+  });
+}
+
+export interface WorkflowSuggestStep {
+  name: string;
+  layer: string;
+  layerLabel: string;
+  summary: string;
+  description: string;
+}
+
+export function suggestWorkflow(message: string): Promise<{ query: string; steps: WorkflowSuggestStep[]; reply: string }> {
+  return request('/api/workflows/suggest', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message }),
+  });
+}
+
+export function deleteWorkflow(id: string): Promise<{ ok: boolean; deleted: string }> {
+  return request(`/api/workflows/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
+export function runWorkflow(
+  id: string,
+  input: string,
+  persona?: string,
+  signal?: AbortSignal,
+): Promise<WorkflowRunResult> {
+  return request<WorkflowRunResult>(`/api/workflows/${encodeURIComponent(id)}/run`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ input, persona: persona || undefined }),
+    signal,
   });
 }
 
@@ -490,6 +630,18 @@ export interface AnalyticsPlatform {
   loggedIn: boolean;
 }
 
+export interface AnalyticsMetric {
+  label: string;
+  value: string | number;
+  vs: string;
+}
+
+export interface AnalyticsOverviewItem {
+  key: string;
+  label: string;
+  value: number | null;
+}
+
 export interface AccountAnalytics {
   platform: string;
   name: string;
@@ -499,7 +651,11 @@ export interface AccountAnalytics {
   likes: number | null;
   following: number | null;
   posts: number | null;
-  metrics: { label: string; value: string; vs: string }[];
+  reads?: number | null;
+  overview?: AnalyticsOverviewItem[];
+  metrics: AnalyticsMetric[];
+  period_metrics?: Partial<Record<'last' | 'day' | 'week' | 'month' | 'year', AnalyticsMetric[]>>;
+  metrics_title?: string;
   notes: { title: string; url: string; cover?: string; stat?: string }[];
   growth: Record<'last' | 'day' | 'week' | 'month' | 'year',
     { followers: number | null; likes: number | null; posts: number | null; since_days: number | null } | null>;
@@ -549,6 +705,8 @@ export function streamChat(
   onRecoveryUnavailable?: () => void,
   attachments: UploadedFile[] = [],
   onQuestion?: (q: ChatQuestion) => void,
+  stage?: string,
+  skill?: string,
 ): AbortController {
   const controller = new AbortController();
   let lastEventId = 0;
@@ -633,7 +791,7 @@ export function streamChat(
         const res = first
           ? await fetch(`${BASE}/api/chat/stream`, {
               method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ message, persona: persona || undefined, sessionId, turnId, attachments }),
+              body: JSON.stringify({ message, persona: persona || undefined, sessionId, turnId, attachments, stage: stage || undefined, skill: skill || undefined }),
               signal: controller.signal,
             })
           : await fetch(`${BASE}/api/chat/jobs/${encodeURIComponent(turnId || '')}/stream?after=${lastEventId}`, {

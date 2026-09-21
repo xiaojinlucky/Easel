@@ -9,6 +9,7 @@ import subprocess
 import urllib.request
 import urllib.error
 from pathlib import Path
+from easel.runtime import openclaw_command, runtime_env, subscription_status
 
 from easel.openclaw_cmd import openclaw_base_cmd
 
@@ -41,7 +42,7 @@ def _node_version_ok(strict: bool) -> bool:
     """
     try:
         result = subprocess.run(
-            ["node", "--version"],
+            [openclaw_command()[0], "--version"],
             capture_output=True, text=True, timeout=10,
         )
         if result.returncode != 0:
@@ -101,7 +102,12 @@ def _chromium_available() -> bool:
     try:
         from playwright.sync_api import sync_playwright
         with sync_playwright() as playwright:
-            return Path(playwright.chromium.executable_path).is_file()
+            browser = playwright.chromium.launch(headless=True)
+            page = browser.new_page()
+            page.set_content('<title>Easel browser check</title>')
+            available = page.title() == 'Easel browser check'
+            browser.close()
+            return available
     except (ImportError, OSError, RuntimeError):
         return False
 
@@ -196,8 +202,11 @@ def cmd_doctor(_args) -> int:
     all_ok &= _check("FFmpeg", shutil.which("ffmpeg") is not None,
                       "媒体处理需要 FFmpeg；请安装后重试")
 
-    # 2. openclaw command + 版本
-    has_openclaw = shutil.which("openclaw") is not None
+    # 2. openclaw：本机工作台优先查独立运行时；找不到再退回 PATH。
+    try:
+        has_openclaw = Path(openclaw_command()[-1]).is_file()
+    except RuntimeError:
+        has_openclaw = shutil.which("openclaw") is not None
     all_ok &= _check("openclaw command", has_openclaw,
                       "请安装 openclaw: npm i -g openclaw")
     if has_openclaw:
@@ -220,9 +229,12 @@ def cmd_doctor(_args) -> int:
                       "运行 python3 -m playwright install chromium")
 
     # 3. .env file with valid key
-    env_ok = _env_key_valid()
-    all_ok &= _check(".env (API Key)", env_ok,
-                      "填 ANTHROPIC_API_KEY，或 EASEL_LLM_API_KEY + EASEL_LLM_BASE_URL")
+    try:
+        status = subscription_status()
+        all_ok &= _check('ChatGPT subscription', status['logged_in'], '在 AI 模型设置中通过官方 Codex 登录')
+        print(f"  Weekly remaining (informational): {status['weekly_remaining']}%")
+    except Exception as exc:
+        all_ok &= _check('ChatGPT subscription', False, str(exc))
 
     # 4. OpenClaw gateway running
     gw_ok = _gateway_healthy()

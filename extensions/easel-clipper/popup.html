@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="UTF-8">
+<title>Easel 素材采集</title>
+<link rel="stylesheet" href="popup.css">
+<body>
+<h1>保存到 Easel</h1>
+<p>有选区则保存选区 HTML；否则用 Readability 抽正文，再转 Markdown。点保存前可预览。</p>
+<label>配对码<input id="token" type="password" autocomplete="off" placeholder="从工作台「调研」复制"></label>
+<label>调研主题<input id="topic" maxlength="100" placeholder="选填"></label>
+<label>预览<textarea id="preview" rows="10" placeholder="点击「读取并预览」"></textarea></label>
+<div class="row">
+  <button id="previewBtn" type="button">读取并预览</button>
+  <button id="save" type="button">保存到素材库</button>
+</div>
+<div id="status" role="status"></div>
+<a href="http://127.0.0.1:7870/" target="_blank" rel="noreferrer">打开本地工作台 ↗</a>
+<script src="vendor/turndown.browser.umd.js"></script>
+<script src="vendor/gfm-umd.js"></script>
+<script src="popup.js"></script>
+</body>
+</html>

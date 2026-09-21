@@ -4,7 +4,8 @@
 登录 runner 是长流程（起浏览器→出二维码→等扫码→持久化），Web 后端不直接管浏览器，
 只**读这个 JSON 文件**判断进度。原子写，避免读到半截。
 
-状态机：starting → qr_ready → [scanned] → [sms_required → verifying] → success | expired | error
+状态机：starting → window_login → qr_ready → [scanned] → [sms_required → verifying] → success | expired | error
+（window_login：桌面弹出真实浏览器窗口扫码，前端继续轮询，不把进程还活着当成失败）
 （sms_required：扫码后平台风控要求短信验证，runner 等前端回填验证码——见 read_sms_code；
   verifying：已拿到验证码、正在提交校验，前端显示转圈；校验失败会退回 sms_required 让重输）
 """
@@ -15,7 +16,7 @@ import os
 import tempfile
 import time
 
-STATES = ("starting", "qr_ready", "scanned", "sms_required", "verifying",
+STATES = ("starting", "window_login", "qr_ready", "scanned", "sms_required", "verifying",
           "success", "expired", "error")
 
 

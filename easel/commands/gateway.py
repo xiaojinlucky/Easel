@@ -12,6 +12,15 @@ GATEWAY_SCRIPT = PROJECT_ROOT / "scripts" / ("gateway.ps1" if os.name == "nt" el
 
 def cmd_gateway(args) -> int:
     action = getattr(args, "action", "status") or "status"
+    if os.name == 'nt':
+        from easel.services import start, stop, healthy
+        if action in ('stop', 'restart'):
+            print(stop('gateway'))
+        if action in ('start', 'restart'):
+            print(start('gateway'))
+        if action == 'status':
+            print({'gateway': healthy('gateway')})
+        return 0
     command = (
         ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(GATEWAY_SCRIPT), action]
         if os.name == "nt"

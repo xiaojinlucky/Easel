@@ -1,0 +1,10 @@
+{
+  "repository": "https://github.com/gitroomhq/postiz-app",
+  "license": "AGPL-3.0",
+  "issue": "https://github.com/gitroomhq/postiz-app/issues/2035",
+  "image_digest": "sha256:172fd235ca656b28e4f4e7a31a66b7703bf88267b4259cf9f859f10d3b3a8a6f",
+  "source_path": "/app/apps/backend/dist/libraries/nestjs-libraries/src/sentry/initialize.sentry.js",
+  "source_sha256": "71a9c3d811c2fb67eba2e860e6b5dbc34ac2e278e0cbe791934736657b662299",
+  "patched_sha256": "7428d57049d75192fc175308d79ab9532a4ede3e668f4a7ecf545cbd27481156",
+  "change": "Load Sentry and its native profiler only after the existing DSN guard. Local backend and orchestrator both reproduced the documented 11-thread futex stall before Nest startup."
+}

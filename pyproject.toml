@@ -20,10 +20,24 @@ dependencies = [
     "faster-whisper>=1,<2", "edge-tts>=6,<8", "playwright>=1.45,<2",
     "rembg>=2.0,<3", "biliup>=1,<2", "jieba>=0.42,<1", "snownlp>=0.12,<1",
     "markdown>=3.5,<4",
+    # 素材库知识库线：图文 OCR 与视频/字幕下载（缺了会显式降级，不再静默）
+    "rapidocr-onnxruntime>=1.3,<2",
+    "yt-dlp>=2024.10",
     # ask_user 问答题桥接（easel/gateway_questions.py）：连本地 gateway WS RPC + Ed25519 设备签名
     # 只用到 load_pem_private_key + Ed25519.sign（长期稳定 API），上界放宽避免与新版冲突
     "websocket-client>=1.7,<2",
     "cryptography>=42",
+    # 两树吸收线带进来的模块在模块顶层就 import 它们：easel/services.py 用 psutil 管进程树，
+    # web/wechat_monitor_api.py 用 dotenv 读凭证文件。以前没写进依赖，装完环境一 import 就报 ModuleNotFoundError。
+    "psutil>=6,<8",
+    "python-dotenv>=1,<2",
+    # 其余几项按上游 fork main 的清单对齐补上：easel/feeds.py 与 scripts/wechat_worker.py 顶层 import bs4
+    # （缺了它一次就有 26 条测试报 ModuleNotFoundError），requests/yaml 被 web 与 skills 多处直接引入。
+    "httpx>=0.27,<1",
+    "onnxruntime>=1.20,<2",
+    "PyYAML>=6,<7",
+    "requests>=2.32,<3",
+    "beautifulsoup4>=4.13,<5",
 ]
 
 [project.scripts]

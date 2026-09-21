@@ -2,15 +2,17 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { fetchSkillDetail, executeSkill, saveEnv } from '../lib/api';
 import type { SkillDetail } from '../lib/api';
 import { renderMarkdown } from '../lib/sanitize';
+import { layerLabel, skillSummary } from '../lib/skillText';
 
 interface SkillDrawerProps {
   skillName: string;
   persona: string;
   onClose: () => void;
   onConfigured: () => void;   // 保存 API 后通知父组件刷新卡片状态
+  onDraftToChat?: (text: string, stage?: string, skill?: string) => void;
 }
 
-export default function SkillDrawer({ skillName, persona, onClose, onConfigured }: SkillDrawerProps) {
+export default function SkillDrawer({ skillName, persona, onClose, onConfigured, onDraftToChat }: SkillDrawerProps) {
   const [detail, setDetail] = useState<SkillDetail | null>(null);
   const [loadErr, setLoadErr] = useState('');
 
@@ -86,9 +88,10 @@ export default function SkillDrawer({ skillName, persona, onClose, onConfigured 
         <div className="drawer-header">
           <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
             <div>
-              <div className="skill-detail-title">{skillName}</div>
+              <div className="skill-detail-title">{detail ? skillSummary(detail) : skillName}</div>
+              <div className="skill-card-slug" style={{ marginTop: 4 }}>{skillName}</div>
               <div className="skill-detail-meta">
-                {detail?.layer && <span className="badge badge-accent">{detail.layer}</span>}
+                {detail?.layer && <span className="badge badge-accent">{layerLabel(detail.layer) || detail.layer}</span>}
                 {detail?.needsApi && (
                   detail.apiConfigured
                     ? <span className="badge badge-ok">✓ 已配置</span>
@@ -107,13 +110,13 @@ export default function SkillDrawer({ skillName, persona, onClose, onConfigured 
           {detail?.needsApi && detail.apiSpec && (
             <div className="panel">
               <div className="panel-title">🔑 {detail.apiSpec.label} · API 配置
-                <span style={{ fontWeight: 400, color: 'var(--text-secondary)', fontSize: 12 }}>
+                <span style={{ fontWeight: 400, color: 'var(--text-secondary)', fontSize: 14 }}>
                   （任选一个服务商填齐即可用）
                 </span>
               </div>
               {detail.apiSpec.settings.length > 0 && (
                 <div className="provider-block">
-                  <div className="provider-head"><strong style={{ fontSize: 13 }}>默认选择与能力</strong></div>
+                  <div className="provider-head"><strong style={{ fontSize: 14 }}>默认选择与能力</strong></div>
                   {detail.apiSpec.settings.map((k) => (
                     <div key={k.env}>
                       <label className="field-label">
@@ -149,7 +152,7 @@ export default function SkillDrawer({ skillName, persona, onClose, onConfigured 
                 return (
                   <div key={prov.id} className={`provider-block ${provOk ? 'configured' : ''}`}>
                     <div className="provider-head">
-                      <strong style={{ fontSize: 13 }}>{prov.name}</strong>
+                      <strong style={{ fontSize: 14 }}>{prov.name}</strong>
                       {provOk
                         ? <span className="badge badge-ok">✓ 就绪</span>
                         : <span className="badge">未配置</span>}
@@ -186,7 +189,7 @@ export default function SkillDrawer({ skillName, persona, onClose, onConfigured 
                 <button className="btn btn-primary btn-sm" onClick={handleSaveEnv} disabled={saving}>
                   {saving ? '保存中…' : '保存到 .env'}
                 </button>
-                {savedMsg && <span style={{ fontSize: 13, color: savedMsg.includes('✓') ? 'var(--green)' : 'var(--text-secondary)' }}>{savedMsg}</span>}
+                {savedMsg && <span style={{ fontSize: 14, color: savedMsg.includes('✓') ? 'var(--green)' : 'var(--text-secondary)' }}>{savedMsg}</span>}
               </div>
             </div>
           )}
@@ -195,7 +198,7 @@ export default function SkillDrawer({ skillName, persona, onClose, onConfigured 
           <div className="panel">
             <div className="panel-title">▶ 运行</div>
             {blocked && (
-              <div style={{ fontSize: 13, color: 'var(--amber)', marginBottom: 10 }}>
+              <div style={{ fontSize: 14, color: 'var(--amber)', marginBottom: 10 }}>
                 该 SKILL 需要先配置上面的 API 才能运行。
               </div>
             )}
@@ -206,14 +209,27 @@ export default function SkillDrawer({ skillName, persona, onClose, onConfigured 
               onChange={(e) => setInput(e.target.value)}
               style={{ minHeight: 100 }}
             />
-            <div style={{ marginTop: 10 }}>
-              <button className="btn btn-primary" onClick={handleRun} disabled={running || !input.trim() || blocked}>
+            <div style={{ marginTop: 10, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {onDraftToChat && (
+                <button
+                  className="btn btn-primary"
+                  type="button"
+                  onClick={() => {
+                    const text = input.trim() || `请执行 /${skillName}`;
+                    onDraftToChat(text, detail?.layer, skillName);
+                    onClose();
+                  }}
+                >
+                  填入对话
+                </button>
+              )}
+              <button className="btn" onClick={handleRun} disabled={running || !input.trim() || blocked}>
                 {running
                   ? <><span className="spinner" style={{ width: 14, height: 14, margin: 0 }} />执行中…</>
-                  : '执行'}
+                  : '就地执行'}
               </button>
             </div>
-            {runErr && <div style={{ color: 'var(--red)', fontSize: 13, marginTop: 10 }}>{runErr}</div>}
+            {runErr && <div style={{ color: 'var(--red)', fontSize: 14, marginTop: 10 }}>{runErr}</div>}
             {resultHtml && (
               <div className="skill-result" dangerouslySetInnerHTML={{ __html: resultHtml }} />
             )}

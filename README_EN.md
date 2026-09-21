@@ -60,7 +60,7 @@ Easel follows five connected workflows: **Discover** relevant trends and opportu
 - **Executable Skills:** image, card, voice-over, subtitle, editing, short-drama, and publishing Skills include runnable tools and save deliverables to `outputs/`.
 - **One source, many platforms:** adapt a single idea into Xiaohongshu cards, short video, a Zhihu article, or a short post while respecting platform conventions.
 - **Project-based outputs:** source material, intermediate files, metadata, and final deliverables stay together for revision, retrying, and publishing.
-- **A publishing and learning loop:** Easel supports login, adaptation, and publishing workflows for Xiaohongshu, Douyin, Kuaishou, Zhihu, Bilibili, WeChat Channels, and WeChat Official Accounts, with performance data feeding back into account profiles.
+- **A publishing and learning loop:** Easel supports login, adaptation, and publishing workflows for Xiaohongshu, Douyin, Kuaishou, Zhihu, Bilibili, and WeChat Channels, with performance data feeding back into account profiles.
 
 ## 🧭 Five-Layer Content Workflow
 
@@ -78,7 +78,7 @@ Easel follows five connected workflows: **Discover** relevant trends and opportu
 | **Plan** | Positioning, audience profiles, persona and voice, account diagnosis, content matrices, topic scoring, trend adaptation, series planning, hooks, outlines, storyboards, calendars, repurposing, livestreams, campaigns, and collaborations |
 | **Text & Visual** | Social copy, video scripts, Xiaohongshu notes, long-form articles, novels, natural rewriting, style transfer, paper explainers, quote cards, knowledge cards, posters, infographics, charts, mind maps, comparison cards, product images, memes, AI images, enhancement, background removal, and batch processing |
 | **Audio & Video** | Text-to-speech, multi-role dubbing, voice cloning, AI music, denoising, mixing, transcription, audio visualization, AI video, short drama, subtitles, translation, editing, clipping, highlights, format conversion, intros/outros, slideshows, beat sync, green screen, and video-to-article conversion |
-| **Publish & Attribute** | Quality gates, risk checks, search optimization, publishing checklists, platform adaptation, seven-platform publishing workflows, calendar logging, account analytics, comment insights, postmortems, ROI, and profile memory |
+| **Publish & Attribute** | Quality gates, risk checks, search optimization, publishing checklists, platform adaptation, six-platform publishing workflows, calendar logging, account analytics, comment insights, postmortems, ROI, and profile memory |
 
 ## 🖥️ Workspace Examples
 
@@ -176,7 +176,7 @@ When an existing OpenClaw default model is found, the installer asks whether to 
 If no model is configured, it interactively asks for an Anthropic API key and model name. You may also
 copy `.env.example` and fill it in before running the installer.
 
-Open `http://localhost:7860` for the Web workspace. Run `easel doctor` to check the environment and `easel ping` to verify the gateway and Agent connection.
+Open `http://localhost:7870` for the Web workspace. Run `easel doctor` to check the environment and `easel ping` to verify the gateway and Agent connection.
 
 The installer installs the Python dependencies required by the Web UI, media processing, and browser publishing:
 
@@ -211,7 +211,7 @@ Never commit `.env`, cookies, or platform login state. Real publishing can be af
 
 | Command | Purpose |
 |---|---|
-| `easel web [--port 7860]` | Start the Web workspace |
+| `easel web [--port 7870]` | Start the Web workspace |
 | `easel chat` | Start a multi-turn terminal conversation and select an account profile |
 | `easel skill <name> -i "..." [-p <profile>]` | Run a Skill directly; input may also be a file path |
 | `easel doctor` | Check Python, Node.js, OpenClaw, and essential configuration |
@@ -249,7 +249,7 @@ Easel/
 └── docs/                     Specifications, capability map, and architecture docs
 ```
 
-Easel uses an isolated `easel` OpenClaw profile and does not overwrite an existing OpenClaw setup. The Web workspace defaults to port `7860`; the gateway defaults to `18789`.
+Easel uses an isolated `easel` OpenClaw profile and does not overwrite an existing OpenClaw setup. The Web workspace defaults to port `7870`; the gateway defaults to `18789`.
 
 ## 📑 Documentation
 
@@ -278,8 +278,6 @@ Contributions and discussion are welcome. If you have ideas, questions, or impro
     <td align="center" width="84"><a href="https://github.com/qywMichelle"><img src="https://github.com/qywMichelle.png?size=96" width="72" height="72" alt="qywMichelle"><br><strong>qywMichelle</strong></a></td>
     <td align="center" width="84"><a href="https://github.com/wulinjuan"><img src="https://github.com/wulinjuan.png?size=96" width="72" height="72" alt="wulinjuan"><br><strong>wulinjuan</strong></a></td>
     <td align="center" width="84"><a href="https://github.com/arctanxarc"><img src="https://github.com/arctanxarc.png?size=96" width="72" height="72" alt="arctanxarc"><br><strong>arctanxarc</strong></a></td>
-    <td align="center" width="84"><a href="https://github.com/mengyuyuan"><img src="https://github.com/mengyuyuan.png?size=96" width="72" height="72" alt="mengyuyuan"><br><strong>mengyuyuan</strong></a></td>
-    <td align="center" width="84"><a href="https://github.com/Dear47"><img src="https://github.com/Dear47.png?size=96" width="72" height="72" alt="Dear47"><br><strong>Dear47</strong></a></td>
   </tr>
 </table>
 

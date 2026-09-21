@@ -1,0 +1,19 @@
+# Adapted from imsyy/DailyHotApi (MIT); see UPSTREAM.json.
+# 用途：热点雷达（web/app.py 的 /api/trends）的自托管数据源，
+# 替代原先硬编码的第三方公益接口；40+ 站点，REST + RSS 两种形态。
+# 上游镜像原样使用，未打补丁、未内联其源码 —— 通过 HTTP 只读消费。
+services:
+  dailyhot:
+    image: imsyy/dailyhot-api:latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6688:6688"        # 仅本机回环，与 Easel 其他服务约定一致
+    environment:
+      PORT: '6688'
+      ALLOWED_DOMAIN: '*'
+      CACHE_TTL: '900'                # 上游默认 3600 秒；热点雷达本地缓存 300 秒，取 900 秒折中
+      REQUEST_TIMEOUT: '6000'
+      DISALLOW_ROBOT: 'true'
+      USE_LOG_FILE: 'false'
+      RSS_MODE: 'false'
+      FILTER_WEIBO_ADVERTISEMENT: 'true'

@@ -3,10 +3,15 @@ import Sidebar from './components/Sidebar';
 import type { Page } from './components/Sidebar';
 import ChatPage from './components/ChatPage';
 import SkillPage from './components/SkillPage';
+import WorkflowsPage from './components/WorkflowsPage';
 import OutputsPage from './components/OutputsPage';
 import AccountsPage from './components/AccountsPage';
 import ProfilePage from './components/ProfilePage';
 import DashboardPage from './components/DashboardPage';
+import ModelSettingsPage from './components/ModelSettingsPage';
+import ResearchPage from './components/ResearchPage';
+import './styles/model-settings.css';
+import './styles/research.css';
 import TrendsPage from './components/TrendsPage';
 import CalendarPage from './components/CalendarPage';
 import IdeasPage from './components/IdeasPage';
@@ -14,8 +19,8 @@ import PublishPage from './components/PublishPage';
 import BreakdownPage from './components/BreakdownPage';
 import SubNav from './components/SubNav';
 import OnboardingWizard from './components/OnboardingWizard';
-import { fetchStatus, fetchPersonas, streamChat, fetchLastTurn, stopChat } from './lib/api';
-import type { PersonaItem, UploadedFile, ChatQuestion } from './lib/api';
+import { fetchStatus, fetchPersonas, streamChat, fetchLastTurn, stopChat, runWorkflow } from './lib/api';
+import type { PersonaItem, UploadedFile, ChatQuestion, WorkflowRunResult } from './lib/api';
 import { questionStatus } from './lib/api';
 import { deleteSession as deleteRemoteSession } from './lib/api';
 import {
@@ -165,6 +170,7 @@ export default function App() {
   // ---- 流式对话：状态与生命周期都放在 App（永不卸载），切页/切 ChatPage 都不中断/丢失 ----
   const [streams, setStreams] = useState<Record<string, StreamState>>({});
   const streamCtl = useRef<Record<string, AbortController>>({});
+  const wfCtl = useRef<Record<string, AbortController>>({});
   const streamAcc = useRef<Record<string, { content: string; thinking: string; steps: string[]; questions: ChatQuestion[] }>>({});
   const answeredRef = useRef<Set<string>>(new Set());   // 已提交答案的 question id：重放/恢复不再重现
   // ---- 打字机：分批到达的 token 按节奏吐给界面 ----
@@ -234,6 +240,8 @@ export default function App() {
     text: string,
     persona: string | undefined,
     attachments: UploadedFile[] = [],
+    stage?: string,
+    skill?: string,
   ) => {
     const turnId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     try { sessionStorage.setItem(`easel_pending_turn:${sessionId}`, turnId); } catch { /* ignore */ }
@@ -326,17 +334,24 @@ export default function App() {
             ? { ...p, [sessionId]: { ...p[sessionId], questions: [...a2.questions] } } : p));
         });
       },
+      stage,
+      skill,
     );
   }, [appendAssistant, clearStream]);
 
   // 刷新/重开页面后按 eventId=0 重放当前 job，再继续实时 tail；旧任务无事件日志时退回最终快照。
   const resumePendingTurn = useCallback((sessionId: string) => {
-    if (streamCtl.current[sessionId] || streamAcc.current[sessionId]) return;  // 本标签正在跑，不插手
+    if (streamCtl.current[sessionId] || streamAcc.current[sessionId] || wfCtl.current[sessionId]) return;  // 本标签正在跑，不插手
     const s = sessionsRef.current.find((x) => x.id === sessionId);
     const last = s?.messages[s.messages.length - 1];
     if (!last || last.role !== 'user') return;   // 没有悬空的用户消息 = 无需恢复
     let turnId = s.pendingTurnId;
     try { turnId = sessionStorage.getItem(`easel_pending_turn:${sessionId}`) || turnId; } catch { /* use persisted id */ }
+    if (turnId?.startsWith('wf:')) {
+      appendAssistant(sessionId, { role: 'assistant', content: '_（工作流因页面刷新中断，请重新发送）_' });
+      try { sessionStorage.removeItem(`easel_pending_turn:${sessionId}`); } catch { /* ignore */ }
+      return;
+    }
     streamAcc.current[sessionId] = { content: '', thinking: '', steps: [], questions: [] };
     setStreams((p) => ({ ...p, [sessionId]: { content: '', thinking: '', activity: '⏳ 正在接回上一轮结果…', questions: [] } }));
     typingBuf.current[sessionId] = '';
@@ -448,6 +463,8 @@ export default function App() {
     attachments: UploadedFile[] = [],
     legacyAgentText?: string,
     truncateAt?: number,
+    stage?: string,
+    skill?: string,
   ) => {
     const visible = displayText.trim();
     const agentMessage = (legacyAgentText || displayText).trim();
@@ -465,6 +482,8 @@ export default function App() {
             content: visible,
             ...(attachments.length ? { attachments } : {}),
             ...(legacyAgentText && legacyAgentText !== visible ? { agentContent: legacyAgentText } : {}),
+            ...(stage ? { stage } : {}),
+            ...(skill ? { skill } : {}),
           } as ChatMessage],
         };
         updateSessionTitle(updated);
@@ -473,12 +492,79 @@ export default function App() {
       saveSessions(next);
       return next;
     });
-    startStream(sessionId, agentMessage, persona, attachments);
+    startStream(sessionId, agentMessage, persona, attachments, stage, skill);
   }, [selectedPersona, startStream]);
 
-  const handleSendMessage = useCallback((sessionId: string, displayText: string, attachments?: UploadedFile[]) => {
-    sendUserAndStream(sessionId, displayText, attachments);
+  const handleSendMessage = useCallback((
+    sessionId: string,
+    displayText: string,
+    attachments?: UploadedFile[],
+    stage?: string,
+    skill?: string,
+  ) => {
+    sendUserAndStream(sessionId, displayText, attachments, undefined, undefined, stage, skill);
   }, [sendUserAndStream]);
+
+  const handleRunWorkflow = useCallback((
+    sessionId: string,
+    workflowId: string,
+    workflowName: string,
+    input: string,
+  ) => {
+    if (streamCtl.current[sessionId] || wfCtl.current[sessionId]) return;
+    const cur = sessionsRef.current.find((s) => s.id === sessionId);
+    const persona = cur?.persona || selectedPersona || undefined;
+    const visible = input.trim() || `运行工作流「${workflowName}」`;
+    const wfTurn = `wf:${workflowId}`;
+    try { sessionStorage.setItem(`easel_pending_turn:${sessionId}`, wfTurn); } catch { /* ignore */ }
+    setSessions((prev) => {
+      const next = prev.map((s) => {
+        if (s.id !== sessionId) return s;
+        const updated = {
+          ...s,
+          pendingTurnId: wfTurn,
+          messages: [...s.messages, { role: 'user' as const, content: visible }],
+        };
+        updateSessionTitle(updated);
+        return updated;
+      });
+      saveSessions(next);
+      return next;
+    });
+    const ctl = new AbortController();
+    wfCtl.current[sessionId] = ctl;
+    streamAcc.current[sessionId] = { content: '', thinking: '', steps: [`运行工作流「${workflowName}」…`], questions: [] };
+    setStreams((p) => ({
+      ...p,
+      [sessionId]: { content: '', thinking: '', activity: `运行工作流「${workflowName}」…`, questions: [] },
+    }));
+    void runWorkflow(workflowId, visible, persona, ctl.signal)
+      .then((r: WorkflowRunResult) => {
+        const lines = [`工作流「${r.name}」${r.ok ? '已跑完' : '有步骤失败'}。`];
+        for (const step of r.steps) {
+          if (!step.skill) continue;
+          lines.push(`\n### ${step.title || step.skill}\n`);
+          lines.push(step.ok ? (step.output || '（无输出）') : `❌ ${step.error}`);
+        }
+        appendAssistant(sessionId, {
+          role: 'assistant',
+          content: lines.join('\n'),
+          activity: `工作流「${r.name}」`,
+        });
+      })
+      .catch((err: Error) => {
+        if (err.name === 'AbortError') {
+          appendAssistant(sessionId, { role: 'assistant', content: '_（工作流已停止）_' });
+          return;
+        }
+        appendAssistant(sessionId, { role: 'assistant', content: `Error: ${err.message}` });
+      })
+      .finally(() => {
+        delete wfCtl.current[sessionId];
+        clearStream(sessionId);
+        try { sessionStorage.removeItem(`easel_pending_turn:${sessionId}`); } catch { /* ignore */ }
+      });
+  }, [selectedPersona, appendAssistant, clearStream]);
 
   // 重试/编辑重发：从该用户消息处截断（丢弃它及其之后），用 text 重新发起。
   const handleResend = useCallback((
@@ -487,22 +573,59 @@ export default function App() {
     displayText: string,
     attachments?: UploadedFile[],
     legacyAgentText?: string,
+    stage?: string,
+    skill?: string,
   ) => {
-    sendUserAndStream(sessionId, displayText, attachments, legacyAgentText, userIndex);
+    sendUserAndStream(sessionId, displayText, attachments, legacyAgentText, userIndex, stage, skill);
   }, [sendUserAndStream]);
 
-  // 热点「一键做成内容」：新开会话，把选题作为指令发出去，跳到对话页。
+  const consumeIncomingDraft = useCallback((sessionId: string) => {
+    setSessions((prev) => {
+      const next = prev.map((s) => {
+        if (s.id !== sessionId || !s.incomingDraft) return s;
+        const { incomingDraft: _drop, ...rest } = s;
+        return rest;
+      });
+      saveSessions(next);
+      return next;
+    });
+  }, []);
+
+  const handleDraftToChat = useCallback((text: string, stage?: string, skill?: string, workflowId?: string) => {
+    const prompt = text.trim();
+    if (!prompt) return;
+    const sid = activeSessionId;
+    const existing = sid ? sessionsRef.current.find((s) => s.id === sid) : undefined;
+    const draft = { text: prompt, stage, skill, workflowId };
+    if (existing) {
+      setSessions((prev) => {
+        const next = prev.map((s) => (s.id === existing.id ? { ...s, incomingDraft: draft } : s));
+        saveSessions(next);
+        return next;
+      });
+    } else {
+      const ns = { ...createSession(selectedPersona || undefined), incomingDraft: draft };
+      setSessions((prev) => { const u = [ns, ...prev]; saveSessions(u); return u; });
+      setActiveSessionId(ns.id);
+    }
+    setCurrentPage('chat');
+  }, [activeSessionId, selectedPersona]);
+
+  // 热点 / 选题：跳到对话并预填输入框，不自动发送。
   const handleUseTopic = useCallback((title: string) => {
     const prompt = `围绕当前热点「${title}」：先判断它适不适合我的账号赛道；若合适，给 2-3 个差异化的二创角度，并把你最推荐的那条写成可直接发布的文案初稿。`;
-    const ns = createSession(selectedPersona || undefined);
+    const ns = { ...createSession(selectedPersona || undefined), incomingDraft: { text: prompt, stage: 'discover' } };
     setSessions((prev) => { const u = [ns, ...prev]; saveSessions(u); return u; });
     setActiveSessionId(ns.id);
     setCurrentPage('chat');
-    sendUserAndStream(ns.id, prompt);
-  }, [selectedPersona, sendUserAndStream]);
+  }, [selectedPersona]);
 
   const handleStopStream = useCallback((sessionId: string) => {
+    const wasWorkflow = !!wfCtl.current[sessionId];
     streamCtl.current[sessionId]?.abort();
+    wfCtl.current[sessionId]?.abort();
+    delete wfCtl.current[sessionId];
+    if (wasWorkflow) return;
     // 告诉后端**真正终止**这一轮 agent 并释放会话锁——否则后端进程还在跑、占着锁，下一句会被拦
     void stopChat(sessionId).catch(() => { /* 后端可能已结束，忽略 */ });
     flushTyping(sessionId);   // 停止时立刻把队列余字吐完，保证已到内容不丢
@@ -668,11 +791,13 @@ export default function App() {
             key={activeSession.id}
             session={activeSession}
             stream={streams[activeSession.id]}
-            onSend={(displayText, attachments) => handleSendMessage(activeSession.id, displayText, attachments)}
+            onSend={(displayText, attachments, stage, skill) => handleSendMessage(activeSession.id, displayText, attachments, stage, skill)}
+            onRunWorkflow={(wfId, wfName, input) => handleRunWorkflow(activeSession.id, wfId, wfName, input)}
             onStop={() => handleStopStream(activeSession.id)}
-            onResend={(userIndex, displayText, attachments, legacyAgentText) => handleResend(
-              activeSession.id, userIndex, displayText, attachments, legacyAgentText,
+            onResend={(userIndex, displayText, attachments, legacyAgentText, stage, skill) => handleResend(
+              activeSession.id, userIndex, displayText, attachments, legacyAgentText, stage, skill,
             )}
+            onConsumeDraft={() => consumeIncomingDraft(activeSession.id)}
             onQuestionAnswered={(qid) => {
               answeredRef.current.add(qid);
               // 已答题从流式状态中移除——切走/切回会话都不再重现（组件内部 state 会在重挂时清零，只藏不移除没用）
@@ -702,14 +827,20 @@ export default function App() {
         return <PublishPage persona={selectedPersona} />;
       case 'breakdown':
         return <BreakdownPage persona={selectedPersona} />;
+      case 'research':
+        return <ResearchPage persona={selectedPersona} onCreate={(prompt, stage) => handleDraftToChat(prompt, stage || 'produce')} />;
       case 'skills':
-        return <SkillPage persona={selectedPersona} />;
+        return <SkillPage persona={selectedPersona} onDraftToChat={handleDraftToChat} />;
+      case 'workflows':
+        return <WorkflowsPage persona={selectedPersona} onDraftToChat={handleDraftToChat} />;
       case 'outputs':
-        return <OutputsPage />;
+        return <OutputsPage onDraftToChat={handleDraftToChat} />;
       case 'accounts':
-        return <AccountsPage />;
+        return <AccountsPage onDraftToChat={handleDraftToChat} />;
       case 'profile':
         return <ProfilePage persona={selectedPersona} onNewProfile={() => setShowWizard(true)} onDeleted={handleProfileDeleted} />;
+      case 'model-settings':
+        return <ModelSettingsPage />;
       default:
         return null;
     }

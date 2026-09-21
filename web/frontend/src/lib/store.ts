@@ -5,6 +5,8 @@ export interface ChatMessage {
   content: string;
   agentContent?: string; // 仅发给 Agent 的增强消息（如附件路径），不在对话页面展示
   attachments?: UploadedFile[]; // 结构化附件引用；仅用于请求/重试，不在消息气泡展示
+  stage?: string; // 发送时的技能层（发现/策划/制作/发布/归因）；重试时原样带回
+  skill?: string; // 本轮钉住的技能名；重试时原样带回
   thinking?: string;   // 模型思考过程（隐思考），流式结束后持久保留
   activity?: string;   // 工具/执行活动步骤（换行分隔），持久保留
 }
@@ -18,6 +20,7 @@ export interface ChatSession {
   sessionKey?: string;  // OpenClaw 的 session key，用于后端删除
   pendingTurnId?: string; // 进行中的可重连 job；浏览器重开后继续按 eventId 续流
   archived?: boolean;   // 归档：从 History 主列表移到「已归档」区
+  incomingDraft?: { text: string; stage?: string; skill?: string; workflowId?: string }; // 跳转对话时预填输入框，不发送
 }
 
 /** 进行中的流式状态（存于 App，不随页面切换/ChatPage 卸载而丢失）。 */

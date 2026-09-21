@@ -29,6 +29,9 @@ Thumbs.db
 # OpenClaw runtime
 .openclaw/
 
+# Local runtime state: research.sqlite（全量采集内容）、clipper-pairing token、宿主日志，禁止入库
+.runtime/
+
 # Outputs (keep directory structure via .gitkeep, ignore actual content)
 outputs/**/*
 !outputs/**/.gitkeep
@@ -79,3 +82,9 @@ skill-test/
 
 # 公众号发布器用户凭证配置（含 AppID/AppSecret），只提交 .example 模板
 skills/openclaw/skill-wechat-publisher/wechat-publisher.yaml
+
+# 素材库导出的知识库目录（Beav 式布局，本机产物）
+knowledge/
+
+# 本机 Python 虚拟环境（现役树装在 .venv/，2 万多个文件，绝不能进 git status）
+.venv/

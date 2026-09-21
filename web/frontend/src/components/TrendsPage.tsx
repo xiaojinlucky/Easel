@@ -89,7 +89,7 @@ export default function TrendsPage({ onUseTopic }: TrendsPageProps) {
                     onClick={() => save(it.title, g.label)}>
                     {saved.has(it.title) ? <IconCheck size={14} /> : <IconBookmark size={14} />}
                   </button>
-                  <button className="trend-use" title="做成内容"
+                  <button className="trend-use" title="填入对话，确认后再发"
                     onClick={() => onUseTopic(it.title)}>做内容</button>
                 </div>
               ))}

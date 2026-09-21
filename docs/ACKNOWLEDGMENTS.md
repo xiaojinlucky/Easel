@@ -75,6 +75,18 @@ Easel 的 SKILL 集合在自研基础上，参考、改编或借鉴了大量优�
 | [54514382/xhs_search_comment_tool](https://github.com/54514382/xhs_search_comment_tool) | content-gap-analysis | 评论区采集字段 |
 | [laiaccc/XiaohongshuAnalysis](https://github.com/laiaccc) | cross-platform-diff | 小红书分析 |
 
+## 浏览器扩展 / 素材库（知识库线）
+
+| 项目 | 用途 | 许可与形态 |
+|------|------|-----------|
+| [Jamailar/Beav](https://github.com/Jamailar/Beav) | 采集扩展 `beav-capture` 的原始来源（商业 Beav 插件的开源副本） | **MIT-NC（非商业使用）**，不可再分发，**本仓库不含该目录**；仅个人本机自行放置。替代路线见下方 obsidian-clipper |
+| [mozilla/readability](https://github.com/mozilla/readability) | `extensions/easel-clipper/` 正文抽取 | Apache-2.0，vendored（见该目录 LICENSE.Readability.md） |
+| [mixmark-io/turndown](https://github.com/mixmark-io/turndown) (+GFM 插件) | easel-clipper HTML→Markdown | MIT，vendored |
+| [pavi2410/clipdown](https://github.com/pavi2410/clipdown) | easel-clipper 采集管道参照 | 参考实现，未复制代码 |
+| [karakeep-app/karakeep](https://github.com/karakeep-app/karakeep) | 素材库自动打标/摘要队列的规则引擎设计 | AGPL-3.0，**仅设计参考，未引入代码** |
+| [chubbyguan/chubbyskills](https://github.com/chubbyguan/chubbyskills) | 素材→写作引用「摘录+行号+来源」格式设计 | MIT，参考 schema |
+| [obsidianmd/obsidian-clipper](https://github.com/obsidianmd/obsidian-clipper) | 未来自研采集壳的 MIT 参照（当前未使用） | MIT，参考 |
+
 ## 资讯 / RSS 聚合
 
 | 项目 | 用于 SKILL | 借鉴点 |

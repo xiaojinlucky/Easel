@@ -11,7 +11,7 @@ import type { Page } from './Sidebar';
 import { getWhoamiCache, verifyStale } from '../lib/whoami';
 import {
   IconFire, IconCalendar, IconOutputs, IconChat, IconSkills, IconAccounts,
-  IconIdea, IconPublish,
+  IconIdea, IconPublish, IconWorkflow,
 } from './icons';
 
 /** 大数格式化：12000 → 1.2万。 */
@@ -21,6 +21,16 @@ function fmtNum(n: number | null): string {
   if (a >= 10000) return (n / 10000).toFixed(a >= 100000 ? 0 : 1) + '万';
   return String(n);
 }
+const DRAFT_NOTE_TITLES = new Set(['', '无笔记标题', '无标题', '(无标题)']);
+
+/** 创作中心「全部」会混进草稿箱。列表只展示已发出去的笔记。 */
+function publishedNotes(notes: AccountAnalytics['notes'] | undefined) {
+  return (notes ?? []).filter((n) => {
+    const title = (n.title || '').trim();
+    return Boolean(title) && !DRAFT_NOTE_TITLES.has(title);
+  });
+}
+
 /** 增长量渲染信息：正=绿↑，负=红↓，0/缺失=不显示。 */
 function growthInfo(n: number | null): { text: string; color: string } | null {
   if (n == null || n === 0) return null;
@@ -48,7 +58,7 @@ export default function DashboardPage({ persona, gatewayStatus, onNavigate, onUs
   const [anaPlats, setAnaPlats] = useState<AnalyticsPlatform[]>([]);
   const [anaSel, setAnaSel] = useState('');
   const [anaData, setAnaData] = useState<Record<string, AccountAnalytics | 'loading' | 'error'>>(() => {
-    try { return JSON.parse(localStorage.getItem('easel_analytics') || '{}'); } catch { return {}; }
+    try { return JSON.parse(localStorage.getItem('easel_analytics_v2') || '{}'); } catch { return {}; }
   });
   const [anaWin, setAnaWin] = useState<'last' | 'day' | 'week' | 'month' | 'year'>('week');
   // whoami 自愈：登录态以真实 profile 为准（与账号页共享 localStorage 缓存）
@@ -84,11 +94,16 @@ export default function DashboardPage({ persona, gatewayStatus, onNavigate, onUs
     fetchAccountAnalytics(platform)
       .then((r) => setAnaData((d) => {
         const next = { ...d, [platform]: r };
-        try { localStorage.setItem('easel_analytics', JSON.stringify(next)); } catch { /* quota */ }
+        const persistable = Object.fromEntries(Object.entries(next).filter(([, v]) => v && typeof v === 'object' && 'fetched_at' in v));
+        try { localStorage.setItem('easel_analytics_v2', JSON.stringify(persistable)); } catch { /* quota */ }
         return next;
       }))
       .catch(() => setAnaData((d) => ({ ...d, [platform]: 'error' as const })));
   };
+
+  useEffect(() => {
+    if (anaSel && !anaData[anaSel]) runAna(anaSel);
+  }, [anaSel]);
 
   const hour = new Date().getHours();
   const greet = hour < 6 ? '夜深了' : hour < 12 ? '上午好' : hour < 14 ? '中午好' : hour < 18 ? '下午好' : '晚上好';
@@ -107,6 +122,7 @@ export default function DashboardPage({ persona, gatewayStatus, onNavigate, onUs
     { label: '记选题', page: 'ideas', Icon: IconIdea },
     { label: '排日历', page: 'calendar', Icon: IconCalendar },
     { label: '去发布', page: 'publish', Icon: IconPublish },
+    { label: '工作流', page: 'workflows', Icon: IconWorkflow },
   ];
 
   const stats: { label: string; value: string; page: Page; Icon: typeof IconChat }[] = [
@@ -157,7 +173,7 @@ export default function DashboardPage({ persona, gatewayStatus, onNavigate, onUs
             <div key={g.platform} className="dash-trend-group">
               <div className="dash-trend-plat">{g.label}</div>
               {g.items.slice(0, 3).map((it, i) => (
-                <div key={i} className="dash-trend-item" title={`${it.title}（点击做成内容）`}>
+                <div key={i} className="dash-trend-item" title={`${it.title}（填入对话，确认后再发）`}>
                   <span className="dash-trend-title" onClick={() => onUseTopic(it.title)}>{it.title}</span>
                 </div>
               ))}
@@ -173,7 +189,7 @@ export default function DashboardPage({ persona, gatewayStatus, onNavigate, onUs
           </div>
           {pendingIdeas.length === 0 && <div className="dash-empty">还没攒选题，去热点雷达收藏几个吧</div>}
           {pendingIdeas.slice(0, 5).map((it) => (
-            <div key={it.id} className="dash-idea" onClick={() => onUseTopic(it.title)} title="点击做成内容">
+            <div key={it.id} className="dash-idea" onClick={() => onUseTopic(it.title)} title="填入对话，确认后再发">
               <span className="dash-idea-title">{it.title}</span>
               {it.source && <span className="badge">{it.source}</span>}
             </div>
@@ -256,15 +272,22 @@ export default function DashboardPage({ persona, gatewayStatus, onNavigate, onUs
                   <div className="ana-body">
                     {/* 概览 + 增长对比 */}
                     <div className="ana-col ana-col-main">
-                      <div className="ana-id">{d.nickname ? `@${d.nickname}` : d.name}</div>
+                      <div className="ana-id">{d.nickname && d.nickname !== d.name ? `@${d.nickname}` : d.nickname || d.name}</div>
                       <div className="ana-overview">
-                        {([['粉丝', 'followers'], ['获赞', 'likes'], ['关注', 'following']] as const).map(([label, key]) => {
+                        {(d.overview?.length
+                          ? d.overview
+                          : ([
+                              { key: 'followers', label: d.platform === 'xiaohongshu' ? '粉丝' : '粉丝', value: d.followers },
+                              { key: 'likes', label: d.platform === 'xiaohongshu' ? '获赞与收藏' : '获赞', value: d.likes },
+                              { key: 'following', label: '关注', value: d.following },
+                            ] as const).filter((item) => item.value != null || d.platform !== 'wechat-oa')
+                        ).map((item) => {
                           const w = d.growth?.[anaWin] ?? null;
-                          const g = w ? growthInfo(w[key as 'followers' | 'likes']) : null;
+                          const g = w ? growthInfo(w[item.key as 'followers' | 'likes' | 'posts']) : null;
                           return (
-                            <div key={key} className="ana-stat">
-                              <div className="ana-stat-val">{fmtNum(d[key])}</div>
-                              <div className="ana-stat-label">{label}</div>
+                            <div key={item.key} className="ana-stat">
+                              <div className="ana-stat-val">{fmtNum(item.value)}</div>
+                              <div className="ana-stat-label">{item.label}</div>
                               {g ? <div className="ana-stat-delta" style={{ color: g.color }}>{g.text}</div>
                                  : <div className="ana-stat-delta ana-muted">—</div>}
                             </div>
@@ -279,19 +302,23 @@ export default function DashboardPage({ persona, gatewayStatus, onNavigate, onUs
                       </div>
                       <div className="ana-wins-note">
                         {d.growth?.[anaWin]?.since_days != null
-                          ? `对比 ${d.growth[anaWin]!.since_days} 天前的快照`
-                          : '暂无该时段历史快照，多刷新几次即可积累对比'}
+                          ? `左侧增减对比 ${d.growth[anaWin]!.since_days} 天前的本机快照`
+                          : '左侧增减还没有该时段快照。每天打开一次工作台就会攒下来。'}
                       </div>
                     </div>
 
-                    {/* 近7日平台指标 + 环比 */}
+                    {/* 时段指标：有 period_metrics 时跟按钮走；否则是平台创作中心给的近7日 */}
                     <div className="ana-col ana-col-metrics">
-                      <div className="ana-sub">近 7 日 · 环比</div>
-                      {(d.metrics ?? []).length === 0 ? (
-                        <div className="dash-empty">该平台未提供近 7 日指标</div>
+                      <div className="ana-sub">
+                        {d.period_metrics?.[anaWin]
+                          ? ({ last: '较上次之后', day: '近 1 日', week: '近 7 日', month: '近 30 日', year: '近 1 年' }[anaWin])
+                          : (d.metrics_title || '平台近 7 日（创作中心只给这档）')}
+                      </div>
+                      {((d.period_metrics?.[anaWin] ?? d.metrics) ?? []).length === 0 ? (
+                        <div className="dash-empty">该时段还没有指标</div>
                       ) : (
                         <div className="ana-metrics">
-                          {(d.metrics ?? []).map((m) => {
+                          {(d.period_metrics?.[anaWin] ?? d.metrics ?? []).map((m) => {
                             const vs = m.vs ?? '';
                             const up = vs.startsWith('+');
                             const has = vs && vs !== '-';
@@ -310,11 +337,11 @@ export default function DashboardPage({ persona, gatewayStatus, onNavigate, onUs
                     {/* 最新笔记（可点进原文） */}
                     <div className="ana-col ana-col-notes">
                       <div className="ana-sub">最新笔记</div>
-                      {(d.notes ?? []).length === 0 ? (
+                      {publishedNotes(d.notes).length === 0 ? (
                         <div className="dash-empty">该账号暂无可读取的已发布笔记</div>
                       ) : (
                         <div className="ana-notes">
-                          {(d.notes ?? []).slice(0, 6).map((n, i) => (
+                          {publishedNotes(d.notes).slice(0, 6).map((n, i) => (
                             <a key={i} className="ana-note" href={n.url} target="_blank" rel="noreferrer" title={n.title}>
                               {n.cover
                                 ? <img className="ana-note-cover" src={n.cover} alt="" referrerPolicy="no-referrer" />

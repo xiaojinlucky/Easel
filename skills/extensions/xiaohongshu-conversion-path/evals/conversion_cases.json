@@ -1,0 +1,20 @@
+[
+  {
+    "id": "free-mini-program",
+    "prompt": "用 xiaohongshu-conversion-path 设计从内容到体验小程序的路径。产品：才华报价计算器。客单价：免费。目标用户：自由职业者。用户顾虑：怕报价太高、怕客户跑、怕自己不专业。",
+    "must": ["experience feedback sharing path", "content profile comment dm actions", "risk-aware messaging"],
+    "must_not": ["purchase close", "guaranteed conversion", "fake user proof"]
+  },
+  {
+    "id": "high-ticket-diagnosis",
+    "prompt": "我卖 3999 的品牌表达诊断，目标用户是有产品但小红书表达混乱的创业者。帮我设计内容到私信预约的路径。",
+    "must": ["screening", "trust content", "dm qualification questions"],
+    "must_not": ["discount pressure", "fake case", "guaranteed leads"]
+  },
+  {
+    "id": "course-waitlist",
+    "prompt": "我准备做一个小红书表达训练营，还没正式卖，先想收集意向和问题。帮我设计路径。",
+    "must": ["waitlist or feedback path", "user concerns", "content sequence"],
+    "must_not": ["pretend course is launched", "fake seats", "income promise"]
+  }
+]

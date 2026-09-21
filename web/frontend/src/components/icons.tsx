@@ -13,6 +13,14 @@ export const IconChat = ({ size, className, strokeWidth }: P) => (
     <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
   </svg>
 );
+export const IconResearch = ({ size, className, strokeWidth }: P) => (
+  <svg {...svg(size, strokeWidth)} className={className}>
+    <circle cx="11" cy="11" r="7" />
+    <path d="m20 20-3.5-3.5" />
+    <path d="M11 8v6" />
+    <path d="M8 11h6" />
+  </svg>
+);
 export const IconSkills = ({ size, className, strokeWidth }: P) => (
   <svg {...svg(size, strokeWidth)} className={className}>
     <path d="m12 3-1.6 4.9a2 2 0 0 1-1.3 1.3L4.2 10.8l4.9 1.6a2 2 0 0 1 1.3 1.3L12 18.6l1.6-4.9a2 2 0 0 1 1.3-1.3l4.9-1.6-4.9-1.6a2 2 0 0 1-1.3-1.3z" />
@@ -164,6 +172,14 @@ export const IconFolder = ({ size, className, strokeWidth }: P) => (
   </svg>
 );
 
+export const IconWorkflow = ({ size, className, strokeWidth }: P) => (
+  <svg {...svg(size, strokeWidth)} className={className}>
+    <rect x="3" y="3" width="7" height="7" rx="1.5" />
+    <rect x="14" y="3" width="7" height="7" rx="1.5" />
+    <rect x="8.5" y="14" width="7" height="7" rx="1.5" />
+    <path d="M10 10v2.5M17 10v1.2c0 1.3-1 2.3-2.3 2.3H12" />
+  </svg>
+);
 export const IconDashboard = ({ size, className, strokeWidth }: P) => (
   <svg {...svg(size, strokeWidth)} className={className}>
     <rect x="3" y="3" width="7" height="9" rx="1.5" /><rect x="14" y="3" width="7" height="5" rx="1.5" />
@@ -194,5 +210,10 @@ export const IconBookmark = ({ size, className, strokeWidth }: P) => (
 export const IconPublish = ({ size, className, strokeWidth }: P) => (
   <svg {...svg(size, strokeWidth)} className={className}>
     <path d="m3 11 18-5v12L3 14v-3z" /><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6" />
+  </svg>
+);
+export const IconSettings = ({ size, className, strokeWidth }: P) => (
+  <svg {...svg(size, strokeWidth)} className={className}>
+    <path d="M4 7h16M4 17h16" /><circle cx="8" cy="7" r="3" fill="currentColor" /><circle cx="16" cy="17" r="3" fill="currentColor" />
   </svg>
 );

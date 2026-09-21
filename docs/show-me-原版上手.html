@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>原版 Easel 怎么用</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<style>
+:root{
+  --brand:#F05A3C;
+  --ink:#111827;
+  --muted:#6B7280;
+  --line:#E5E7EB;
+  --bg:#FAFAF9;
+  --card:#FFFFFF;
+  --ok:#0F6E56;
+  --okbg:#E1F5EE;
+  --blue:#0C447C;
+  --bluebg:#E6F1FB;
+  --warn:#9A3412;
+  --warnbg:#FFEDD5;
+}
+*{box-sizing:border-box}
+body{
+  margin:0;background:var(--bg);color:var(--ink);
+  font-family:system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+  line-height:1.7;-webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:980px;margin:0 auto;padding:40px 20px 88px}
+header{border-bottom:1px solid var(--line);padding-bottom:22px}
+header h1{font-size:26px;font-weight:600;margin:0 0 8px;letter-spacing:-.2px}
+header p{color:var(--muted);margin:0;font-size:15px;max-width:720px}
+.meta{margin-top:12px;font-size:13px;color:var(--muted)}
+.meta b{color:var(--ink);font-weight:500}
+section{margin-top:40px}
+h2{font-size:17px;font-weight:600;margin:0 0 14px;padding-left:11px;border-left:3px solid var(--brand)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px 20px}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.item{display:flex;gap:14px;padding:12px 0;border-bottom:1px solid var(--line)}
+.item:last-child{border-bottom:none}
+.idx{color:var(--brand);font-weight:700;min-width:1.6em}
+.warn{background:var(--warnbg);color:var(--warn);border-radius:10px;padding:12px 14px;font-size:14px}
+.ok{background:var(--okbg);color:var(--ok);border-radius:10px;padding:12px 14px;font-size:14px}
+code,kbd{font-family:ui-monospace,Consolas,monospace;font-size:12.5px;background:#F3F4F6;padding:1px 6px;border-radius:5px}
+.tree{font-family:ui-monospace,Consolas,monospace;font-size:12.5px;line-height:1.55;white-space:pre;background:#111827;color:#E5E7EB;border-radius:10px;padding:16px 18px;overflow:auto}
+.mermaid{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--muted);font-weight:600;font-size:12px}
+.nav-chip{display:inline-block;margin:0 6px 6px 0;padding:4px 10px;border-radius:999px;background:var(--bluebg);color:var(--blue);font-size:13px}
+@media (max-width:720px){.cols{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <h1>原版 Easel：从打开网页到发出第一篇</h1>
+  <p>二次开发版还在原来的 <b>Easel</b> 文件夹，请先别管它。上手请只用旁边这份干净的上游原版。</p>
+  <div class="meta">安装位置 <b>F:\科研大师兄\自媒体工作台\Easel-official</b> · 上游 <b>ZJU-REAL/Easel v0.1.1</b> · 网页 <b>http://127.0.0.1:7870</b></div>
+</header>
+
+<section>
+  <h2>先分清两套，别点错入口</h2>
+  <div class="cols">
+    <div class="card">
+      <strong>现在请用这一套</strong>
+      <p>文件夹 <code>Easel-official</code><br>浏览器打开 <code>http://127.0.0.1:7870</code><br>左侧只有：工作台、对话、技能库、内容库、账号、画像</p>
+    </div>
+    <div class="card">
+      <strong>先不要用这一套</strong>
+      <p>文件夹 <code>Easel</code><br>桌面快捷方式、地址 <code>7860</code><br>里面叠了公众号工作区、引导页、Postiz 日历等二次开发，所以会觉得不会用</p>
+    </div>
+  </div>
+  <p class="warn" style="margin-top:14px">桌面上的「Easel 自媒体工作台」快捷方式打开的是二次开发版。看原版请用 7870，或运行 <code>Easel-official\启动原版工作台.ps1</code>。</p>
+</section>
+
+<section>
+  <h2>原版每天怎么走</h2>
+  <p>原版不是一堆分散工具，是一条线：先告诉它你是谁，再让它做内容，最后从内容库拿到成品去发。</p>
+  <div class="mermaid">
+flowchart LR
+  A[画像] --> B[账号登录]
+  B --> C[对话里说想法]
+  C --> D[内容库看成品]
+  D --> E[发布中心发出去]
+  E --> F[工作台里看日历和数据]
+  </div>
+</section>
+
+<section>
+  <h2>第一次打开：按这 6 步</h2>
+  <div class="card">
+    <div class="item"><div class="idx">1</div><div>启动原版网页。看地址栏是不是 <b>7870</b>。侧栏左上角只写 Easel，没有额外「官方 API / 引导」长说明。</div></div>
+    <div class="item"><div class="idx">2</div><div>点左侧 <b>画像</b>。用向导填：你是谁、写给谁看、风格、常用平台、不做什么。没有画像，对话也能聊，但内容会很泛。</div></div>
+    <div class="item"><div class="idx">3</div><div>点左侧 <b>账号</b>。只登录你真要用的平台。小红书 / 抖音 / 快手 / 视频号 / 知乎 是扫码；B 站按它的提示；公众号在原版里也是「登录公众号后台」扫码。扫完关掉浏览器窗口即可，登录会留在本机。</div></div>
+    <div class="item"><div class="idx">4</div><div>回到 <b>工作台</b>。上面一排是：<span class="nav-chip">热点雷达</span><span class="nav-chip">选题库</span><span class="nav-chip">内容日历</span><span class="nav-chip">发布中心</span>。先看热点，点「做成内容」会自动跳到对话。</div></div>
+    <div class="item"><div class="idx">5</div><div>在 <b>对话</b> 里用白话下指令，例如：「按我的画像，写一篇小红书，主题是研究生怎么第一次投论文」。左上角确认选中了你的画像。等它做完。</div></div>
+    <div class="item"><div class="idx">6</div><div>去 <b>内容库</b> 打开今天的项目文件夹，预览图、文案、视频。再到工作台的 <b>发布中心</b> 勾平台、附上封面或视频、先预检再发布。真正发出去前会再确认一次。</div></div>
+  </div>
+  <p class="ok" style="margin-top:14px">对话页如果提示「网关未连接」，先关掉二次开发桌面版，再到原版目录运行 <code>.\.venv\Scripts\easel.exe gateway start</code>，然后刷新 7870。两套不要同时抢 18789 这个对话口。</p>
+</section>
+
+<section>
+  <h2>左侧六个入口分别干什么</h2>
+  <table>
+    <tr><th>入口</th><th>你在这里做什么</th></tr>
+    <tr><td>工作台</td><td>总览。热点、选题、日历、发布都收在这一页的顶栏，不用在侧栏找。</td></tr>
+    <tr><td>对话</td><td>主战场。发现、策划、写作、做图做视频都对 Agent 说。它会自己选技能并把成品写入内容库。</td></tr>
+    <tr><td>技能库</td><td>查「系统会什么」。日常不必从这里点，除非你想指定某一个技能。</td></tr>
+    <tr><td>内容库</td><td>所有成品的文件夹。发布、下载、给下一篇当素材，都从这里拿。</td></tr>
+    <tr><td>账号</td><td>平台登录状态。没登录的平台，发布中心发不出去。</td></tr>
+    <tr><td>画像</td><td>人设记忆。换选题不用重写人设，换画像等于换一个账号大脑。</td></tr>
+  </table>
+</section>
+
+<section>
+  <h2>页面和文件怎么对应</h2>
+  <div class="tree">你每天点的
+├── 工作台     → 热点 / 选题 / 日历 / 发布
+├── 对话       → Agent 执行技能，结果写入 outputs/
+├── 内容库     → outputs/ 里的项目文件夹
+├── 账号       → 各平台扫码，登录存在本机浏览器配置
+└── 画像       → profiles/你的账号名/
+
+两套目录互不覆盖
+├── Easel-official/   上游原版 v0.1.1（请用这个上手）
+│   ├── .venv/        自己的 Python 环境
+│   ├── outputs/      原版自己的成品
+│   └── 启动原版工作台.ps1
+└── Easel/            二次开发版（先冻结，别和原版混点）
+</div>
+</section>
+
+<section>
+  <h2>原版故意没有的东西</h2>
+  <p>这些是二次开发加的。在原版里找不到是正常的，不是你不会用：</p>
+  <ul>
+    <li>单独的「公众号工作区」长页（预览排版、WeRSS、AppID 表单堆在一页）</li>
+    <li>授权引导三步卡片</li>
+    <li>Postiz 发布日历、FreshRSS 订阅这些外挂服务</li>
+    <li>桌面托盘 / Electron 外壳</li>
+  </ul>
+  <p>原版发公众号：账号页扫后台码 → 对话或发布中心交稿 → 进公众号草稿箱。不要去找二次开发里那张工作区。</p>
+</section>
+
+<section>
+  <h2>常用命令（都在 Easel-official 里跑）</h2>
+  <div class="card">
+<pre style="margin:0;font-family:ui-monospace,Consolas,monospace;font-size:13px;line-height:1.6">cd F:\科研大师兄\自媒体工作台\Easel-official
+.\.venv\Scripts\easel.exe doctor          # 看环境缺什么
+.\启动原版工作台.ps1                      # 打开 http://127.0.0.1:7870
+.\.venv\Scripts\easel.exe gateway start   # 对话网关（和二次开发版不要同时开）
+.\.venv\Scripts\easel.exe ping            # 测网关和模型通不通</pre>
+  </div>
+</section>
+</div>
+<script>
+mermaid.initialize({ startOnLoad: true, theme: "neutral", securityLevel: "loose" });
+</script>
+</body>
+</html>

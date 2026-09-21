@@ -1,0 +1,19 @@
+{
+  "name": "easel-desktop",
+  "productName": "Easel",
+  "version": "0.1.0",
+  "description": "Easel 自媒体桌面工作台",
+  "author": "Easel contributors",
+  "license": "Apache-2.0",
+  "private": true,
+  "main": "main.cjs",
+  "scripts": {
+    "start": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ../启动桌面工作台.ps1",
+    "test": "node --test policy.test.cjs",
+    "package": "node package.cjs"
+  },
+  "devDependencies": {
+    "electron": "44.3.0",
+    "@electron/packager": "20.3.0"
+  }
+}

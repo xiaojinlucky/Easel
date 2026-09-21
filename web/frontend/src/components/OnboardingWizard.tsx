@@ -99,10 +99,10 @@ export default function OnboardingWizard({ onClose, onCreated }: OnboardingWizar
     border: '1px solid var(--border)', background: 'var(--bg-elev)', color: 'var(--text)',
     fontSize: 14, fontFamily: 'inherit',
   };
-  const label: React.CSSProperties = { display: 'block', marginTop: 16, fontSize: 13, color: 'var(--text-secondary)' };
+  const label: React.CSSProperties = { display: 'block', marginTop: 16, fontSize: 14, color: 'var(--text-secondary)' };
 
   const chip = (active: boolean): React.CSSProperties => ({
-    padding: '6px 13px', borderRadius: 999, fontSize: 13, cursor: 'pointer',
+    padding: '6px 13px', borderRadius: 999, fontSize: 14, cursor: 'pointer',
     border: '1px solid var(--border)',
     background: active ? 'var(--accent-gradient)' : 'var(--bg-elev)',
     color: active ? '#fff' : 'var(--text)',
@@ -121,7 +121,7 @@ export default function OnboardingWizard({ onClose, onCreated }: OnboardingWizar
           {STEPS.map((s, i) => (
             <div key={s} style={{ flex: 1 }}>
               <div style={{ height: 4, borderRadius: 2, background: i <= step ? 'var(--accent-start)' : 'var(--border)' }} />
-              <div style={{ fontSize: 11, color: i === step ? 'var(--text)' : 'var(--text-secondary)', marginTop: 4 }}>{s}</div>
+              <div style={{ fontSize: 14, color: i === step ? 'var(--text)' : 'var(--text-secondary)', marginTop: 4 }}>{s}</div>
             </div>
           ))}
         </div>
@@ -135,7 +135,7 @@ export default function OnboardingWizard({ onClose, onCreated }: OnboardingWizar
           <div style={{ padding: '40px 0', textAlign: 'center', color: 'var(--text-secondary)' }}>
             <div className="spinner" style={{ margin: '0 auto 16px' }} />
             <div style={{ color: 'var(--text)', fontSize: 15, marginBottom: 6 }}>画像已创建 ✓　AI 正在后台增强…</div>
-            <span style={{ fontSize: 12 }}>
+            <span style={{ fontSize: 14 }}>
               正在尝试抓取社媒链接并完善各维度，可能需要 1-2 分钟。<br />
               也可以现在就进去用，增强会在后台继续。
             </span>
@@ -167,11 +167,11 @@ export default function OnboardingWizard({ onClose, onCreated }: OnboardingWizar
 
             {step === 1 && (
               <>
-                <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 12 }}>
+                <p style={{ fontSize: 14, color: 'var(--text-secondary)', marginTop: 12 }}>
                   贴上各平台主页链接，AI 会尽力分析你已发的内容和风格（抓不到会跳过，可留空）。
                 </p>
                 {form.platforms.length === 0 && (
-                  <p style={{ fontSize: 13, color: 'var(--text-secondary)' }}>（未选平台，可直接下一步）</p>
+                  <p style={{ fontSize: 14, color: 'var(--text-secondary)' }}>（未选平台，可直接下一步）</p>
                 )}
                 {form.platforms.map((p) => (
                   <div key={p}>
@@ -218,7 +218,7 @@ export default function OnboardingWizard({ onClose, onCreated }: OnboardingWizar
               </>
             )}
 
-            {error && <div style={{ color: 'var(--red)', fontSize: 13, marginTop: 12 }}>{error}</div>}
+            {error && <div style={{ color: 'var(--red)', fontSize: 14, marginTop: 12 }}>{error}</div>}
           </div>
         )}
 

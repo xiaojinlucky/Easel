@@ -1,0 +1,28 @@
+{
+  "repository": "https://github.com/rachelos/we-mp-rss",
+  "license": "MIT",
+  "registry_digest": "sha256:125472e8a58a05f02b930ba2b958575ffc87378743d9491383b13390f709215e",
+  "local_image_id": "sha256:cb3eafd10f02c66fe3fe49557ab0538c6cd0da1bf27e9ee498c1dd8b0236b743",
+  "source": "/app/main.py extracted using docker cp from a created, never-started container of the locked local image",
+  "source_sha256": "a5cc7ee7e7cb16861e343ad02814b154a3a1851f93ad9c48a057f454f96d82f5",
+  "patched_sha256": "269f4c646b1d1965386c4d8a3b4e93a44fce8f174aab6548b48fb788cd99f71a",
+  "patch": "Remove exactly three startup lines printing all environment variables, including PASSWORD and SECRET_KEY. All remaining bytes preserved.",
+  "mount": "./patches/werss-main.py:/app/main.py:ro",
+  "validation": "Python AST parse passed; exact byte replacement verified; service not started by patch author.",
+  "authorization_patches": [
+    {
+      "source": "/app/driver/success.py extracted from exact locked image",
+      "source_sha256": "caf84c85a8bb3519b51b76f88a5ce27fdda88e85eb9919aaf6d13563d260e954",
+      "patched_sha256": "c4f5abdd43c74f80bb65a96d5ae702e9e3e7237d14ec1b3fa14f862bc4710b3e",
+      "mount": "./patches/werss-success.py:/app/driver/success.py:ro",
+      "patch": "Remove token values from authorization success notification/logging; preserve success and expiry messages; all other bytes unchanged."
+    },
+    {
+      "source": "/app/apis/auth.py extracted from exact locked image",
+      "source_sha256": "837a900e1bfb06c152b6ed3e58e268e85b2f5959d24da6a36eb793614d157e97",
+      "patched_sha256": "c69c1dad798dfe25a8e430b28e9d7751cdaeea41b23efa494d179d232b500998",
+      "mount": "./patches/werss-auth.py:/app/apis/auth.py:ro",
+      "patch": "Remove token values from authorization success notification/logging; preserve success and expiry messages; all other bytes unchanged."
+    }
+  ]
+}

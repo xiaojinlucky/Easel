@@ -5,6 +5,19 @@ $LogFile = Join-Path $env:TEMP 'easel-gateway.log'
 $ErrorLogFile = Join-Path $env:TEMP 'easel-gateway.error.log'
 $ConfigDir = Join-Path $HOME ".openclaw-$Profile"
 $Port = 18789
+$Runtime = Join-Path (Split-Path -Parent $Root) 'Easel\.runtime'
+$LocalRuntime = Join-Path $Root '.runtime'
+$NodeName = 'node.exe'
+function Get-IsolatedOpenClaw {
+    foreach ($state in @($LocalRuntime, $Runtime)) {
+        $node = Join-Path $state "node_modules\node\bin\$NodeName"
+        $oc = Join-Path $state 'node_modules\openclaw\openclaw.mjs'
+        if ((Test-Path $node) -and (Test-Path $oc)) {
+            return @{ Node = $node; Entry = $oc }
+        }
+    }
+    return $null
+}
 
 function Test-Gateway {
     try { Invoke-WebRequest "http://127.0.0.1:$Port/healthz" -UseBasicParsing -TimeoutSec 2 | Out-Null; return $true }
@@ -28,9 +41,17 @@ switch ($args[0]) {
         if (Test-Gateway) { Write-Host '[easel] Gateway already running'; break }
         New-Item -ItemType Directory -Force -Path $ConfigDir | Out-Null
         Write-Host "[easel] Starting Easel gateway (profile: $Profile)..."
-        $command = "openclaw --profile $Profile gateway run --force --allow-unconfigured --bind loopback"
-        Start-Process powershell -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-Command', $command `
-            -WorkingDirectory $Root -RedirectStandardOutput $LogFile -RedirectStandardError $ErrorLogFile -WindowStyle Hidden | Out-Null
+        $isolated = Get-IsolatedOpenClaw
+        if ($isolated) {
+            Start-Process -FilePath $isolated.Node -ArgumentList @(
+                $isolated.Entry, '--profile', $Profile, 'gateway', 'run',
+                '--force', '--allow-unconfigured', '--bind', 'loopback'
+            ) -WorkingDirectory $Root -RedirectStandardOutput $LogFile -RedirectStandardError $ErrorLogFile -WindowStyle Hidden | Out-Null
+        } else {
+            $command = "openclaw --profile $Profile gateway run --force --allow-unconfigured --bind loopback"
+            Start-Process powershell -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-Command', $command `
+                -WorkingDirectory $Root -RedirectStandardOutput $LogFile -RedirectStandardError $ErrorLogFile -WindowStyle Hidden | Out-Null
+        }
         $ready = $false
         1..20 | ForEach-Object {
             if (-not $ready) {
