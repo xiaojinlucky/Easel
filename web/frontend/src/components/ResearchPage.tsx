@@ -9,7 +9,7 @@ type Source = {
 };
 type SourcePage = { items: Source[]; total: number; kindCounts: Record<string, number>; limit: number; offset: number; engine: string };
 type Status = { saved_count: number; blocked: { platform: string; reason: string }[]; platforms: string[] };
-type IndexInfo = { total: number; fts_indexed: number; trash: number; pending_transcribe: number; ocr_available: boolean; enrich_pending?: number; enrich_failed?: number; transcribe_pending?: number; transcribe_failed?: number };
+type IndexInfo = { total: number; fts_indexed: number; trash: number; pending_transcribe: number; ocr_available: boolean; enrich_pending?: number; enrich_failed?: number; enrich_cooldown?: number; transcribe_pending?: number; transcribe_failed?: number };
 type TrashItem = { id: string; title: string; platform: string; kind: string; tags: string; deleted_at: number; captured_at: number };
 type Workflow = { id: string; label: string; stage: string; task: string };
 
@@ -86,9 +86,11 @@ export default function ResearchPage({ onCreate, persona = '' }: { onCreate: (pr
   const firstLoad = useRef(true);
   const filtersRef = useRef({ query, kindFilter });
   filtersRef.current = { query, kindFilter };
+  const loadedRef = useRef(0);
+  loadedRef.current = sources.length;
 
-  async function refresh(search = query, kind = kindFilter, offset = 0, append = false) {
-    const params = new URLSearchParams({ query: search, limit: String(PAGE), offset: String(offset), sort: 'recent' });
+  async function refresh(search = query, kind = kindFilter, offset = 0, append = false, limit = PAGE) {
+    const params = new URLSearchParams({ query: search, limit: String(limit), offset: String(offset), sort: 'recent' });
     if (kind) params.set('kind', kind);
     const [page, current, index] = await Promise.all([
       api<SourcePage>('/sources?' + params.toString()), api<Status>('/status'), api<IndexInfo>('/index-status'),
@@ -112,12 +114,18 @@ export default function ResearchPage({ onCreate, persona = '' }: { onCreate: (pr
   async function refreshTrash() {
     setTrash((await api<{ items: TrashItem[] }>('/trash')).items);
   }
+  // 6 秒轮询按"当前已加载多少条"整段重取：原来固定取 60 条，用户点过「再加载」翻出来的
+  // 后面几页会在下一次轮询时被收回首屏，看起来像列表自己跳回顶部。上限对齐后端 500 条。
+  async function pollLibrary() {
+    const { query: currentQuery, kindFilter: currentKind } = filtersRef.current;
+    await refresh(currentQuery, currentKind, 0, false, Math.min(500, Math.max(PAGE, loadedRef.current)));
+  }
   useEffect(() => { refresh('').catch(e => setError(e.message)); }, []);
   useEffect(() => {
     if (view !== 'library') return;
     const timer = window.setInterval(() => {
       if (document.hidden) return;
-      refresh().catch(() => {});
+      pollLibrary().catch(() => {});
     }, 6000);
     return () => window.clearInterval(timer);
   }, [view, query, kindFilter]);
@@ -249,29 +257,33 @@ export default function ResearchPage({ onCreate, persona = '' }: { onCreate: (pr
       <div className="research-index-status">
         <span>全文索引 {indexInfo ? `${indexInfo.fts_indexed}/${indexInfo.total}` : '…'}</span>
         <span>OCR {indexInfo?.ocr_available ? '可用' : '未装（rapidocr）'}</span>
-        <span>AI 加工 {indexInfo?.enrich_pending ?? 0}{indexInfo?.enrich_failed ? ` · 失败 ${indexInfo.enrich_failed}` : ''}</span>
+        <span>AI 加工 {indexInfo?.enrich_pending ?? 0}{indexInfo?.enrich_failed ? ` · 失败 ${indexInfo.enrich_failed}` : ''}{(indexInfo?.enrich_cooldown ?? 0) > 0 ? ` · 通道冷却 ${Math.ceil(indexInfo!.enrich_cooldown!)}s 后自动续跑` : ''}</span>
         <span>转写 {indexInfo?.transcribe_pending ?? 0}{indexInfo?.transcribe_failed ? ` · 失败 ${indexInfo.transcribe_failed}` : ''}</span>
         {engine === 'fts5+jieba' && <span className="engine">当前结果：分词检索</span>}
         {engine === 'like' && <span className="engine">当前结果：兜底模糊匹配</span>}
-        <button className="btn" disabled={busy} onClick={async () => { setBusy(true); try { const r = await api<{ indexed: number }>('/reindex', {}); await refresh(); setMessage(`已重建 ${r.indexed} 条索引。`); } catch (e) { setError((e as Error).message); } finally { setBusy(false); } }}>重建索引</button>
+        <button className="btn" disabled={busy} onClick={async () => { setBusy(true); try { const r = await api<{ indexed: number; skipped?: number }>('/reindex', {}); await refresh(); setMessage(r.skipped ? `已重建 ${r.indexed} 条索引，${r.skipped} 条写入失败已跳过（详情看后端日志）。` : `已重建 ${r.indexed} 条索引。`); } catch (e) { setError((e as Error).message); } finally { setBusy(false); } }}>重建索引</button>
         <button className="btn" disabled={busy} onClick={async () => { setBusy(true); try { const r = await api<{ queued: number; workerStarted: boolean }>('/enrich', {}); await refresh(); setMessage(r.workerStarted ? `已排队 ${r.queued} 条打标任务，后台正在跑（需要 Easel 对话后端在线）。` : `已排队 ${r.queued} 条，等当前任务跑完自动接上。`); } catch (e) { setError((e as Error).message); } finally { setBusy(false); } }}>AI 打标摘要</button>
         <button className="btn" disabled={busy} onClick={async () => { setBusy(true); try { const r = await api<{ processed: number; with_text: number }>('/refresh-ocr', {}); await refresh(); setMessage(r.processed ? `已补识别 ${r.processed} 条，其中 ${r.with_text} 条提取到图片文字。` : '没有待识别的图片素材。'); } catch (e) { setError((e as Error).message); } finally { setBusy(false); } }}>批量识别图片</button>
         <button className="btn" disabled={busy || !sources.length} onClick={async () => {
           setBusy(true); setExportNote('');
-          const ids = (selected.length ? selected : sources.map(s => s.id)).slice(0, 500);
+          const all = selected.length ? selected : sources.map(s => s.id);
+          const ids = all.slice(0, 500);
+          const capped = all.length > ids.length ? `（一次最多 500 条，本次只导了前 ${ids.length} 条）` : '';
           try {
             const r = await api<{ file?: string; folder?: string; count: number; items?: { folder: string }[] }>('/export', { ids, format: 'csv' });
-            setExportNote(r.file ? `/api/media/${r.file}` : ''); setMessage(`已导出 ${r.count} 条为 CSV${selected.length ? '（勾选的）' : '（未勾选＝当前已加载的这些条）'}。`);
+            setExportNote(r.file ? `/api/media/${r.file}` : ''); setMessage(`已导出 ${r.count} 条为 CSV${selected.length ? '（勾选的）' : `（未勾选＝当前已加载的 ${all.length} 条）`}${capped}。`);
           } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
-        }}>导出 CSV（勾选/本页）</button>
+        }}>导出 CSV（勾选/已加载）</button>
         <button className="btn" disabled={busy || !sources.length} onClick={async () => {
           setBusy(true); setExportNote('');
-          const ids = (selected.length ? selected : sources.map(s => s.id)).slice(0, 500);
+          const all = selected.length ? selected : sources.map(s => s.id);
+          const ids = all.slice(0, 500);
+          const capped = all.length > ids.length ? `（一次最多 500 条，本次只导了前 ${ids.length} 条）` : '';
           try {
             const r = await api<{ items?: { folder: string }[] }>('/export', { ids, format: 'folder' });
-            setMessage(`已导出 ${r.items?.length ?? 0} 条${selected.length ? '（勾选的）' : '（未勾选＝当前已加载的这些条）'}到 knowledge/ 知识库目录（meta.json+content.md，Obsidian 可直接打开）。`);
+            setMessage(`已导出 ${r.items?.length ?? 0} 条${selected.length ? '（勾选的）' : `（未勾选＝当前已加载的 ${all.length} 条）`}${capped}到 knowledge/ 知识库目录（meta.json+content.md，Obsidian 可直接打开）。`);
           } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
-        }}>导出知识库夹（勾选/本页）</button>
+        }}>导出知识库夹（勾选/已加载）</button>
         {exportNote && <a href={exportNote} download>下载导出文件</a>}
       </div>
       <div className="research-kinds"><button className={kindFilter === '' ? 'selected' : ''} onClick={() => { setKindFilter(''); refresh(query, '').catch(() => {}); }}>全部 {total}</button>{kindChips.map(([k, n]) => <button key={k} className={kindFilter === k ? 'selected' : ''} onClick={() => { setKindFilter(k); refresh(query, k).catch(() => {}); }}>{k} {n}</button>)}</div>

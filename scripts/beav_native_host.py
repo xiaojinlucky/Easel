@@ -28,7 +28,17 @@ def _project_root() -> Path:
 ROOT = _project_root()
 sys.path.insert(0, str(ROOT))
 
-from easel.research import save_source, knowledge_counts, get_operation, put_operation  # noqa: E402
+from easel.research import (  # noqa: E402
+    save_source,
+    knowledge_counts,
+    get_operation,
+    put_operation,
+    source_exists,
+    media_url_allowed,
+    asset_exists,
+)
+
+MAX_INBOUND_BYTES = 32 * 1024 * 1024   # 单帧上限：长度头能声明到 4GB，不设限一条坏帧就能撑爆宿主
 
 HOST_NAME = "com.easel.research_clipper"
 APP_VERSION = "2.7.18"
@@ -69,6 +79,10 @@ def _read() -> dict | None:
     if not raw or len(raw) < 4:
         return None
     (length,) = struct.unpack("<I", raw)
+    if length > MAX_INBOUND_BYTES:
+        # 长度头能声明到 4GB：不设上限就等于让任何一个坏帧把宿主进程整个吃掉
+        _log(f"refused oversized frame: {length} bytes > {MAX_INBOUND_BYTES}")
+        return None
     payload = sys.stdin.buffer.read(length)
     if len(payload) < length:
         return None
@@ -262,7 +276,9 @@ def extract_entry(method: str, params: dict) -> dict:
     ).strip()
     options = _as_dict(inner.get("options"))
     pending_tasks: list[str] = []
-    if video_url and (options.get("transcribe") or inner.get("transcribe")):
+    # 转写会真的去请求这个地址：本机/内网地址不投任务（worker 侧同一套判定，不各处再写一遍）。
+    # 地址本身照常保存，不悄悄丢数据。
+    if video_url and (options.get("transcribe") or inner.get("transcribe")) and media_url_allowed(video_url):
         pending_tasks.append("transcribe")
     comments_text = _join_comments(comments.get("items")) or str(content.get("commentsSnapshot") or inner.get("indexText") or "").strip()
     kind = _normalize_kind(method, str(inner.get("kind") or note.get("noteType") or ""))
@@ -314,7 +330,12 @@ def _ingest(params: dict, method: str = "") -> dict:
     ).strip()
     cached = get_operation(operation_id)
     if cached:
-        return {**cached, "replayed": True}
+        # 回执复放前先对账：素材可能事后被删或还在回收站，不能继续报 stored
+        still_there = source_exists(str(cached.get("id") or ""))
+        replayed = {**cached, "replayed": True}
+        if not still_there:
+            replayed.update({"success": False, "missing": True, "storageStatus": "missing"})
+        return replayed
     row = save_source(
         entry["url"],
         entry["title"],
@@ -337,21 +358,23 @@ def _ingest(params: dict, method: str = "") -> dict:
         "created": status == "created",
         "updated": status in {"updated", "preserved"},
         "storageStatus": "stored",
-        "readBack": bool(row.get("content")) or bool(row.get("asset_path")),
+        "readBack": bool(row.get("content")) or asset_exists(row),
         "comments": {"captured": bool(entry["extra"].get("comments_text"))},
     }
     if row.get("refresh_failed"):
         receipt["preserved"] = True
     if status in {"created", "updated"}:
+        wanted = ["enrich"] + (["transcribe"] if "transcribe" in (entry["extra"].get("pending_tasks") or []) else [])
         try:
             from easel import research_enrich
 
             source_id = str(row.get("id") or "")
-            research_enrich.enqueue(source_id, "enrich")
-            if "transcribe" in (entry["extra"].get("pending_tasks") or []):
-                research_enrich.enqueue(source_id, "transcribe")
-        except Exception:  # noqa: BLE001  加工队列故障不能挡入库
-            _log("enqueue enrich/transcribe failed for " + str(row.get("id")))
+            for name in wanted:
+                research_enrich.enqueue(source_id, name)
+            receipt["processing"] = {"queued": wanted}
+        except Exception as exc:  # noqa: BLE001  加工队列故障不能挡入库，但要说出来
+            _log("enqueue failed for " + str(row.get("id")) + ": " + repr(exc)[:200])
+            receipt["processing"] = {"queued": [], "failed": str(exc)[:200] or exc.__class__.__name__}
     put_operation(operation_id, receipt)
     return receipt
 

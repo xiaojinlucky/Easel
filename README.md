@@ -239,7 +239,7 @@ easel web                    # 启动 Web 工作台
 
 > 如果提示 `easel: command not found`，就是虚拟环境没激活。也可以不激活、直接用完整路径运行，例如 `.venv/bin/easel doctor`（Windows：`.venv\Scripts\easel.exe doctor`）。
 
-启动 Web 工作台后访问 `http://localhost:7860`。安装完成后可以运行 `easel doctor` 检查环境，
+启动 Web 工作台后访问 `http://localhost:7870`。安装完成后可以运行 `easel doctor` 检查环境，
 运行 `easel ping` 检查 gateway 和 Agent 连通性。
 
 安装器会统一安装 Web、媒体处理和浏览器发布所需的 Python 依赖：
@@ -311,7 +311,7 @@ CLAUDE_MODEL=你的模型名
 
 | 命令 | 作用 |
 |---|---|
-| `easel web [--port 7860]` | 启动 Web 工作台 |
+| `easel web [--port 7870]` | 启动 Web 工作台 |
 | `easel chat` | 在终端开启多轮对话并选择账号画像 |
 | `easel skill <name> -i "..." [-p <画像>]` | 直接运行指定 Skill；输入也可以是文件路径 |
 | `easel doctor` | 检查 Python、Node.js、OpenClaw 和关键配置 |
@@ -353,7 +353,7 @@ Easel/
 └── docs/                     能力规范、能力地图与架构文档
 ```
 
-Easel 使用独立的 `easel` OpenClaw profile，不会覆盖你本机已有的 OpenClaw 配置。Web 默认运行在 `7860`，gateway 默认运行在 `18789`。
+Easel 使用独立的 `easel` OpenClaw profile，不会覆盖你本机已有的 OpenClaw 配置。Web 默认运行在 `7870`，gateway 默认运行在 `18789`。
 
 ## 📑 文档
 

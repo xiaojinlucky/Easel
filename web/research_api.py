@@ -20,14 +20,15 @@ class Excerpt(BaseModel):
 
 @router.get('/status')
 async def research_status():
-    return research.collection_status()
+    return await asyncio.to_thread(research.collection_status)
 
 
 @router.get('/sources')
 async def sources(query: str = '', limit: int = 200, offset: int = 0, kind: str = '',
                   platform: str = '', state: str = '', tag: str = '', sort: str = 'recent'):
-    return research.list_sources(query[:200], limit=limit, offset=offset, kind=kind,
-                                 platform=platform, state=state, tag=tag[:60], sort=sort)
+    # 列表要分词 + FTS + 计数，素材库页每 6 秒就轮一次：放在事件循环里会把整个工作台卡住
+    return await asyncio.to_thread(
+        research.list_sources, query[:200], limit, offset, kind, platform, state, tag[:60], sort)
 
 
 class SourcePatch(BaseModel):
@@ -106,15 +107,20 @@ async def reindex():
 
 @router.get('/index-status')
 async def index_status():
-    value = await asyncio.to_thread(research.index_status)
-    # 扩展宿主进程只会投递任务，模型通道在本后端进程里：前端每 6 秒轮询这里时顺手把队列接上
-    try:
-        from easel import research_enrich
-        if research_enrich._has_claimable():
-            research_enrich.start_worker()
-    except Exception:  # noqa: BLE001  触发失败不影响状态返回
-        pass
-    return value
+    from easel import research_enrich
+
+    def read_and_nudge():
+        value = research.index_status()
+        # 扩展宿主进程只会投递任务，模型通道在本后端进程里：前端每 6 秒轮询这里时顺手把队列接上
+        try:
+            value['enrich_cooldown'] = round(research_enrich.channel_cooldown_remaining(), 1)
+            if research_enrich._has_claimable():
+                research_enrich.start_worker()
+        except Exception:  # noqa: BLE001  触发失败不影响状态返回
+            pass
+        return value
+
+    return await asyncio.to_thread(read_and_nudge)
 
 
 @router.post('/migrate-kinds')
@@ -176,36 +182,50 @@ class EnrichRequest(BaseModel):
 @router.post('/enrich')
 async def enrich(request: EnrichRequest):
     from easel import research_enrich
-    queued = 0
     if request.ids:
-        for identifier in request.ids:
-            try:
-                research.get_source(identifier)
-            except research.CollectionError as exc:
-                raise HTTPException(exc.status, str(exc)) from exc
-            research_enrich.enqueue(identifier, 'enrich')
-            queued += 1
+        def queue_selected() -> int:
+            for identifier in request.ids:
+                research.get_source(identifier)          # 不存在就抛，交给下面转成 404
+                research_enrich.enqueue(identifier, 'enrich')
+            return len(request.ids)
+        try:
+            queued = await asyncio.to_thread(queue_selected)
+        except research.CollectionError as exc:
+            raise HTTPException(exc.status, str(exc)) from exc
     else:
         queued = await asyncio.to_thread(research_enrich.enqueue_missing_enrich, request.limit)
-    started = research_enrich.start_worker()
+    started = await asyncio.to_thread(research_enrich.start_worker)
     return {'queued': queued, 'workerStarted': started}
 
 
 @router.get('/enrich/status')
 async def enrich_status():
     from easel import research_enrich
-    return await asyncio.to_thread(research_enrich.queue_status)
+    value = await asyncio.to_thread(research_enrich.queue_status)
+    # 冷却期内队列一条都不领：不给出剩余秒数，前端只会显示"待处理 N 条"却看不出为什么不动
+    value['channelCooldown'] = round(research_enrich.channel_cooldown_remaining(), 1)
+    return value
 
 
 @router.post('/sources/{identifier}/transcribe')
 async def transcribe_source(identifier: str):
     from easel import research_enrich
-    try:
-        research.get_source(identifier)
+
+    def queue_transcribe() -> None:
+        item = research.get_source(identifier)
+        video_url = str((item.get('extra') or {}).get('video_url') or '')
+        if not video_url.startswith(('http://', 'https://')):
+            raise research.CollectionError('这条素材里没有视频地址，无法转写。', 422)
+        if not research.media_url_allowed(video_url):
+            raise research.CollectionError('视频地址指向本机或内网，不会去请求它。', 422)
         research_enrich.enqueue(identifier, 'transcribe')
+
+    try:
+        await asyncio.to_thread(queue_transcribe)
     except research.CollectionError as exc:
         raise HTTPException(exc.status, str(exc)) from exc
-    return {'queued': True, 'id': identifier, 'workerStarted': research_enrich.start_worker()}
+    started = await asyncio.to_thread(research_enrich.start_worker)
+    return {'queued': True, 'id': identifier, 'workerStarted': started}
 
 
 @router.post('/feeds/sync')
@@ -223,7 +243,7 @@ async def sync_feeds():
 @router.get('/sources/{identifier}')
 async def source(identifier: str):
     try:
-        return research.get_source(identifier)
+        return await asyncio.to_thread(research.get_source, identifier)
     except research.CollectionError as exc:
         raise HTTPException(exc.status, str(exc)) from exc
 
@@ -242,7 +262,9 @@ async def capture(request: Capture):
 async def import_excerpt(request: Excerpt):
     if request.url and not request.url.startswith(('http://', 'https://')):
         raise HTTPException(422, '来源请填写网页链接，或留空。')
-    return research.save_source(request.url, request.title, '导入摘录', request.topic, request.content)
+    # save_source 会下载外链图片 / 跑 OCR / 写资产 / 建索引，是这条 API 里最慢的同步调用
+    return await asyncio.to_thread(
+        research.save_source, request.url, request.title, '导入摘录', request.topic, request.content)
 
 
 class BeavHostRequest(BaseModel):

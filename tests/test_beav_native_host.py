@@ -209,3 +209,70 @@ def test_desktop_context_reports_ready_state():
     context = handle('desktop.context', {})
     assert context['initialization'] == {'ready': True, 'state': 'ready'}
     assert context['ingest']['allowed'] is True
+
+
+def test_private_video_url_is_not_queued_for_transcribe():
+    """转写会真的去请求这个地址：内网地址不投任务，但地址本身照常保存。"""
+    entry = mod.extract_entry('knowledge.ingestEntry', {'payload': {
+        'source': {'sourceUrl': 'https://www.bilibili.com/video/BV2xx'},
+        'content': {'title': '内网视频', 'text': '简介'},
+        'assets': {'videoUrl': 'http://127.0.0.1:7870/api/research/sources'},
+        'options': {'transcribe': True},
+    }})
+    assert entry['extra']['pending_tasks'] == []
+    assert entry['extra']['video_url'].startswith('http://127.0.0.1')
+
+
+def test_replayed_receipt_marks_deleted_source(tmp_path, monkeypatch):
+    _isolate(tmp_path, monkeypatch)
+    params = {
+        'operationId': 'op-gone',
+        'payload': {
+            'source': {'sourceUrl': 'https://www.zhihu.com/question/7/answer/7'},
+            'answer': {'text': '存过一次就被删了'},
+        },
+    }
+    first = handle('knowledge.ingestZhihuAnswer', params)
+    assert first['success'] is True and first['storageStatus'] == 'stored'
+    research.delete_sources([first['id']])
+    replay = handle('knowledge.ingestZhihuAnswer', params)
+    assert replay['replayed'] is True
+    assert replay['success'] is False and replay['missing'] is True
+    assert replay['storageStatus'] == 'missing'
+
+
+def test_enqueue_failure_is_visible_in_receipt(tmp_path, monkeypatch):
+    """加工队列挂了不能只躺在宿主日志里：回执要说清这次没排上队。"""
+    _isolate(tmp_path, monkeypatch)
+    from easel import research_enrich
+
+    calls = []
+
+    def flaky(identifier, task='enrich'):
+        calls.append((identifier, task))
+        if len(calls) == 1:
+            raise RuntimeError('队列写不进去')
+        return True
+
+    monkeypatch.setattr(research_enrich, 'enqueue', flaky)
+    receipt = handle('knowledge.ingestXhsEntryV2', {'payload': {
+        'source': {'sourceUrl': 'https://www.xiaohongshu.com/explore/enq1'},
+        'note': {'title': '投递失败', 'text': '正文'},
+    }})
+    assert receipt['success'] is True                      # 入库不受影响
+    assert receipt['processing']['queued'] == [] and '队列写不进去' in receipt['processing']['failed']
+
+    ok = handle('knowledge.ingestXhsEntryV2', {'payload': {
+        'source': {'sourceUrl': 'https://www.xiaohongshu.com/explore/enq2'},
+        'note': {'title': '投递成功', 'text': '正文'},
+    }})
+    assert ok['processing'] == {'queued': ['enrich']}
+
+
+def test_oversized_frame_is_refused(monkeypatch):
+    """长度头是 4 字节无符号整数，最大能声明 4GB：不设上限一条坏帧就能把宿主吃掉。"""
+    class Stub:
+        buffer = type('B', (), {'read': staticmethod(lambda n: b'\xff\xff\xff\xff' if n == 4 else b'')})()
+
+    monkeypatch.setattr(mod.sys, 'stdin', Stub())
+    assert mod._read() is None

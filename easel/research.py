@@ -34,6 +34,10 @@ CACHE_SECONDS = 86400
 PLATFORMS = {'xiaohongshu.com': '小红书', 'xhslink.com': '小红书', 'xhslink.cn': '小红书', 'bilibili.com': '哔哩哔哩', 'douyin.com': '抖音', 'zhihu.com': '知乎', 'mp.weixin.qq.com': '公众号', 'weibo.com': '微博', 'x.com': 'X', 'twitter.com': 'X', 'reddit.com': 'Reddit', 'news.ycombinator.com': 'Hacker News', 'github.com': 'GitHub 社区', 'beav.me': 'Beav', 'redbox.ziz.hk': 'Beav', 'linux.do': 'Linux.do', 'v2ex.com': 'V2EX'}
 CAPTURE_METHOD = 'CloakBrowser + Baoyu（单页，不滚动或分页）'
 CLIPPER_METHOD = 'Mozilla Readability / 用户选区'
+# 长任务追加进正文的段落标记：追加、判重、重入库保段共用（实际写入形如 [视频转写·subtitles]）
+TRANSCRIBE_MARKER = '[视频转写'
+OCR_MARKER = '[图片文字]'
+FTS_ID_CAP = 5000            # FTS 命中转成 id IN (...) 的上限，超了退 LIKE，别撞 SQLite 变量墙
 _capture_lock = threading.Lock()
 
 
@@ -53,7 +57,7 @@ def connection() -> sqlite3.Connection:
     db.execute('CREATE TABLE IF NOT EXISTS blocked (platform TEXT PRIMARY KEY, reason TEXT, at REAL)')
     db.execute('CREATE TABLE IF NOT EXISTS cooldowns (platform TEXT PRIMARY KEY, next_at REAL)')
     db.execute('CREATE TABLE IF NOT EXISTS operations (operation_id TEXT PRIMARY KEY, receipt TEXT, at REAL)')
-    db.execute('CREATE TABLE IF NOT EXISTS enrich_tasks (id INTEGER PRIMARY KEY AUTOINCREMENT, source_id TEXT, task TEXT, status TEXT NOT NULL DEFAULT \'pending\', error TEXT DEFAULT \'\', result_json TEXT DEFAULT \'\', attempts INTEGER NOT NULL DEFAULT 0, created_at REAL, updated_at REAL, UNIQUE(source_id, task))')
+    db.execute('CREATE TABLE IF NOT EXISTS enrich_tasks (id INTEGER PRIMARY KEY AUTOINCREMENT, source_id TEXT, task TEXT, status TEXT NOT NULL DEFAULT \'pending\', error TEXT DEFAULT \'\', result_json TEXT DEFAULT \'\', attempts INTEGER NOT NULL DEFAULT 0, claim_key INTEGER NOT NULL DEFAULT 0, created_at REAL, updated_at REAL, UNIQUE(source_id, task))')
     db.execute('CREATE VIRTUAL TABLE IF NOT EXISTS sources_fts USING fts5(source_id UNINDEXED, tokens)')
     existing = {row[1] for row in db.execute('PRAGMA table_info(sources)').fetchall()}
     for column, decl in (
@@ -68,6 +72,9 @@ def connection() -> sqlite3.Connection:
     ):
         if column not in existing:
             db.execute(f'ALTER TABLE sources ADD COLUMN {column} {decl}')
+    task_columns = {row[1] for row in db.execute('PRAGMA table_info(enrich_tasks)').fetchall()}
+    if 'claim_key' not in task_columns:   # 老库补列：没有它 _finish 只能靠 attempts 判版本，会被 ABA 骗过
+        db.execute('ALTER TABLE enrich_tasks ADD COLUMN claim_key INTEGER NOT NULL DEFAULT 0')
     return db
 
 
@@ -98,8 +105,10 @@ _TAG_STRIP = re.compile(r'[,，|]')
 
 def _normalize_tags(tags) -> list[str]:
     result: list[str] = []
-    for raw in (tags or []):
-        tag = _TAG_STRIP.sub(' ', str(raw)).strip().strip('#')
+    for raw in list(tags or [])[:60]:
+        # 换行/制表必须压掉：标签会被拼进导出 md 的 front matter，
+        # 一个带 \n 的标签就能提前结束 YAML 块并注入任意键（模型或网页都能控制它）
+        tag = re.sub(r'\s+', ' ', _TAG_STRIP.sub(' ', str(raw))).strip().strip('#')[:40].strip()
         if tag and tag not in result:
             result.append(tag)
     return result[:24]
@@ -145,12 +154,23 @@ def index_source(identifier: str) -> None:
 
 
 def reindex_all() -> dict:
+    """逐行重建，成功后再清孤儿条目。
+
+    先 `DELETE FROM sources_fts` 再慢慢重建的话，中途任何一行报错（素材被并发硬删、
+    extra_json 是坏值）都会留下"索引少了一半但没人知道"的状态。
+    """
     with connection() as db:
         ids = [row[0] for row in db.execute('SELECT id FROM sources').fetchall()]
-        db.execute('DELETE FROM sources_fts')
+    built = 0
     for identifier in ids:
-        index_source(identifier)
-    return {'indexed': len(ids)}
+        try:
+            index_source(identifier)
+            built += 1
+        except (sqlite3.Error, CollectionError):
+            continue
+    with connection() as db:
+        db.execute('DELETE FROM sources_fts WHERE source_id NOT IN (SELECT id FROM sources)')
+    return {'indexed': built, 'skipped': len(ids) - built}
 
 
 def _ensure_index(db) -> None:
@@ -167,8 +187,13 @@ def _fts_ids(db, query: str) -> list[str] | None:
         return None
     match = ' AND '.join('"%s"' % token.replace('"', '') for token in tokens[:8])
     try:
-        rows = db.execute('SELECT source_id FROM sources_fts WHERE sources_fts MATCH ? ORDER BY rank', (match,)).fetchall()
+        rows = db.execute('SELECT source_id FROM sources_fts WHERE sources_fts MATCH ? ORDER BY rank LIMIT ?',
+                          (match, FTS_ID_CAP + 1)).fetchall()
     except sqlite3.OperationalError:
+        return None
+    if len(rows) > FTS_ID_CAP:
+        # 命中太多：这些 id 会被拼成 id IN (?, ?, ...) 撞 SQLite 变量上限（32766）直接 500，
+        # 不如退回 LIKE 扫（慢但不炸），所以报"FTS 不可用"
         return None
     return [str(row[0]) for row in rows]
 
@@ -207,8 +232,15 @@ def list_sources(query: str = '', limit: int = 200, offset: int = 0, kind: str =
         filters.append(('id IN (' + ','.join('?' * len(ids)) + ')', list(ids)))
     elif query:
         engine = 'like'
-        like = '%' + query[:200] + '%'
-        filters.append(('(title LIKE ? OR topic LIKE ? OR content LIKE ? OR author LIKE ? OR kind LIKE ? OR tags LIKE ?)', [like] * 6))
+        # 不转义的话 query='%' 命中全库、'_' 变成单字通配：搜索框里输入的是字面量
+        escaped = query[:200].replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
+        like = '%' + escaped + '%'
+        # SQLite 的字符串字面量不做反斜杠转义，必须给出真实单字符 ESCAPE 子句，
+        # 写成 ESCAPE '\\' 会被当成两个字符而直接报错。
+        esc = "'\\'"
+        like_columns = ('title', 'topic', 'content', 'author', 'kind', 'tags')
+        filters.append(('(' + ' OR '.join(f'{column} LIKE ? ESCAPE {esc}' for column in like_columns) + ')',
+                        [like] * len(like_columns)))
     base = ' AND '.join(clause for clause, _ in filters)
     params = [value for _, values in filters for value in values]
     order = 'pinned DESC,' + SORTS.get(sort, SORTS['recent'])
@@ -237,6 +269,24 @@ def get_source(identifier: str) -> dict:
     return _shape_row(dict(row))
 
 
+def source_exists(identifier: str) -> bool:
+    """素材是否仍在库且不在回收站：宿主幂等回执复核对账用，不读正文。"""
+    if not identifier:
+        return False
+    with connection() as db:
+        return db.execute('SELECT 1 FROM sources WHERE id=? AND deleted_at=0 LIMIT 1',
+                          (str(identifier),)).fetchone() is not None
+
+
+def asset_exists(item: dict) -> bool:
+    """asset_path 字段非空不等于文件真在：回执要说"读回过内容"就得 stat 一下。"""
+    rel = str((item or {}).get('asset_path') or '')
+    if not rel:
+        return False
+    target = (ROOT / 'outputs' / rel).resolve()
+    return _inside(ROOT / 'outputs', target) and target.is_file()
+
+
 def save_source(url: str, title: str, platform: str, topic: str, content: str, method: str = 'manual', state: str = 'saved', error: str = '', author: str = '', kind: str = '', cover_url: str = '', extra: dict | None = None) -> dict:
     extra = dict(extra or {})
     data_images = [str(item) for item in (extra.pop('data_images', None) or []) if str(item).strip()]
@@ -250,7 +300,8 @@ def save_source(url: str, title: str, platform: str, topic: str, content: str, m
     elif method == CLIPPER_METHOD:
         identity = 'clipper\n' + url + '\n' + content
     elif external_id:
-        identity = 'ext\n' + external_id
+        # 外部号只在平台内唯一：不带平台的话两个站点撞上同一个 id 会互相覆盖成同一条素材
+        identity = 'ext\n' + (platform or 'unknown') + '\n' + external_id
     elif method != 'manual':
         identity = url
     else:
@@ -288,8 +339,8 @@ def save_source(url: str, title: str, platform: str, topic: str, content: str, m
         ocr_text = ocr_local_images(local_images) if local_images and len(str(content or '')) < 800 else ''
         if ocr_text:
             extra['ocr_text'] = ocr_text
-            if '[图片文字]' not in content:
-                content = (str(content or '').rstrip() + '\n\n[图片文字]\n' + ocr_text).strip()
+            if OCR_MARKER not in content:
+                content = (str(content or '').rstrip() + '\n\n' + OCR_MARKER + '\n' + ocr_text).strip()
         if local_images:
             header += '本地图片：\n' + '\n'.join(f'- {item}' for item in local_images) + '\n'
         if images:
@@ -300,13 +351,30 @@ def save_source(url: str, title: str, platform: str, topic: str, content: str, m
         target.write_text(header + content, encoding='utf-8')
         asset_path = target.relative_to(ROOT / 'outputs').as_posix()
     save_status = 'created'
+    earlier_content = ''
     if state == 'saved':
         with connection() as db:
-            earlier = db.execute("SELECT content,title FROM sources WHERE id=? AND state='saved'", (identifier,)).fetchone()
+            earlier = db.execute(
+                "SELECT content,title,tags,extra_json FROM sources WHERE id=? AND state='saved'",
+                (identifier,)).fetchone()
         if earlier:
             same_content = (earlier['content'] or '') == content
             same_title = (earlier['title'] or '') == title[:500]
             save_status = 'unchanged' if same_content and same_title else 'updated'
+            earlier_content = earlier['content'] or ''
+            # 标签只并在前不覆盖：AI 打标一次几十秒，重新采集同一条不该把它清掉
+            old_tags = [tag for tag in str(earlier['tags'] or '').split(',') if tag]
+            merged_tags = _normalize_tags(old_tags + _normalize_tags(raw_tags))
+            tags_sql = ','.join(merged_tags)
+            try:
+                old_extra = json.loads(earlier['extra_json'] or '{}')
+            except json.JSONDecodeError:
+                old_extra = {}
+            if isinstance(old_extra, dict):
+                # 已花过成本的识别结果与「已尝试」标记：本次没产出就留着，否则批量回填以为做过
+                for key in ('ocr_attempted', 'ocr_text'):
+                    if key in old_extra and key not in extra:
+                        extra[key] = old_extra[key]
     extra_json = json.dumps(extra, ensure_ascii=False) if extra else ''
     with connection() as db:
         db.execute(
@@ -318,6 +386,9 @@ def save_source(url: str, title: str, platform: str, topic: str, content: str, m
             'extra_json=excluded.extra_json,tags=excluded.tags,deleted_at=0',
             (identifier, url, title[:500], platform, topic, content, state, error, captured_at, asset_path, method, author, kind, cover_url, extra_json, tags_sql),
         )
+    if earlier_content:
+        # 整列覆盖之后再把旧正文里的 OCR/转写段落原子补回（append 内部会同步 md 资产与索引）
+        preserve_enriched_sections(identifier, earlier_content, content)
     result = get_source(identifier)
     result['save_status'] = save_status
     try:
@@ -325,6 +396,29 @@ def save_source(url: str, title: str, platform: str, topic: str, content: str, m
     except sqlite3.Error:
         pass
     return result
+
+
+_DNS_PRIVATE: dict[str, bool] = {}
+
+
+def _resolves_to_private(host: str) -> bool:
+    """通配 DNS（127.0.0.1.nip.io / *.sslip.io）字面看是公网域名，解析完才露出内网地址。
+
+    解析失败时放行：本机离线时后面真去取也取不到，没必要为此把正常素材判死。
+    """
+    cached = _DNS_PRIVATE.get(host)
+    if cached is not None:
+        return cached
+    try:
+        addresses = socket.getaddrinfo(host, None)
+    except OSError:
+        return False
+    verdict = bool(addresses) and any(
+        not ipaddress.ip_address(record[4][0]).is_global for record in addresses)
+    if len(_DNS_PRIVATE) > 512:
+        _DNS_PRIVATE.clear()
+    _DNS_PRIVATE[host] = verdict
+    return verdict
 
 
 def _public_http_url(url: str) -> bool:
@@ -338,7 +432,15 @@ def _public_http_url(url: str) -> bool:
         ip = ipaddress.ip_address(host)
         return bool(ip.is_global)
     except ValueError:
-        return True
+        pass
+    if host.endswith(('nip.io', 'sslip.io')) or _resolves_to_private(host):
+        return False
+    return True
+
+
+def media_url_allowed(url: str) -> bool:
+    """宿主与路由共用的公网地址判定：外链图片、待转写的视频地址同一套规则，别各处再写一遍。"""
+    return _public_http_url(str(url or '').strip())
 
 
 def ocr_available() -> bool:
@@ -385,14 +487,28 @@ def merge_extra_json(identifier: str, updates: dict) -> dict:
     args: list = []
     paths: list[str] = []
     for key, value in updates.items():
-        paths.append("'$.'||?, ?")
-        args.extend((str(key), value))
+        key = str(key)
+        if not key:
+            continue
+        paths.append("'$.'||json_quote(?), ?")   # 带点号/方括号的 key 不会被当成嵌套路径
+        args.extend((key, value))
+    if not paths:
+        return get_source(identifier)
     args.append(identifier)
     with connection() as db:
+        # json_valid 只说明"是合法 JSON"：根为 null/数字/数组/字符串时 json_set 原样返回，
+        # UPDATE 照样 rowcount=1，于是并进去的东西其实一个字没落。只接受根是对象。
+        # 注意 json_type() 返回类型名（'object'）不是路径 '$'；且它对非法 JSON 直接抛
+        # malformed JSON，所以必须先用 json_valid() 挡一道，否则脏行会让合并整条失败。
         db.execute(
             "UPDATE sources SET extra_json = json_set("
-            "CASE WHEN json_valid(extra_json) THEN extra_json ELSE '{}' END, "
+            "CASE WHEN json_valid(extra_json) AND json_type(extra_json)='object' "
+            "THEN extra_json ELSE '{}' END, "
             + ','.join(paths) + ') WHERE id=?', args)
+    try:  # 合并的 key 里有 comments_text 这类进全文索引的字段，不重建就永远搜不到
+        index_source(identifier)
+    except (sqlite3.Error, CollectionError):
+        pass
     return get_source(identifier)
 
 
@@ -404,7 +520,7 @@ def refresh_ocr(identifier: str) -> dict:
         return merge_extra_json(identifier, {'ocr_attempted': 1})
     merged = merge_extra_json(identifier, {'ocr_attempted': 1, 'ocr_text': ocr_text})
     # 追加走原子 UPDATE：OCR 跑几秒期间用户改过正文也不会被整列覆盖，已带标记则不动
-    merged['ocr_appended'] = append_marked_section(identifier, '[图片文字]', '[图片文字]\n' + ocr_text)
+    merged['ocr_appended'] = append_marked_section(identifier, OCR_MARKER, OCR_MARKER + '\n' + ocr_text)
     return merged
 
 
@@ -543,7 +659,7 @@ def _knowledge_site(item: dict) -> str:
     slug = SITE_BY_PLATFORM.get(str(item.get('platform') or ''))
     if slug:
         return slug
-    cleaned = re.sub(r'[^a-z0-9]+', '-', host).strip('-')
+    cleaned = re.sub(r'[^a-z0-9]+', '-', host).strip('-')[:60]   # 宿主可给超长主机名，目录名超 255 会让 mkdir 抛错
     return cleaned or 'imported'
 
 
@@ -566,11 +682,14 @@ def export_folder(identifier: str) -> dict:
     if extra.get('comments_text'):
         body += '\n\n## 评论\n\n' + str(extra['comments_text'])
     (folder / 'meta.json').write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding='utf-8')
-    quoted = str(item.get('title') or '').replace('"', "'")
-    tags_front = ', '.join(f'"{t}"' for t in item.get('tags') or [])
+    plain_title = re.sub(r'\s+', ' ', str(item.get('title') or '')).strip()[:200]
     date = time.strftime('%Y-%m-%d', time.localtime(item.get('captured_at') or time.time()))
-    front = f'---\ntitle: "{quoted}"\nsource: "{item.get("url") or ""}"\ntags: [{tags_front}]\ndate: {date}\n---\n\n'
-    (folder / 'content.md').write_text(front + f'# {quoted}\n\n{body}\n', encoding='utf-8')
+    # YAML 的双引号标量与 JSON 兼容：标题/URL 里有引号或换行时，不转义就能提前结束 front matter 注入键
+    front = (f'---\ntitle: {json.dumps(plain_title, ensure_ascii=False)}'
+             f'\nsource: {json.dumps(str(item.get("url") or ""), ensure_ascii=False)}'
+             f'\ntags: [{", ".join(json.dumps(t, ensure_ascii=False) for t in item.get("tags") or [])}]'
+             f'\ndate: {date}\n---\n\n')
+    (folder / 'content.md').write_text(front + f'# {plain_title}\n\n{body}\n', encoding='utf-8')
     return {'id': identifier, 'folder': folder.relative_to(ROOT).as_posix(), 'files': ['meta.json', 'content.md']}
 
 
@@ -593,26 +712,34 @@ def export_batch(ids: list[str], fmt: str = 'json') -> dict:
             rows.append(get_source(identifier))
         except CollectionError:
             continue
-    stamp = time.strftime('%Y%m%d-%H%M%S')
+    # 文件名精确到毫秒再带一段随机：只到秒的话同一秒两次导出会后一次覆前一次，返回路径还一样
+    stamp = time.strftime('%Y%m%d-%H%M%S') + f'-{int(time.time() * 1000) % 1000:03d}-{random.randrange(1000):03d}'
     fields = ('id', 'title', 'url', 'platform', 'kind', 'author', 'topic', 'tags', 'likes', 'collects',
               'comments', 'state', 'method', 'captured_at', 'content')
+
+    def _neutralise(value) -> str:
+        text = '' if value is None else str(value)
+        # 网页正文可以以 = + - @ 开头；这类单元格在 Excel/WPS 里是公式（DDE 甚至能拉命令）
+        return "'" + text if text[:1] in ('=', '+', '-', '@', '\t', '\r') else text
+
     records = []
     for row in rows:
         extra = row.get('extra') or {}
-        records.append({
+        record = {
             'id': row.get('id'), 'title': row.get('title'), 'url': row.get('url'), 'platform': row.get('platform'),
             'kind': row.get('kind'), 'author': row.get('author'), 'topic': row.get('topic'),
             'tags': ','.join(row.get('tags') or []), 'likes': extra.get('likes'), 'collects': extra.get('collects'),
             'comments': extra.get('comments'), 'state': row.get('state'), 'method': row.get('method'),
             'captured_at': row.get('captured_at'), 'content': row.get('content'),
-        })
+        }
+        records.append(record)
     target = ROOT / 'outputs' / '导出' / f'素材库-{stamp}.{fmt}'
     target.parent.mkdir(parents=True, exist_ok=True)
     if fmt == 'csv':
         buffer = io.StringIO()
         writer = csv.DictWriter(buffer, fieldnames=fields, extrasaction='ignore')
         writer.writeheader()
-        writer.writerows(records)
+        writer.writerows({key: _neutralise(value) for key, value in record.items()} for record in records)
         target.write_text('\ufeff' + buffer.getvalue(), encoding='utf-8')
     else:
         target.write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding='utf-8')
@@ -655,11 +782,20 @@ def update_source(identifier: str, title=None, topic=None, content=None, summary
     return get_source(identifier)
 
 
+def _inside(root: Path, candidate: Path) -> bool:
+    """candidate 是否真在 root 里面。startswith 前缀比较不算：`../outputs_x/` 解析后仍以 outputs 开头。"""
+    try:
+        root = Path(root).resolve()
+        candidate = Path(candidate).resolve()
+    except OSError:
+        return False
+    return candidate != root and root in candidate.parents
+
+
 def _write_asset(item: dict, content: str, title: str | None = None) -> None:
     """把正文同步回 outputs/ 里的 md 资产，保留 front header；越界路径一律不写。"""
     target = (ROOT / 'outputs' / str(item['asset_path'])).resolve()
-    outputs_root = (ROOT / 'outputs').resolve()
-    if not str(target).startswith(str(outputs_root)) or not target.parent.is_dir():
+    if not _inside(ROOT / 'outputs', target) or not target.parent.is_dir():
         return
     old = target.read_text(encoding='utf-8') if target.is_file() else ''
     head, sep, _body = old.partition('\n---\n\n')
@@ -691,6 +827,72 @@ def append_marked_section(identifier: str, marker: str, block: str) -> bool:
     except sqlite3.Error:
         pass
     return True
+
+
+# 与 easel/research_enrich.TRANSCRIBE_MARKER 同源（顶部常量区定义）
+ENRICHED_MARKERS = (OCR_MARKER, TRANSCRIBE_MARKER)
+
+
+def _marked_blocks(content: str) -> list[tuple[str, str]]:
+    """从正文里切出各标记段落（同一标记只取第一段，避免重复堆积）。"""
+    text = str(content or '')
+    found: list[tuple[int, str, int]] = []
+    for marker in ENRICHED_MARKERS:
+        start = text.find(marker)
+        if start < 0:
+            continue
+        ends = [end for end in (text.find(other, start + len(marker)) for other in ENRICHED_MARKERS) if end > 0]
+        found.append((start, marker, min(ends) if ends else len(text)))
+    return [(marker, text[start:end].strip()) for start, marker, end in sorted(found)]
+
+
+def preserve_enriched_sections(identifier: str, old_content: str, new_content: str) -> int:
+    """重新采集/刷新正文时，把新采集没带的旧加工段落（OCR 文字、视频转写）补回来。
+
+    这两段最短几十秒、最长几十分钟才能产出，过去 UPSERT 整列覆盖直接抹掉，
+    而 extra 里的 ocr_attempted 还在，批量回填以为做过就不再补。
+    用户在编辑器里主动删段落走的是 update_source，不经过这里，删除照旧生效。
+    """
+    restored = 0
+    for marker, block in _marked_blocks(old_content):
+        if not block or marker in str(new_content or ''):
+            continue
+        if append_marked_section(identifier, marker, block):
+            restored += 1
+    return restored
+
+
+def merge_ai_fields(identifier: str, tags: list[str] | None = None,
+                    summary: str | None = None, expected_summary: str | None = None) -> dict:
+    """AI 产物写回：标签在库里并、摘要只在用户没同期改过时覆盖。
+
+    模型一次要跑几十秒到 300 秒，「读整行→算→写整列」会把这期间用户加的标签或
+    改的摘要吞掉，所以整段读改写放进同一条 BEGIN IMMEDIATE 事务，与另一个写者互斥。
+    """
+    with connection() as db:
+        db.execute('BEGIN IMMEDIATE')
+        row = db.execute('SELECT tags, summary FROM sources WHERE id=?', (identifier,)).fetchone()
+        if row is None:
+            db.rollback()
+            raise CollectionError('素材不存在。', 404)
+        current_tags = [tag for tag in str(row['tags'] or '').split(',') if tag]
+        sets: list[str] = []
+        params: list = []
+        if tags is not None:
+            sets.append('tags=?')
+            params.append(','.join(_normalize_tags(current_tags + list(tags))))
+        if summary is not None and (row['summary'] or '') == (expected_summary or ''):
+            sets.append('summary=?')
+            params.append(str(summary)[:1000])
+        if sets:
+            params.append(identifier)
+            db.execute(f"UPDATE sources SET {','.join(sets)} WHERE id=?", params)
+        db.commit()
+    try:
+        index_source(identifier)
+    except (sqlite3.Error, CollectionError):
+        pass
+    return get_source(identifier)
 
 
 def add_tag(identifier: str, tag: str) -> dict:
@@ -731,24 +933,37 @@ def list_trash() -> list[dict]:
 
 
 def purge_expired(days: float = 30) -> int:
-    """回收站超期硬删：行、FTS 条目与 md/图片目录一起清（对齐 Beav 30 天口径）。"""
+    """回收站超期硬删：行、FTS 条目、加工任务与 md/图片目录一起清（对齐 Beav 30 天口径）。"""
     cutoff = time.time() - days * 86400
     purged = 0
     with connection() as db:
+        # 整段放在一条写事务里，且 DELETE 复核 deleted_at 上界：
+        # 否则与 restore 赛跑时会出现「restore 返回 1、素材连文件仍被硬删」
+        db.execute('BEGIN IMMEDIATE')
         rows = db.execute('SELECT id,asset_path FROM sources WHERE deleted_at>0 AND deleted_at<?', (cutoff,)).fetchall()
+        gone: list[tuple[str, str]] = []
         for row in rows:
-            db.execute('DELETE FROM sources WHERE id=?', (row['id'],))
+            deleted = db.execute('DELETE FROM sources WHERE id=? AND deleted_at>0 AND deleted_at<?',
+                                 (row['id'], cutoff)).rowcount
+            if not deleted:
+                continue
+            purged += deleted
+            gone.append((str(row['id']), str(row['asset_path'] or '')))
             db.execute('DELETE FROM sources_fts WHERE source_id=?', (row['id'],))
-            purged += 1
-        expired = [(row['id'], row['asset_path']) for row in rows]
-    outputs_root = (ROOT / 'outputs').resolve()
-    for identifier, asset_path in expired:
+            # 任务行不清会留下僵尸：素材已没了还反复被领→报错，状态页永远挂着计数
+            db.execute('DELETE FROM enrich_tasks WHERE source_id=?', (row['id'],))
+        db.execute('DELETE FROM operations WHERE at<?', (time.time() - 30 * 86400,))
+        db.commit()
+    for identifier, asset_path in gone:
         for candidate in ((ROOT / 'outputs' / asset_path) if asset_path else None,
                           ROOT / 'outputs' / '研究素材' / identifier):
             if not candidate:
                 continue
+            # 真包含判定：startswith 会让 ../outputs_backup/... 通过，然后整个兄弟目录被 rmtree
+            if not _inside(ROOT / 'outputs', candidate):
+                continue
             resolved = candidate.resolve()
-            if str(resolved).startswith(str(outputs_root)) and resolved.exists():
+            if resolved.exists():
                 if resolved.is_dir():
                     shutil.rmtree(resolved, ignore_errors=True)
                 else:
@@ -783,7 +998,7 @@ def migrate_legacy_kinds() -> dict:
 
 def index_status() -> dict:
     with connection() as db:
-        total = db.execute("SELECT count(*) FROM sources WHERE state='saved'").fetchone()[0]
+        total = db.execute("SELECT count(*) FROM sources WHERE state='saved' AND deleted_at=0").fetchone()[0]
         indexed = db.execute('SELECT count(*) FROM sources_fts').fetchone()[0]
         trash = db.execute('SELECT count(*) FROM sources WHERE deleted_at>0').fetchone()[0]
         pending = db.execute(

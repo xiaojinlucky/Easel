@@ -23,7 +23,7 @@
 **1A. 宿主协议补齐（对齐 02·§7-2 四件事 + 回执）** — `scripts/beav_native_host.py`
 - `extract_entry()` 读取 `assets.videoUrl` / `note.assets.videoUrl` / `options.{transcribe,summarize,dedupeKey,allowUpdate}` → 落 `extra.video_url`、`extra.pending_tasks`。
 - 回执协议：实现 `operationId` 幂等；返回 `{entryId, duplicate, updated, storageStatus:'stored', readBack:true}`（`readBack`= 重查 sqlite 确认行存在且 asset 文件在）。修掉订阅式采集必失败问题（01·G1-10）。
-- `data:` 图片在宿主侧解码落盘（≤6MB 上限沿用），不再进正文（修 01·G1-7/8）。
+- `data:` 图片在宿主侧解码落盘，不再进正文（修 01·G1-7/8）。落地口径为 `easel/research.py` 的 `materialize_data_images()`：**解码后**单张 ≤ 2,000,000 字节、每条素材最多落 8 张，与远程图片 `materialize_images()` 同级；不是本节初稿写的"沿用 Beav ≤6MB"。
 - `desktop.context` 返回契约对齐扩展的 `initialization.state` 归一化（01·G5-30），补 `counts`（03·§6 行4）。
 - kind/platform 归一化：建 `PLATFORM_BY_DOMAIN` 与 `KIND_ENUM`（照 03·§2.3b 的 7+2 种），宿主侧映射，旧行迁移脚本。
 - 端到端测试：`handle() → save_source → sqlite+md+本地图 → readBack`（补 01·G6-33 缺的 E2E）。
