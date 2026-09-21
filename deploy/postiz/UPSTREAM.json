@@ -1,0 +1,15 @@
+{
+  "repository": "https://github.com/gitroomhq/postiz-docker-compose",
+  "commit": "dd4969e5e694cd009619a0d53cff14c21104580b",
+  "license": "AGPL-3.0",
+  "source_sha256": "5ae25a070e87bedd7814fd66ea377d33b594c5784f77361ab262d977727050ec",
+  "adaptations": [
+    "Isolated compose project easel-postiz and named volumes",
+    "Windows loopback Caddy ports 4007, 8088 and 8089; generated WSL private-IP override",
+    "Generated local secrets; registration disabled after local bootstrap",
+    "Preserved upstream health dependencies and extended Postiz backend/orchestrator health check",
+    "Added isolated FreshRSS with hourly polling and authenticated Google Reader API",
+    "Immutable image IDs backed by registry digests in config/postiz-images.lock.json",
+    "Conditional Sentry import fix mounted read-only; see patches/PROVENANCE.json"
+  ]
+}

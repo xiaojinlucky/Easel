@@ -1,0 +1,20 @@
+:root { color-scheme: light; font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif; color: #222b35; background: #f7f8fb; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+header { height: 54px; display: flex; align-items: center; gap: 22px; padding: 0 20px; background: #fff; border-bottom: 1px solid #e2e7ee; }
+.brand { font-weight: 700; font-size: 18px; white-space: nowrap; }
+.brand small { font-weight: 400; font-size: 12px; color: #737d8d; padding-left: 6px; }
+nav { display: flex; align-items: center; gap: 5px; }
+button { font: inherit; font-size: 13px; color: #576477; background: transparent; border: 1px solid transparent; border-radius: 7px; padding: 8px 14px; cursor: pointer; white-space: nowrap; }
+button:hover { background: #edf1f7; }
+button:focus-visible { outline: 2px solid #5274c9; outline-offset: 2px; }
+nav button.selected { color: #315bae; background: #edf2ff; font-weight: 600; }
+.folder { margin-left: auto; border-color: #dfe4ec; }
+main { position: absolute; inset: 54px 0 30px; display: flex; flex-direction: column; justify-content: center; align-items: center; }
+main img { object-fit: contain; border-radius: 18px; }
+h1 { font-size: 25px; font-weight: 600; margin: 25px 0 6px; }
+p { color: #69768a; max-width: 620px; padding: 0 24px; text-align: center; white-space: pre-wrap; }
+main button { margin-top: 8px; border-color: #dfe4ec; }
+footer { position: absolute; bottom: 0; height: 30px; width: 100%; display: flex; align-items: center; gap: 8px; padding: 0 18px; border-top: 1px solid #e2e7ee; background: #fff; font-size: 11px; color: #647187; }
+footer button { margin-left: auto; padding: 3px 8px; font-size: 11px; }
+#status { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

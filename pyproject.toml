@@ -27,6 +27,10 @@ dependencies = [
     # 只用到 load_pem_private_key + Ed25519.sign（长期稳定 API），上界放宽避免与新版冲突
     "websocket-client>=1.7,<2",
     "cryptography>=42",
+    # 两树吸收线带进来的模块在模块顶层就 import 它们：easel/services.py 用 psutil 管进程树，
+    # web/wechat_monitor_api.py 用 dotenv 读凭证文件。以前没写进依赖，装完环境一 import 就报 ModuleNotFoundError。
+    "psutil>=6,<8",
+    "python-dotenv>=1,<2",
 ]
 
 [project.scripts]

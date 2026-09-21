@@ -211,7 +211,10 @@ def test_agent_channel_reuses_loaded_backend(monkeypatch):
     assert 'tags' in answer and calls['prompt'] == '提示词'
     assert calls['session_id'].startswith('easel-enrich-')
 
-    monkeypatch.delitem(sys.modules, 'app')
+    # _agent_runner 按 ('app', '__main__', 'web.app') 依次找真后端。全量跑时别的测试文件
+    # 会把 web.app 导进 sys.modules，只清 'app' 照样命中，异常就不会抛了。
+    monkeypatch.delitem(sys.modules, 'app', raising=False)
+    monkeypatch.delitem(sys.modules, 'web.app', raising=False)
     monkeypatch.setattr(sys.modules['__main__'], 'run_agent_sync', None, raising=False)
     with pytest.raises(RuntimeError, match='后端在跑'):
         research_enrich._agent_runner()

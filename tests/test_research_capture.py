@@ -105,3 +105,33 @@ def test_import_excerpt_saves_without_browser(tmp_path, monkeypatch):
     assert row['state'] == 'saved'
     assert row['title'] == '手摘标题'
     assert '摘录正文' in (tmp_path / 'outputs' / '研究素材' / f"{row['id']}.md").read_text(encoding='utf-8')
+
+
+# 以下三条来自两树吸收线，改用现役树的 research_browser 模块。
+# 之前只有 EASEL_RESEARCH_CDP_URL 环境变量这条路径有测试，
+# 而界面上「连接已有浏览器」写的是 .runtime/research-browser.json，那条读配置的分支一直没人测。
+
+def test_no_env_and_no_config_file_means_managed_profile(collector):
+    assert research_browser.research_cdp_endpoint() is None
+    assert research.collection_status()['connection_mode'] == 'managed_research_profile'
+
+
+def test_persisted_endpoint_is_reported_and_env_still_wins(collector, monkeypatch):
+    (research_browser.STATE / 'research-browser.json').write_text(
+        '{"cdp_url":"http://127.0.0.1:9345"}', encoding='utf-8')
+    assert research_browser.research_cdp_endpoint() == 'http://127.0.0.1:9345'
+    status = research.collection_status()
+    assert status['connection_mode'] == 'existing_browser'
+    assert status['cdp_url'] == 'http://127.0.0.1:9345'
+    monkeypatch.setenv('EASEL_RESEARCH_CDP_URL', 'http://127.0.0.1:9222')
+    assert research_browser.research_cdp_endpoint() == 'http://127.0.0.1:9222'
+    monkeypatch.setenv('EASEL_RESEARCH_CDP_URL', '')
+    assert research_browser.research_cdp_endpoint() is None
+
+
+@pytest.mark.parametrize('content', ['invalid', '{}', '{"cdp_url":"https://example.com"}'])
+def test_invalid_persisted_endpoint_is_visible(collector, content):
+    # 配置文件坏了要当场报错，不能悄悄退回托管档案：用户以为连的是自己的浏览器，实际在另开一个
+    (research_browser.STATE / 'research-browser.json').write_text(content, encoding='utf-8')
+    with pytest.raises(RuntimeError):
+        research_browser.research_cdp_endpoint()
