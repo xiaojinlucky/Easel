@@ -1,5 +1,5 @@
 import importlib.util
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 from easel import research  # noqa: E402  （宿主模块导入时已把仓库根加入 sys.path）
 
@@ -14,8 +14,14 @@ handle = mod.handle
 
 
 def test_project_root_ignores_utf8_bom():
+    """easel-root.txt 可能被记事本加上 BOM 与 CRLF，宿主按 utf-8-sig 读并 strip。
+
+    这里用 PureWindowsPath 而不是 Path：文件里存的是 Windows 路径，宿主也只在
+    Windows 上运行，用 Path 会让这条用例在 Linux（CI runner）上因为反斜杠不是
+    分隔符而假失败。
+    """
     bom_path = b"\xef\xbb\xbfF:\\easel-official\r\n"
-    resolved = Path(bom_path.decode("utf-8-sig").strip())
+    resolved = PureWindowsPath(bom_path.decode("utf-8-sig").strip())
     assert resolved.name == "easel-official"
     text = (ROOT / "scripts" / "beav_native_host.py").read_text(encoding="utf-8")
     assert 'encoding="utf-8-sig"' in text
