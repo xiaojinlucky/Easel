@@ -42,6 +42,27 @@ def test_refresh_ocr_batch_marks_attempted(lib, monkeypatch):
     assert research.refresh_ocr_batch()['processed'] == 0  # 已尝试过的不重跑
 
 
+def test_ocr_refresh_swaps_only_its_own_section(lib, monkeypatch):
+    """合并 grok 的按栏目排版与本线的原子换段之后，重跑只能动 [图片文字] 那一段。
+
+    两边各自的旧写法都会伤人：grok 用 content.split('[图片文字]')[0] 重拼，
+    会把后面那段几十分钟才跑出来的 [视频转写] 一起截掉；本线的「已有标记就跳过」
+    又让新排版永远刷不掉第一次的平铺文字。
+    """
+    monkeypatch.setattr(research, 'ocr_local_images', lambda rel: '')
+    row = research.save_source('https://example.com/o2', '图文二', '导入摘录', '', '正文',
+                               extra={'local_images': ['研究素材/o2/00.jpg']})
+    identifier = row['id']
+    with research.connection() as db:
+        db.execute('UPDATE sources SET content = ? WHERE id=?',
+                   ('正文\n\n[图片文字]\n第一次的平铺文字\n\n[视频转写·subtitles]\n字幕正文\n', identifier))
+    monkeypatch.setattr(research, 'ocr_local_images', lambda rel: '## 个人简历\n按原图栏目排版的文字')
+    assert research.refresh_ocr(identifier)['ocr_appended'] is True
+    content = research.get_source(identifier)['content']
+    assert '按原图栏目排版的文字' in content and '第一次的平铺文字' not in content
+    assert content == '正文\n\n[图片文字]\n## 个人简历\n按原图栏目排版的文字\n\n[视频转写·subtitles]\n字幕正文'
+
+
 def test_export_folder_follows_beav_layout(lib):
     row = research.save_source('https://www.xiaohongshu.com/explore/e1', '导出测试', '小红书', 't', '正文',
                                kind='redbook-note', extra={'tags': ['爆款'], 'comments_text': '一条好评'})
