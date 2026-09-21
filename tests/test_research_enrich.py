@@ -357,6 +357,13 @@ def test_worker_thread_drains_queue(tmp_path, monkeypatch):
         time.sleep(0.05)
     row = research.get_source(saved['id'])
     assert row['summary'].startswith('一条关于应届求职') and row['tags'] == ['求职', '校招']
+    # 摘要写进素材表、队列行改成 done 是前后两步（done 在 _finish 里落），
+    # 慢机器上两者之间有窗口，抓一次快照就断言会偶发假失败，所以同样等到期限。
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        if research_enrich.queue_status()['counts'] == {'done': 1}:
+            break
+        time.sleep(0.05)
     assert research_enrich.queue_status()['counts'] == {'done': 1}
     # 线程跑完自己退出并释放单例锁；这里只验锁还回来，不再起新 worker，
     # 免得留一个后台线程在 monkeypatch 撤销后摸到真实素材库。
