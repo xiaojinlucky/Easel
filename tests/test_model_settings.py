@@ -44,7 +44,10 @@ class ModelSettingsApiTests(unittest.TestCase):
             for name in ["model-a", "model-b"]
         ]
         settings.apply_openclaw_models = lambda payload: None
-        self.client = TestClient(web.app)
+        # 后端有写请求的 Origin 守卫（local_write_guard）：不带本机 Origin 的 POST 会先吃 403，
+        # 到不了模型校验逻辑。用本机 7870 的 Origin 建客户端，测的是校验本身。
+        self.client = TestClient(web.app, base_url='http://127.0.0.1:7870',
+                                 headers={'Origin': 'http://127.0.0.1:7870'})
 
     def test_effort_change_reuses_verification(self):
         response = self.client.post("/api/model-settings", json={"active_id": "daily", "profiles": [{**self.profile, "reasoning_effort": "low"}]})
