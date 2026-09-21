@@ -3210,11 +3210,16 @@ async def api_ideas_delete(iid: str):
 
 if __name__ == "__main__":
     import uvicorn
-    port = int(os.environ.get("EASEL_PORT", "7860"))
+    port = int(os.environ.get("EASEL_PORT", "7870"))  # 产品合同 7870：与 easel-clipper 扩展硬编码一致
     proxy_url = os.environ.get("VSCODE_PROXY_URI", "").replace("{{port}}", str(port))
     print("\n  ✦ Easel Web")
     print(f"  http://localhost:{port}")
     if proxy_url:
         print(f"  {proxy_url}")
     print()
+    try:  # 扩展宿主只投递任务，模型通道在本进程：开机接着排干上次没跑完的加工队列
+        from easel import research_enrich
+        research_enrich.start_worker()
+    except Exception as exc:  # noqa: BLE001  队列起不来不能挡工作台启动
+        print(f"  · 素材库加工队列未启动：{exc}")
     uvicorn.run(app, host="0.0.0.0", port=port, log_level="warning")

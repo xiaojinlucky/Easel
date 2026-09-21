@@ -7437,7 +7437,7 @@
   var PLUGIN_CONNECTION_INCIDENT_KEY = "redboxPluginConnectionIncident";
   var PLUGIN_DIAGNOSTICS_RECENT_KEY = "redboxPluginDiagnosticsRecent";
   var PLUGIN_DIAGNOSTICS_RETRY_ALARM = "redbox-plugin-diagnostics-retry";
-  var PLUGIN_FEEDBACK_ENDPOINT = "https://api.ziz.hk/beav/v1/public-feedback";
+  var PLUGIN_FEEDBACK_ENDPOINT = "";  // Easel: 云遥测已摘除，不回连 api.ziz.hk
   var QUEUE_LIMIT = 40;
   var RECENT_LIMIT = 120;
   var SAME_INCIDENT_COOLDOWN_MS = 24 * 60 * 6e4;
@@ -7575,7 +7575,7 @@
         osVersion: safeToken(hints?.platformVersion, "unknown"),
         nativeMessagingDeclared: manifest.permissions?.includes("nativeMessaging") === true,
         nativeMessagingGranted: Array.isArray(permissions?.permissions) ? permissions.permissions.includes("nativeMessaging") : null,
-        feedbackOriginGranted: Array.isArray(permissions?.origins) ? permissions.origins.some((origin) => origin === "<all_urls>" || origin === "https://api.ziz.hk/*") : null
+        feedbackOriginGranted: Array.isArray(permissions?.origins) ? permissions.origins.some((origin) => origin === "<all_urls>") : null
       };
     })().catch(() => ({ probeFailed: true }));
     return await environmentPromise;
@@ -7721,6 +7721,9 @@
     return await drainPromise;
   }
   async function submitPluginDiagnostic(payload, reportId = "") {
+    if (!PLUGIN_FEEDBACK_ENDPOINT) {
+      return { success: true, status: 0, response: { success: true, localOnly: true, disabled: true } };
+    }
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), DIRECT_SUBMIT_TIMEOUT_MS);
     try {
@@ -18177,8 +18180,8 @@ ${text}`.slice(0, 6e3);
   var UPDATE_STATE_KEY = "pluginUpdateState";
   var UPDATE_ALARM_NAME = "redbox-plugin-auto-update-check";
   var UPDATE_CHECK_INTERVAL_MINUTES = 360;
-  var UPDATE_SOURCE_API_URL = "https://redbox.ziz.hk/api/updates/plugin";
-  var UPDATE_SOURCE_DOWNLOAD_URL = "https://redbox.ziz.hk/download";
+  var UPDATE_SOURCE_API_URL = "";  // Easel: 云更新通道已摘除（原 redbox.ziz.hk）
+  var UPDATE_SOURCE_DOWNLOAD_URL = "";  // Easel: 不跳转对方下载页，更新走本机仓库
   var REDBOX_PLUGIN_SETTINGS_KEY = "redboxPluginSettings";
   var XHS_TASK_HISTORY_KEY = "xhsCollectorTaskHistory";
   var XHS_TASK_QUEUE_STATE_KEY = "xhsCollectorTaskQueueState";
@@ -20336,6 +20339,9 @@ ${text}`.slice(0, 6e3);
     return data;
   }
   async function openPluginUpdateSource() {
+    if (!UPDATE_SOURCE_DOWNLOAD_URL) {
+      return { success: false, error: "Easel 本机版不打开对方更新站点，请到本仓库查看版本。" };
+    }
     const state = await readPluginUpdateState();
     const url = normalizeText(state.sourceUrl) || UPDATE_SOURCE_DOWNLOAD_URL;
     await chrome.tabs.create({ url: isHttpUrl3(url) ? url : UPDATE_SOURCE_DOWNLOAD_URL });
@@ -20351,6 +20357,13 @@ ${text}`.slice(0, 6e3);
     };
   }
   async function checkForPluginUpdates(options = {}) {
+    if (!UPDATE_SOURCE_API_URL) {
+      const disabledState = await readPluginUpdateState();
+      return {
+        success: true,
+        update: { ...disabledState, hasUpdate: false, checkStatus: "disabled", lastError: "" }
+      };
+    }
     const force = options?.force === true;
     const reason = normalizeText(options?.reason) || "unknown";
     const currentState = await readPluginUpdateState();

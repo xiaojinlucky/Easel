@@ -1,4 +1,16 @@
 本目录来自 Jamailar/Beav 开源浏览器插件（MIT License — Non-Commercial Use Only）。
 仅供本机个人非商用：把采集结果写入 Easel 调研素材库。
-未修改采集器业务逻辑；仅改 Native Host 名称与可见文案（Beav/知识库 → Easel 素材库），避免占用商业版 Beav 的 com.redbox.browser_control。
 完整版权与限制见 LICENSE.Beav-MIT-NC.txt。
+
+对上游的全部实质修改（相对"未修改采集器业务逻辑"的旧口径，此处为如实清单）：
+1. Native Host 名称改为 com.easel.research_clipper（不占用商业版 Beav 的 com.redbox.browser_control）；可见文案 Beav/知识库 → Easel 素材库。
+2. 宿主写入成功文案与回读提示按 Easel 侧协议适配（scripts/beav_native_host.py 承接 JSON-RPC）。
+3. background.js 头部新增 console 短日志 shim（easelShortError / [easel-sw]），防止整份后台源码刷到 Chrome 错误页。
+4. resolveApiBase 被 stub 为必然抛错（"Easel capture HTTP bridge has been retired"），云 HTTP 桥整体停用。
+5. 2026-09-21（知识库复刻线 阶段0）摘除全部 Beav 云回连：
+   - PLUGIN_FEEDBACK_ENDPOINT 置空 → 不再向 api.ziz.hk/beav/v1/public-feedback 上报（含 installationIdHash），submitPluginDiagnostic 本地短路；
+   - UPDATE_SOURCE_API_URL / UPDATE_SOURCE_DOWNLOAD_URL 置空 → 不再请求 redbox.ziz.hk 更新接口、不跳转对方下载页；
+   - manifest.json 删除 https://redbox.ziz.hk/* 与 https://api.ziz.hk/* host_permissions；
+   - 权限探针不再检测 api.ziz.hk 源。
+   以上由 tests/test_beav_capture_safety.py::test_beav_cloud_endpoints_stay_disabled 钉死。
+未改动：采集业务逻辑、站点适配器、小红书签名 API 通道、任务队列与页面浮层。

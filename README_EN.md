@@ -176,7 +176,7 @@ When an existing OpenClaw default model is found, the installer asks whether to 
 If no model is configured, it interactively asks for an Anthropic API key and model name. You may also
 copy `.env.example` and fill it in before running the installer.
 
-Open `http://localhost:7860` for the Web workspace. Run `easel doctor` to check the environment and `easel ping` to verify the gateway and Agent connection.
+Open `http://localhost:7870` for the Web workspace. Run `easel doctor` to check the environment and `easel ping` to verify the gateway and Agent connection.
 
 The installer installs the Python dependencies required by the Web UI, media processing, and browser publishing:
 
@@ -211,7 +211,7 @@ Never commit `.env`, cookies, or platform login state. Real publishing can be af
 
 | Command | Purpose |
 |---|---|
-| `easel web [--port 7860]` | Start the Web workspace |
+| `easel web [--port 7870]` | Start the Web workspace |
 | `easel chat` | Start a multi-turn terminal conversation and select an account profile |
 | `easel skill <name> -i "..." [-p <profile>]` | Run a Skill directly; input may also be a file path |
 | `easel doctor` | Check Python, Node.js, OpenClaw, and essential configuration |
@@ -249,7 +249,7 @@ Easel/
 └── docs/                     Specifications, capability map, and architecture docs
 ```
 
-Easel uses an isolated `easel` OpenClaw profile and does not overwrite an existing OpenClaw setup. The Web workspace defaults to port `7860`; the gateway defaults to `18789`.
+Easel uses an isolated `easel` OpenClaw profile and does not overwrite an existing OpenClaw setup. The Web workspace defaults to port `7870`; the gateway defaults to `18789`.
 
 ## 📑 Documentation
 

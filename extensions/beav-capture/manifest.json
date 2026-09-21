@@ -41,9 +41,7 @@
     "https://www.zhihu.com/*",
     "https://zhuanlan.zhihu.com/*",
     "https://*.xhscdn.com/*",
-    "https://*.rednotecdn.com/*",
-    "https://redbox.ziz.hk/*",
-    "https://api.ziz.hk/*"
+    "https://*.rednotecdn.com/*"
   ],
   "background": {
     "service_worker": "background.js"

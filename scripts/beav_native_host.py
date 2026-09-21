@@ -12,6 +12,7 @@ import struct
 import sys
 import traceback
 from pathlib import Path
+from urllib.parse import urlsplit
 
 
 def _project_root() -> Path:
@@ -27,7 +28,17 @@ def _project_root() -> Path:
 ROOT = _project_root()
 sys.path.insert(0, str(ROOT))
 
-from easel.research import save_source  # noqa: E402
+from easel.research import (  # noqa: E402
+    save_source,
+    knowledge_counts,
+    get_operation,
+    put_operation,
+    source_exists,
+    media_url_allowed,
+    asset_exists,
+)
+
+MAX_INBOUND_BYTES = 32 * 1024 * 1024   # 单帧上限：长度头能声明到 4GB，不设限一条坏帧就能撑爆宿主
 
 HOST_NAME = "com.easel.research_clipper"
 APP_VERSION = "2.7.18"
@@ -68,6 +79,10 @@ def _read() -> dict | None:
     if not raw or len(raw) < 4:
         return None
     (length,) = struct.unpack("<I", raw)
+    if length > MAX_INBOUND_BYTES:
+        # 长度头能声明到 4GB：不设上限就等于让任何一个坏帧把宿主进程整个吃掉
+        _log(f"refused oversized frame: {length} bytes > {MAX_INBOUND_BYTES}")
+        return None
     payload = sys.stdin.buffer.read(length)
     if len(payload) < length:
         return None
@@ -139,6 +154,46 @@ def _join_comments(items: object) -> str:
     return "\n".join(lines)
 
 
+KIND_BY_METHOD = {
+    "knowledge.ingestEntry": "webpage",
+    "knowledge.ingestXhsEntryV2": "redbook-note",
+    "knowledge.ingestZhihuAnswer": "zhihu-answer",
+    "knowledge.ingestZhihuArticle": "zhihu-article",
+    "knowledge.ingestDocumentSource": "document-source",
+    "knowledge.ingestComments": "comments",
+    "knowledge.ingestMediaAssets": "media",
+}
+KNOWN_KINDS = set(KIND_BY_METHOD.values()) | {"video"}
+PLATFORM_BY_DOMAIN = {
+    "xiaohongshu.com": "小红书", "xhslink.com": "小红书", "xhslink.cn": "小红书",
+    "bilibili.com": "哔哩哔哩", "douyin.com": "抖音", "zhihu.com": "知乎",
+    "mp.weixin.qq.com": "公众号", "weixin.qq.com": "公众号", "weibo.com": "微博",
+    "youtube.com": "YouTube", "youtu.be": "YouTube", "x.com": "X", "twitter.com": "X",
+    "reddit.com": "Reddit", "github.com": "GitHub",
+}
+
+
+def _normalize_kind(method: str, raw: str) -> str:
+    raw = str(raw or "").strip().lower()
+    if raw in KNOWN_KINDS:
+        return raw
+    if raw in {"视频", "video-note", "videonote"}:
+        return "video"
+    return KIND_BY_METHOD.get(method) or "webpage"
+
+
+def _platform_from_url(url: str, kind: str) -> str:
+    host = (urlsplit(url).hostname or "").lower()
+    for domain, label in PLATFORM_BY_DOMAIN.items():
+        if host == domain or host.endswith("." + domain):
+            return label
+    if kind.startswith(("redbook", "xhs")):
+        return "小红书"
+    if kind.startswith("zhihu"):
+        return "知乎"
+    return "Beav采集"
+
+
 def extract_entry(method: str, params: dict) -> dict:
     inner = _unwrap(params)
     source = _as_dict(inner.get("source"))
@@ -179,7 +234,7 @@ def extract_entry(method: str, params: dict) -> dict:
     ).strip()
     if author.startswith("{") and "nickname" in author:
         author = ""
-    images = []
+    candidates: list[str] = []
     for key in ("imageUrls", "images"):
         value = (
             note_assets.get(key)
@@ -189,34 +244,48 @@ def extract_entry(method: str, params: dict) -> dict:
             or inner.get(key)
         )
         if isinstance(value, list):
-            images.extend(str(item) for item in value if item)
+            candidates.extend(str(item) for item in value if item)
+    if method == "knowledge.ingestMediaAssets":
+        items = inner.get("items") if isinstance(inner.get("items"), list) else []
+        for item in items:
+            if isinstance(item, dict) and item.get("source"):
+                candidates.append(str(item.get("source")))
+                title = str(item.get("title") or title)[:300]
+    images = [item for item in candidates if item.startswith(("http://", "https://"))]
+    data_images = [item for item in candidates if item.startswith("data:image/")]
     cover = str(
         note_assets.get("coverUrl")
         or assets.get("coverUrl")
         or note.get("coverUrl")
         or article.get("coverUrl")
-        or (images[0] if images else "")
+        or ""
     ).strip()
+    if cover.startswith("data:image/"):
+        data_images.insert(0, cover)
+        cover = images[0] if images else ""
+    elif not cover:
+        cover = images[0] if images else ""
     if method == "knowledge.ingestMediaAssets":
-        items = inner.get("items") if isinstance(inner.get("items"), list) else []
-        for item in items:
-            if isinstance(item, dict) and item.get("source"):
-                images.append(str(item.get("source")))
-                title = str(item.get("title") or title)[:300]
-        cover = cover or (images[0] if images else "")
         text = text or "\n".join(images)
+    video_url = str(
+        note_assets.get("videoUrl")
+        or assets.get("videoUrl")
+        or note.get("videoUrl")
+        or inner.get("videoUrl")
+        or ""
+    ).strip()
+    options = _as_dict(inner.get("options"))
+    pending_tasks: list[str] = []
+    # 转写会真的去请求这个地址：本机/内网地址不投任务（worker 侧同一套判定，不各处再写一遍）。
+    # 地址本身照常保存，不悄悄丢数据。
+    if video_url and (options.get("transcribe") or inner.get("transcribe")) and media_url_allowed(video_url):
+        pending_tasks.append("transcribe")
     comments_text = _join_comments(comments.get("items")) or str(content.get("commentsSnapshot") or inner.get("indexText") or "").strip()
-    kind = str(inner.get("kind") or note.get("noteType") or method.replace("knowledge.ingest", "").replace("Entry", "") or "webpage")
+    kind = _normalize_kind(method, str(inner.get("kind") or note.get("noteType") or ""))
     external_id = str(source.get("externalId") or note.get("noteId") or answer.get("id") or article.get("id") or "").strip()
-    if method.endswith("Comments") or "comment" in kind.lower():
+    if method.endswith("Comments") or kind == "comments":
         external_id = external_id and f"comments-{external_id}" or external_id
-    platform = "Beav采集"
-    if "xhs" in kind.lower() or "xiaohongshu" in url:
-        platform = "小红书"
-    elif "zhihu" in url or "zhihu" in method.lower():
-        platform = "知乎"
-    elif "douyin" in url:
-        platform = "抖音"
+    platform = _platform_from_url(url, kind)
     return {
         "url": url,
         "title": title,
@@ -228,6 +297,9 @@ def extract_entry(method: str, params: dict) -> dict:
         "extra": {
             "external_id": external_id,
             "image_urls": images[:24],
+            "data_images": data_images[:8],
+            "video_url": video_url,
+            "pending_tasks": pending_tasks,
             "comments_text": comments_text,
             "likes": _as_dict(note.get("stats") or content.get("stats")).get("likes")
             or _as_dict(note.get("stats")).get("likedCount"),
@@ -251,6 +323,19 @@ def _ingest(params: dict, method: str = "") -> dict:
     entry = extract_entry(method, params if isinstance(params, dict) else {})
     if not entry["url"].startswith(("http://", "https://")):
         raise ValueError("缺少可保存的网页链接")
+    operation_id = str(
+        (params or {}).get("operationId")
+        or _unwrap(params or {}).get("operationId")
+        or ""
+    ).strip()
+    cached = get_operation(operation_id)
+    if cached:
+        # 回执复放前先对账：素材可能事后被删或还在回收站，不能继续报 stored
+        still_there = source_exists(str(cached.get("id") or ""))
+        replayed = {**cached, "replayed": True}
+        if not still_there:
+            replayed.update({"success": False, "missing": True, "storageStatus": "missing"})
+        return replayed
     row = save_source(
         entry["url"],
         entry["title"],
@@ -263,14 +348,35 @@ def _ingest(params: dict, method: str = "") -> dict:
         cover_url=entry["cover_url"],
         extra=entry["extra"],
     )
-    return {
+    status = str(row.get("save_status") or "created")
+    receipt = {
         "success": True,
         "id": row.get("id"),
         "entryId": row.get("id"),
         "title": row.get("title"),
-        "duplicate": False,
+        "duplicate": status == "unchanged",
+        "created": status == "created",
+        "updated": status in {"updated", "preserved"},
+        "storageStatus": "stored",
+        "readBack": bool(row.get("content")) or asset_exists(row),
         "comments": {"captured": bool(entry["extra"].get("comments_text"))},
     }
+    if row.get("refresh_failed"):
+        receipt["preserved"] = True
+    if status in {"created", "updated"}:
+        wanted = ["enrich"] + (["transcribe"] if "transcribe" in (entry["extra"].get("pending_tasks") or []) else [])
+        try:
+            from easel import research_enrich
+
+            source_id = str(row.get("id") or "")
+            for name in wanted:
+                research_enrich.enqueue(source_id, name)
+            receipt["processing"] = {"queued": wanted}
+        except Exception as exc:  # noqa: BLE001  加工队列故障不能挡入库，但要说出来
+            _log("enqueue failed for " + str(row.get("id")) + ": " + repr(exc)[:200])
+            receipt["processing"] = {"queued": [], "failed": str(exc)[:200] or exc.__class__.__name__}
+    put_operation(operation_id, receipt)
+    return receipt
 
 
 def handle(method: str, params: dict) -> dict:
@@ -279,11 +385,11 @@ def handle(method: str, params: dict) -> dict:
     if method == "extension.register":
         return {"ok": True, "registered": True}
     if method == "desktop.health":
-        return {"ok": True, "knowledge": {"counts": {"saved": True}}}
+        return {"ok": True, "knowledge": {"counts": knowledge_counts()}}
     if method == "desktop.context":
         return {
             "space": {"name": "Easel", "id": "easel-official"},
-            "initialization": {"ready": True},
+            "initialization": {"ready": True, "state": "ready"},
             "ingest": {"allowed": True, "reason": "EASEL_RESEARCH"},
         }
     if method.startswith("knowledge.") or method.startswith("accounts."):

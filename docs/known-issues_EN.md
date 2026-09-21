@@ -29,7 +29,7 @@ The fix uses a four-layer strategy: unique full-content match, required terminal
 
 ### Workaround and upgrade
 
-- **Recommended**: use the **Web workspace** (`easel web`, `http://localhost:7860` by default). The Web backend renders from the raw event stream itself and does not go through the session-projection logic above, so it is **unaffected** by this issue — and it offers a more complete experience (conversations, assets, accounts, profiles, content library, and publishing management) than the CLI.
+- **Recommended**: use the **Web workspace** (`easel web`, `http://localhost:7870` by default). The Web backend renders from the raw event stream itself and does not go through the session-projection logic above, so it is **unaffected** by this issue — and it offers a more complete experience (conversations, assets, accounts, profiles, content library, and publishing management) than the CLI.
 - If you prefer `easel chat`: once upstream ships a release with the fix, upgrading OpenClaw resolves it:
 
   ```bash
