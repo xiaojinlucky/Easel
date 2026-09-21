@@ -107,7 +107,7 @@ Luna 监测主 Codex 周窗口。最终读取时间为北京时间 2026-09-10 05
 - 提交链：`aa4f7f5` 合入 Beav 知识库线 13 个提交 → `36c1fbd` 合入两树吸收线 → `efeb1dd` 还原 29 个纯上游文件 + 三方合并 `weixin_mp_stats.py` + 补声明依赖 → `eecd31d` 前向合并 `web/app.py`（22 处冲突）与 `easel/persona.py`。
 - 全量测试：**472 passed / 5 skipped / 0 failed**。本轮起点是 `90 failed / 352 passed / 17 errors`。
   复核：`cd 'F:/科研大师兄/自媒体工作台/Easel-integrate'; & 'F:/科研大师兄/自媒体工作台/Easel-official/.venv/Scripts/python.exe' -m pytest -q`
-- 那 90 条红测试不是合并造成的：同一 venv 在 `Easel-merge-wip` 自己分支上按同批文件跑，得到 `90 failed / 77 passed / 17 errors`。它们是 `22878d5` 那次"保留文件、丢内容"的报警器——上游 `web/app.py` 少 44 个函数 / 10 个接口和整套本机边界。
+- 那 90 条红测试不是合并造成的：同一 venv 在 `Easel-merge-wip` 自己分支上按同批文件跑，得到 `90 failed / 77 passed / 17 errors`。它们是 `22878d5` 那次"保留文件、丢内容"的报警器——上游 `web/app.py` 少 44 个函数 / 10 个接口和整套本机边界。（该工作树已于同日收尾时删除，分支 `merge/easel-into-official` 仍在；要复现这条结论，重新 `git worktree add` 那个分支再按文件跑一遍。）
 - 监听收紧已在分支上生效（默认 `127.0.0.1` + Origin 白名单 + `TrustedHostMiddleware` + 写请求 `local_write_guard`）。真机复核（备用端口，不碰 7870/18789）：
   `& '...Easel-official/.venv/Scripts/python.exe' -m uvicorn web.app:app --host 127.0.0.1 --port 7999`
   期望：`netstat -ano | Select-String ':7999'` 只有 `127.0.0.1`；GET `/api/research/sources` → 200；`POST /api/research/beav-host` 带 `Origin: https://evil.example` → 403；带 `Host: 192.168.1.5:7999` → 400；带 `Origin: http://127.0.0.1:7870` 的 POST → 200。实测结果与期望逐条一致。
@@ -130,3 +130,36 @@ Luna 监测主 Codex 周窗口。最终读取时间为北京时间 2026-09-10 05
 - 真实 OpenClaw 对话一轮（`--json` / `agent_reply` / 停止生成整链）、真实 yt-dlp 下载与转写、真实公众号发布。
 - 前端 `vite build` 在本轮 app.py 合并后未重跑（改动全在后端与 Python 侧，产物无输入变化）。
 - 现役 7870 进程仍是合并前的 `0.0.0.0` + `allow_origins=["*"]`，收紧要等这条分支合并后重启才生效。
+
+## 2026-09-21 深度收尾：工作树、死文件与缓存清点
+
+合并线收口后对全部 Easel 树做了一次清理，目标是留下"一个现役答案"。
+
+### 已经清掉的（都有复核方式）
+
+- 工作树 `Easel-beav-kb`（549M）与 `Easel-merge-wip`（459M）已删除。删除前逐条验证：两条分支 `research/beav-kb-parity`、`merge/easel-into-official` 都已包含在本分支（`git merge-base --is-ancestor <分支> HEAD` 为真）、`git status --short` 为空、`git stash list` 为 0。分支本身和合并前备份 `merge-backup-20260921/three-branches.bundle` 都保留，要恢复目录只需 `git worktree add`。
+  复核：`git -C 'F:/科研大师兄/自媒体工作台/Easel-integrate' worktree list` → 只剩 `Easel-official` 和 `Easel-integrate` 两棵。
+- 吸收线带进来的 10 个前端死文件已删（`6421a2e`）：`WechatPage/SettingsPanel/AccountProfilePanel/AuthGuide/EnvBoard/CapabilitiesPage/BrushEntry/settingsIcons.tsx` + `lib/capabilityMenu.ts` + `lib/skillDisplayNames.ts`。判据是零外部 import、`tsc -b` 的 85 个错全部落在这批文件内、`vite build` 产物哈希与删除前一致；删后 `tsc -b` 归零。
+- 三棵树的 `__pycache__` 与 `.pytest_cache` 共 30 个目录已清空（约 5M，Python 会自动重建）。
+- 现役树里 6 个调试脚本（`_build_fe.py`、`_cleanup.py`、`_find_node.py`、`_qna_e2e.py`、`_restart_web.py`、`_shot_guide.py`）与 `Easel/.runtime/_cleanup_tmp.txt`（早期清理循环的一次性清单）已删除。
+- `.gitignore` 补了 `.venv/`（`6983313`）。这是 `git status` 被两万个文件淹掉的根因，四棵树的 `.gitignore` 原本都没有这条。只在本分支改，等回 main 后自然覆盖，不去单独动现役树以免制造分叉。
+
+### 扫过但确认不是死代码的
+
+- 后端 `easel/` + `web/` 共 36 个模块，零引用模块 **0 个**。
+- 零引用函数只有 2 个，且都在本轮刚从上游还原回来的文件里：`easel/gateway_questions.py:423 pending_questions_for_session`、`easel/commands/doctor.py:132 _env_key_valid`。删了下次合上游还会回来，所以留着。
+- `web/settings_api.py` 与 `easel/runtime.py` 被 `easel/commands/ping.py` 等入口引用，不是死的；它们和 `model_settings_api.py` / `model_runtime.py` 是同一功能两份实现，属于待收敛而不是待删除。
+
+### 明确保留的（含原因）
+
+- 旧树 `F:\科研大师兄\自媒体工作台\Easel`（7.7G）整体不动，用户要求不归档。它的 `.runtime`（5.5G）里有真实浏览器 profile、登录态和 `images/`（3.8G）素材，`.runtime` 内的 `_old_app.py`、`before-auth-migration.json.bak` 属迁移期回滚件，按回滚材料保留。
+  收尾时按命令行查过进程：当前监听 18789 的 openclaw 网关（pid 46380）**就是从 `Easel\.runtime\node_modules\...` 启动的**，所以旧树 `.runtime/node_modules`（669M）是在用资源，不是可回收缓存，不能删。
+- 根目录 `AGENTS.md`、`CLAUDE.md`、`工具复用台账.md`（AGENTS 明确把它钉在根目录）留在原地。
+- 5 份已完成使命的历史交付物移到了 `F:\科研大师兄\自媒体工作台\archive\2026-09-合并与调研\`（4 份 show-me HTML + `两树合并方案-2026-09-19.md`），内容未改，旁边放了一份 `README.md` 说明各自作用和被谁取代。
+- 根目录其余同级项目目录（`RedBox`、`beav-appdata`、`beav-workspace`、`inspiration_collector_v0`、`publisher-assistant`、`workbuddy-studio`、`xhs_content_workbench`、`炉子`）不属于本次"工作台各版本"范围，只读了大小和内容，未做任何修改。
+
+### 收尾后仍挂着的事
+
+- 现役 `Easel-official` 的 `.gitignore` 没有 `.venv/` 这条，它的 `git status` 会一直显示 `?? .venv/`；按上面的策略等合并统一解决。
+- `Easel-official/HANDOFF.md`（未跟踪的接手指针）里写的 HEAD 和隔离工作树路径已过期，本分支更新为当前事实。
+- `OPENCLAW_PROFILE` 是否统一成上游的 `easel-studio`、两份同名实现是否合并、AI 加工队列是否继续自动排干，仍待拍板。
