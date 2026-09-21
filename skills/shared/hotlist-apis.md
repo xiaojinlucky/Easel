@@ -4,6 +4,23 @@
 
 > 🚫 **只用本文列出的已验证 API。禁止直接 web_fetch 平台官网**（weibo.com / zhihu.com / douyin.com）**或 tophub.today** —— 它们对服务器 IP 有反爬，返回 403 / 验证码 / 空内容，不是数据。所有请求走外网代理（环境已配 `useTrustedEnvProxy`）。
 
+## 首选：本机自托管 DailyHotApi（若已部署）
+
+若本机已部署 `deploy/dailyhot`（见该目录 README），**优先请求本机服务**，不要再走下面的外部公益接口：
+
+```
+web_fetch http://127.0.0.1:6688/weibo
+web_fetch http://127.0.0.1:6688/zhihu
+web_fetch http://127.0.0.1:6688/kuaishou
+```
+
+- 覆盖 40+ 站点，调用名称即平台英文名：`weibo` `douyin` `zhihu` `bilibili` `baidu` `toutiao` `kuaishou` `36kr` `juejin` `sspai` `ithome` `huxiu` `thepaper` `tieba` `v2ex` `douban-movie` `qq-news` `sina-news` `netease-news` `weread`
+- 响应格式与下方 60s 兼容（`data` 为数组，字段 `title` / `hot` / `url`），解析逻辑无需改动
+- 好处：外部公益接口限流、改字段或下线时，本机源不受影响；上游为 MIT 许可项目，来源见 `deploy/dailyhot/UPSTREAM.json`
+- 「热点雷达」页面同样优先读这个源（后端 `/api/trends` 已接入）
+
+未部署时，按下方顺序使用外部源。
+
 ## 推荐数据源：60s API（v2）
 
 Base URL: `https://60s.viki.moe`

@@ -348,7 +348,7 @@ def list_personas() -> list[dict]:
         desc = ''
         identity = d / 'identity.md'
         if identity.is_file():
-            for line in identity.read_text().splitlines():
+            for line in identity.read_text(encoding='utf-8').splitlines():
                 line = line.strip()
                 if line and not line.startswith('#') and not line.startswith('<!--'):
                     desc = line[:80]
@@ -1991,7 +1991,7 @@ async def api_output(path: str):
     if kind not in ("text",):
         return {"path": path, "content": "", "kind": kind, "isBinary": True}
     try:
-        return {"path": path, "content": full.read_text(), "kind": "text", "isBinary": False}
+        return {"path": path, "content": full.read_text(encoding='utf-8'), "kind": "text", "isBinary": False}
     except UnicodeDecodeError:
         return {"path": path, "content": "", "kind": "binary", "isBinary": True}
 
@@ -2126,7 +2126,7 @@ def _account_logged_in(platform: str, cfg: dict) -> bool:
     st = LOGIN_DIR / f'{platform}.json'
     if st.is_file():
         try:
-            return json.loads(st.read_text()).get('state') == 'success'
+            return json.loads(st.read_text(encoding='utf-8')).get('state') == 'success'
         except Exception:
             return False
     return False
@@ -2138,7 +2138,7 @@ def _login_status(platform: str) -> dict:
     data = {'state': 'unknown', 'message': ''}
     if st.is_file():
         try:
-            d = json.loads(st.read_text())
+            d = json.loads(st.read_text(encoding='utf-8'))
             data = {'state': d.get('state', 'unknown'), 'message': d.get('message', '')}
         except Exception:
             pass
@@ -2927,12 +2927,12 @@ async def api_delete_session(session_key: str):
     sessions_file = Path.home() / '.openclaw-easel' / 'agents' / 'main' / 'sessions' / 'sessions.json'
     if not sessions_file.is_file():
         return {'deleted': False, 'reason': 'sessions file not found'}
-    data = json.loads(sessions_file.read_text())
+    data = json.loads(sessions_file.read_text(encoding='utf-8'))
     full_key = f'agent:main:{session_key}' if not session_key.startswith('agent:') else session_key
     for key in (full_key, session_key):
         if key in data:
             del data[key]
-            sessions_file.write_text(json.dumps(data, ensure_ascii=False))
+            sessions_file.write_text(json.dumps(data, ensure_ascii=False), encoding='utf-8')
             return {'deleted': True}
     return {'deleted': False, 'reason': 'session not found'}
 

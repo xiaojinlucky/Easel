@@ -19,6 +19,12 @@ import re
 import sys
 import time
 from pathlib import Path
+from urllib.parse import unquote
+
+if os.name == "nt":
+    import msvcrt
+else:
+    import fcntl
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import login_state  # noqa: E402
@@ -53,6 +59,83 @@ def _profile_dir(base):
     return root / PROFILE_NAME
 
 
+_IMG_OK = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
+_API_MEDIA = re.compile(
+    r"(?:https?://(?:127\.0\.0\.1|localhost)(?::\d+)?)?/api/media/",
+    re.IGNORECASE,
+)
+
+
+def resolve_content_image(src, html_path):
+    """Turn preview /api/media/ or relative src into a local file, else None."""
+    src = unquote(str(src or "").strip())
+    if not src:
+        return None
+    media = _API_MEDIA.search(src)
+    if media:
+        parts = Path(src[media.end():]).parts
+        if not parts or any(part in {"", ".", ".."} for part in parts):
+            return None
+        if str(parts[0]).startswith(("_", ".")) or str(parts[0]).lower() in {"analytics", "wechat"}:
+            return None
+        candidate = (PROJECT_ROOT / "outputs").joinpath(*parts).resolve()
+        try:
+            candidate.relative_to((PROJECT_ROOT / "outputs").resolve())
+        except ValueError:
+            return None
+        if candidate.suffix.lower() in _IMG_OK and candidate.is_file():
+            return candidate
+        return None
+    if src.lower().startswith("http://") or src.lower().startswith("https://") or src.startswith("//"):
+        return None
+    img = Path(src)
+    if not img.is_absolute() and not img.is_file():
+        img = Path(html_path).resolve().parent / src
+    if img.is_file() and img.suffix.lower() in _IMG_OK:
+        return img
+    return None
+
+
+def _lock_profile(prof):
+    lock_path = Path(prof) / ".easel.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    fh = open(lock_path, "a+b")
+    try:
+        if os.name == "nt":
+            fh.seek(0, os.SEEK_END)
+            if fh.tell() == 0:
+                fh.write(b"0")
+                fh.flush()
+            fh.seek(0)
+            msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        try:
+            fh.close()
+        except OSError:
+            pass
+        raise RuntimeError("公众号后台会话正被占用，请等当前登录、数据同步或另一篇草稿结束后再试。")
+    return fh
+
+
+def _unlock_profile(fh):
+    if fh is None:
+        return
+    try:
+        if os.name == "nt":
+            fh.seek(0)
+            msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+    except OSError:
+        pass
+    try:
+        fh.close()
+    except OSError:
+        pass
+
+
 def _proxy(explicit, disable):
     # mp 默认直连（domestic）；仅当显式 --proxy 才走代理
     if disable:
@@ -65,13 +148,28 @@ def _proxy(explicit, disable):
 def _launch(p, headed, base, proxy):
     prof = _profile_dir(base)
     prof.mkdir(parents=True, exist_ok=True)
+    lock = _lock_profile(prof)
     kw = dict(headless=not headed, locale="zh-CN", args=LAUNCH_ARGS,
               viewport={"width": 1440, "height": 900})
     # mp 为国内站，直连即可。仅显式 --proxy 时才走代理；否则不传 proxy，
     # 并靠进程环境已清空 http(s)_proxy（见启动命令的 env -u）让 Chromium 直连。
     if proxy:
         kw["proxy"] = {"server": proxy}
-    return p.chromium.launch_persistent_context(str(prof), **kw)
+    try:
+        ctx = p.chromium.launch_persistent_context(str(prof), **kw)
+    except Exception:
+        _unlock_profile(lock)
+        raise
+    original_close = ctx.close
+
+    def close(*args, **kwargs):
+        try:
+            return original_close(*args, **kwargs)
+        finally:
+            _unlock_profile(lock)
+
+    ctx.close = close
+    return ctx
 
 
 def _now():
@@ -112,6 +210,17 @@ def _capture_qr(page, qr_out):
 
 
 def cmd_login(a):
+    try:
+        return _run_login(a)
+    except Exception as exc:
+        # 异常类型对用户可见；不把可能包含会话令牌的浏览器异常全文写进状态。
+        login_state.write_status(a.status_file, "error",
+                                 f"公众号登录失败（{type(exc).__name__}），请检查浏览器、网络及会话占用")
+        print(f"login failed: {type(exc).__name__}", file=sys.stderr, flush=True)
+        return 1
+
+
+def _run_login(a):
     from playwright.sync_api import sync_playwright
     status = a.status_file
     qr_out = a.qr_out or str(LOGIN_DIR / "wechat-oa-mp.png")
@@ -127,8 +236,15 @@ def cmd_login(a):
                 login_state.write_status(status, "success", "已登录（复用会话）")
                 print("already logged in, token acquired")
                 return 0
-            _capture_qr(page, qr_out)
-            login_state.write_status(status, "qr_ready", "请用公众号管理员微信扫码", qr=str(qr_out))
+            if not _capture_qr(page, qr_out):
+                raise RuntimeError("二维码截图失败")
+            if a.headed:
+                login_state.write_status(
+                    status, "window_login",
+                    "请在弹出的浏览器窗口里用管理员微信扫码，不要关掉那个窗口。也可以扫下面这张图。",
+                    qr=str(qr_out))
+            else:
+                login_state.write_status(status, "qr_ready", "请用公众号管理员微信扫码", qr=str(qr_out))
             deadline = time.time() + a.timeout
             while time.time() < deadline:
                 page.wait_for_timeout(2000)
@@ -435,16 +551,40 @@ def _attach_growth(result):
 
 
 def _editor_ctx(page, token):
-    """打开图文编辑器页，抽取上传所需的 ticket / user_name。"""
+    """打开图文编辑器页，抽取上传所需的 ticket / user_name。
+
+    ticket / user_name 就在**服务端渲染的 HTML** 里，因此优先用纯 HTTP 抓取（page.request.get），
+    不经浏览器渲染——这样就不依赖编辑器 Vue 界面的 JS/CSS（res.wx.qq.com CDN）能否加载。
+    实测该 CDN 偶发 TLS 握手卡死时，page.goto()+page.content() 会停在只有 <head> 的空壳、
+    读不到 ticket（误报“编辑器改版 / 未取到 ticket”）；纯 HTTP 抓服务端 HTML 不受此影响。
+    纯 HTTP 少数情况下没拿到时，再退回浏览器渲染兜底。"""
     edit = (f"https://mp.weixin.qq.com/cgi-bin/appmsg?t=media/appmsg_edit_v2&action=edit&isNew=1"
             f"&type=77&createType=0&token={token}&lang=zh_CN")
-    page.goto(edit, wait_until="commit", timeout=60000)
-    page.wait_for_timeout(3500)
-    html = page.content()
-    def grab(key):
+
+    def grab(key, html):
         m = re.search(rf'{key}["\']?\s*[:=]\s*["\']?([\w%.-]+)', html)
         return m.group(1) if m else ""
-    return {"ticket": grab("ticket"), "user_name": grab("user_name"), "nick_name": grab("nick_name")}
+
+    # 1) 优先纯 HTTP 抓服务端 HTML（不渲染、不加载 res.wx.qq.com 资源）
+    html = ""
+    try:
+        r = page.request.get(edit, timeout=30000)
+        if r.ok:
+            html = r.text()
+    except Exception:
+        html = ""
+
+    # 2) 纯 HTTP 没拿到 ticket（少见）→ 退回浏览器渲染再取一次
+    if not grab("ticket", html):
+        try:
+            page.goto(edit, wait_until="commit", timeout=60000)
+            page.wait_for_timeout(3500)
+            html = page.content()
+        except Exception:
+            pass
+
+    return {"ticket": grab("ticket", html), "user_name": grab("user_name", html),
+            "nick_name": grab("nick_name", html)}
 
 
 def cmd_publish(a):
@@ -503,13 +643,10 @@ def cmd_publish(a):
                 out["error"] = f"封面上传失败: {json.dumps(up, ensure_ascii=False)[:200]}"
                 print(json.dumps(out, ensure_ascii=False)); return 1
 
-            # 1.5) 正文内嵌本地图片 → 同一 upload_material 接口，取响应 cdn_url 替换 src
-            base_dir = Path(a.html).resolve().parent
+            # 1.5) 正文内嵌图片 → 同一 upload_material 接口，取响应 cdn_url 替换 src
             def _upload_content_img(path):
-                img = Path(path)
-                if not img.is_absolute() and not img.is_file():
-                    img = base_dir / path            # 相对路径按 HTML 所在目录解析
-                if not img.is_file():
+                img = Path(path) if path else None
+                if img is None or not img.is_file():
                     return None
                 mime = "image/png" if img.suffix.lower() == ".png" else "image/jpeg"
                 jj = _upload_material(img, mime)
@@ -519,9 +656,12 @@ def cmd_publish(a):
 
             def _repl(m):
                 src = m.group(1)
-                if src.startswith("http"):
+                if src.startswith("http") and "/api/media/" not in src:
                     return m.group(0)
-                url = _upload_content_img(src)
+                local = resolve_content_image(src, a.html)
+                if local is None:
+                    return m.group(0)
+                url = _upload_content_img(local)
                 return m.group(0).replace(src, url) if url else m.group(0)
             html = re.sub(r'<img[^>]*\bsrc=["\']([^"\']+)["\']', _repl, html)
 
@@ -553,8 +693,12 @@ def cmd_publish(a):
                 out["error"] = f"建草稿返回非JSON: {r2.text()[:200]}"; print(json.dumps(out, ensure_ascii=False)); return 1
             ret = res.get("ret", res.get("base_resp", {}).get("ret", -1))
             if str(ret) == "0":
+                media_id = str(res.get("appMsgId") or res.get("appmsgid") or res.get("app_id") or "").strip()
+                if not media_id:
+                    out["error"] = "建草稿成功但未返回草稿 ID"
+                    print(json.dumps(out, ensure_ascii=False)); return 1
                 out["success"] = True
-                out["media_id"] = str(res.get("appMsgId") or res.get("app_id") or "")
+                out["media_id"] = media_id
                 out["thumb_media_id"] = thumb_media_id
                 print(json.dumps(out, ensure_ascii=False)); return 0
             out["error"] = f"建草稿失败 ret={ret}: {json.dumps(res, ensure_ascii=False)[:250]}"

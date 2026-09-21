@@ -1,83 +1,17 @@
-"""easel ping — 连通性测试（直接运行，不依赖 Docker）。"""
-
-from __future__ import annotations
-
-import os
-import subprocess
-import urllib.error
-import urllib.request
-
-from easel.openclaw_cmd import openclaw_base_cmd
-
-GREEN = "\033[0;32m"
-RED = "\033[0;31m"
-NC = "\033[0m"
-
-
-def _proxy_env() -> dict[str, str]:
-    """返回带外网代理的环境变量（保护内网直连）。"""
-    env = os.environ.copy()
-    env.setdefault("http_proxy", os.environ.get("EASEL_PROXY", ""))
-    env.setdefault("https_proxy", os.environ.get("EASEL_PROXY", ""))
-    env.setdefault("no_proxy", "localhost,127.0.0.1,*.xiaohongshu.com,*.devops.xiaohongshu.com,10.*")
-    return env
-
-
-def _step(label: str, cmd: list[str], timeout: int = 30,
-          env: dict[str, str] | None = None) -> bool:
-    """Run a command and print OK/FAIL."""
-    try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True, text=True, timeout=timeout,
-            env=env,
-        )
-        ok = result.returncode == 0
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        ok = False
-        result = None
-
-    status = f"{GREEN}OK{NC}" if ok else f"{RED}FAIL{NC}"
-    print(f"  {label:<50s} {status}")
-
-    if not ok and result and result.stderr:
-        for line in result.stderr.strip().splitlines()[:5]:
-            print(f"    {line}")
-
-    return ok
+"""Verify the configured subscription through the Web UI's guarded path."""
+from easel.runtime import active_profile
+from easel.services import healthy
 
 
 def cmd_ping(_args) -> int:
-    print("[easel] 连通性测试\n")
-    all_ok = True
-
-    # Step 1: Gateway healthz
+    from web.settings_api import ModelProfile, run_probe
+    if not healthy('gateway'):
+        print('Gateway 未运行，请先启动工作台。')
+        return 1
     try:
-        with urllib.request.urlopen("http://127.0.0.1:18789/healthz", timeout=10) as response:
-            gateway_ok = response.status == 200
-    except (OSError, urllib.error.URLError):
-        gateway_ok = False
-    print(f"  {'Step 1: Gateway healthz (localhost:18789)':<50s} "
-          f"{GREEN if gateway_ok else RED}{'OK' if gateway_ok else 'FAIL'}{NC}")
-    all_ok &= gateway_ok
-
-    # Step 2: OpenClaw agent
-    oc_cmd = openclaw_base_cmd() + [
-        "--profile", "easel",
-        "agent", "--agent", "main",
-        "--timeout", "30", "--message", "say PONG",
-    ]
-    all_ok &= _step(
-        "Step 2: OpenClaw agent via Gateway (say PONG)",
-        oc_cmd,
-        timeout=60,
-        env=_proxy_env(),
-    )
-
-    print()
-    if all_ok:
-        print(f"{GREEN}✓ 全部通过{NC}")
-    else:
-        print(f"{RED}✗ 有步骤失败{NC} — 请运行 python -m easel doctor 检查环境")
-
-    return 0 if all_ok else 1
+        result = run_probe(ModelProfile(**active_profile()))
+        print(f"EASEL_READY · {result['model']} · {result['latency_seconds']} 秒")
+        return 0
+    except Exception as exc:
+        print('连通性测试失败：' + str(exc))
+        return 1

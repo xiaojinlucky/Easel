@@ -31,6 +31,13 @@ dependencies = [
     # web/wechat_monitor_api.py 用 dotenv 读凭证文件。以前没写进依赖，装完环境一 import 就报 ModuleNotFoundError。
     "psutil>=6,<8",
     "python-dotenv>=1,<2",
+    # 其余几项按上游 fork main 的清单对齐补上：easel/feeds.py 与 scripts/wechat_worker.py 顶层 import bs4
+    # （缺了它一次就有 26 条测试报 ModuleNotFoundError），requests/yaml 被 web 与 skills 多处直接引入。
+    "httpx>=0.27,<1",
+    "onnxruntime>=1.20,<2",
+    "PyYAML>=6,<7",
+    "requests>=2.32,<3",
+    "beautifulsoup4>=4.13,<5",
 ]
 
 [project.scripts]
