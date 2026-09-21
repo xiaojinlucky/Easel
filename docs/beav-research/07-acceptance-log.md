@@ -23,7 +23,13 @@
 
 ## 已验证事实（可复制复核）
 
-环境：worktree 没有自带虚拟环境，测试借用主项目 venv。工作目录切到 worktree 根。
+环境：**现役树是 `Easel-official`**（2026-09-19 拍板，见其 `HANDOFF.md`；隔壁 `Easel/` 是待吸收的代码资产，不再是现役树）。
+本 worktree 没有自带虚拟环境，两个可用解释器各有缺口：
+
+| 解释器 | pytest | rapidocr | 备注 |
+|---|---|---|---|
+| `Easel-official/.venv`（现役，App 实际就靠它跑） | **没装** | 1.4.4 有 | `HANDOFF.md` 已记这条坑 |
+| `Easel/.venv`（隔壁待吸收树） | 有 | **没装** | 本文件全部测试数字在这上面跑 |
 
 ```bash
 cd "F:/科研大师兄/自媒体工作台/Easel-beav-kb"
@@ -215,7 +221,10 @@ cd web/frontend && npm run build   # 期望：tsc 无错；单 JS 460.22 kB(gzip
 **刻意没改的基线决定（要你在合并前定夺，不替你静默改）**
 
 - **H1｜局域网全库暴露**：`web/app.py:3225` 仍是 `host="0.0.0.0"`、`:335` 仍是 `allow_origins=["*"]`，
-  且 `/api/research/*` 没有任何鉴权——同一局域网内任何人都能读完整素材库、软删/硬删、改正文。
+  且 `/api/research/*` 没有任何鉴权。按现役树 HEAD 的路由表，同网段现在就能**读全库**
+  （`GET /status`、`/sources`、`/sources/{id}`）并**写入素材**（`POST /capture`、`/import`）；
+  编辑与删除（`PATCH` / `DELETE` / `batch-delete` / 回收站硬删）是本分支阶段 1B 才加的路由，
+  **合并后风险从"可读可注入"升级为"任意改删"**。实测数据见下面"与现役树的关系"一节。
   改法很短（`host="127.0.0.1"` + CORS 收敛到同源），但它会改变你现在"手机/别的机器访问工作台"的用法，
   所以留给你决定。
 - **H2｜`POST /api/research/beav-host` 免鉴权注册扩展**（主树 `9e9ca82` 引入）：任何能连到端口的进程都能
@@ -224,6 +233,41 @@ cd web/frontend && npm run build   # 期望：tsc 无错；单 JS 460.22 kB(gzip
   不是凭据泄露，但如果你要给别人看状态页，建议只回异常类名。
 - 另：`state` / `kind` / `tags` / `sort` 这几个筛选**只有后端实现了，界面没有入口**（前端只有 kind 一个下拉）。
   补齐 UI 属于阶段 1C 的收尾，没排在修复轮里。
+
+## 与现役树的关系（2026-09-21 复核）
+
+- 仓库拓扑（`git worktree list`，在 `Easel-official` 里执行）：`Easel-official` = `snapshot/official-active-0919`、
+  `Easel-beav-kb` = 本线 `research/beav-kb-parity`、`Easel-merge-wip` = `merge/easel-into-official`。
+  三者同属一个仓库，所以 cherry-pick 直接可行；隔壁 `Easel/` 是**另一个独立 .git**（待吸收，不是 worktree）。
+- **运行时现状（2026-09-21 实测，不是推断）**：`netstat` 显示 **7870 正在 `0.0.0.0` 上监听**（pid 32096，00:02:52 起），
+  网关 18789 只绑 `127.0.0.1`。该实例跑的是 official HEAD 的代码（`GET /api/research/index-status` → 404，
+  `GET /api/research/status` → 200 且响应里还没有 `ocr_available` 这些本分支才有的字段）。
+  `%LOCALAPPDATA%\easel-native-host\easel-root.txt` 当前内容是 `F:\科研大师兄\自媒体工作台\Easel-official`
+  ——浏览器采集真的落进现役树。合起来意味着：**上面 H1 那条局域网暴露是此刻成立的事实，不是假设**：
+  本机无鉴权 `GET http://127.0.0.1:7870/api/research/sources` 实测 **200、约 9.7 KB** 素材数据
+  （official HEAD `web/research_api.py:26` 就有这条路由，绑在 `0.0.0.0` 上＝同网段可达）。
+  删除类破坏要等本分支的 `DELETE` / `batch-delete` 路由合进去才成立，现状是"可读可改采集"。
+  一个小未坐实项：WMI 报这个进程的镜像是 uv 托管的基础 `python.exe`，而那个解释器单独 `import fastapi` 是失败的，
+  所以它实际吃哪套 site-packages（多半是 `Easel-official/.venv`）没核实——要判断"线上有没有 OCR 能力"时别拿这条当依据。
+- **端口**：现役树代码里默认端口仍是 **7860**（`easel/cli.py:147`、`:199`、`web/app.py:3213` 的 `EASEL_PORT` 兜底），
+  而 `extensions/easel-clipper/manifest.json:7` 已经写死 `127.0.0.1:7870`，产品合同也是 7870（`HANDOFF.md`）
+  ——即现役树现在靠启动时显式传端口才对得上。本分支阶段 0 把默认值统一到 7870，正是补这个缝；
+  **但合并后不带参数 `easel web` 会从 7860 变 7870**，正在跑的 7870 实例要按 `HANDOFF.md` 的规矩重启才吃到新代码。
+- **冲突面**：与 `merge/easel-into-official`（349 文件的两树吸收线）重名的只有 5 个文件，
+  且都是本线的核心：`easel/research.py`、`web/research_api.py`、`web/app.py`、
+  `web/frontend/src/components/ResearchPage.tsx`、`web/frontend/src/styles/research.css`。
+  两侧都往里加代码（那条线 +349/−13，本线 +1184/−81），**先合哪边，后合的那边就要手动解**。
+  复核命令：
+  ```bash
+  cd "F:/科研大师兄/自媒体工作台/Easel-official"
+  git worktree list
+  comm -12 <(git diff --name-only 21c8e8d...6fdb281 | sort) <(git diff --name-only 21c8e8d...HEAD | sort)
+  ```
+- Native Host 落库位置由 `%LOCALAPPDATA%\easel-native-host\easel-root.txt` 单点决定（`01-ours.md` 行 23），
+  三条 worktree 都点过"注册到本工作台"的话最后一次说了算——合并/试跑前先确认它指向哪棵树。
+- 合并前动手顺序建议：先备份 `outputs/`（老库补列迁移只练过假库），再在**当前 HEAD 上**跑一遍本文件的 pytest 期望值，
+  数字对不上先想环境差：跑测试的 `Easel/.venv` 缺 rapidocr（影响 `ocr_available()` 的显示值，不影响用例通过），
+  现役 `Easel-official/.venv` 缺 pytest（同一条命令在那儿直接跑不起来）。
 
 ## 推断（读了代码，没跑起来）
 
@@ -236,8 +280,12 @@ cd web/frontend && npm run build   # 期望：tsc 无错；单 JS 460.22 kB(gzip
 ## 未做 / 未验证（别当成已通过）
 
 - 没有跑过一次真实的 yt-dlp 下载 + faster-whisper 转写（venv 里两个包都装了，但整条链需要联网+几分钟 GPU/CPU 时间）。
-- **rapidocr 从未真跑过一次**：所有 OCR 用例都把 `research.ocr_local_images` 换成了假函数（含批量回填与路由用例），
-  `ocr_available()` 也只探测「能不能 import」。识别质量、模型首次加载耗时、ONNX 依赖在目标机能不能起来，全都没验。
+- **rapidocr 推理已真跑通一次**（2026-09-21，用**现役树** `Easel-official/.venv`：rapidocr-onnxruntime 1.4.4 + onnxruntime 1.30，CPU）：
+  拿本分支的 `research.ocr_local_images()` 识别一张 PIL 合成的干净中文图（"肿瘤学直博转行数据分析" + 一行英文），
+  结果与期望中文**逐字相同**，冷启动 10.2 秒（含模型加载）、热第二次 3.6 秒，两次输出一致。
+  但**注意两个环境的差别**：跑 pytest 的 `Easel/.venv`（隔壁树）**根本没装 rapidocr**，
+  所以测试里 `ocr_available()` 恒为 False、所有 OCR 用例都把 `ocr_local_images` 换成了假函数。
+  仍未验：真实平台截图（模糊/水印/竖长图）的识别质量、`批量识别图片 → 写库 → 进索引` 整链用真推理跑一遍、以及模型加载那 10 秒卡在哪个请求上。
 - 老库补列迁移只在临时目录里造的老 schema 上验过（`test_legacy_database_gains_the_claim_key_column`），
   **没有对你真实 `outputs/` 里那份带真素材的库做过一次升级演练**；合并前先备份 `outputs/`。
 - 没有跑过一次真实的 OpenClaw 打标（要后端和订阅在线）；队列语义是用假模型验的。
