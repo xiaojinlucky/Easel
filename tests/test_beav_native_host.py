@@ -1,6 +1,8 @@
 import importlib.util
 from pathlib import Path, PureWindowsPath
 
+import pytest
+
 from easel import research  # noqa: E402  （宿主模块导入时已把仓库根加入 sys.path）
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -90,12 +92,72 @@ def test_xhs_v2_uses_note_text_and_images():
     assert '科研' in entry2['extra']['tags']
 
 
-def test_accounts_rpc_is_rejected():
-    try:
-        handle('accounts.createImportSession', {'payload': {'homepageUrl': 'https://www.xiaohongshu.com/user/profile/x'}})
-        raise AssertionError('should reject')
-    except ValueError as exc:
-        assert '账号档案' in str(exc)
+def test_account_import_session_pipeline(tmp_path, monkeypatch):
+    """账号档案导入：建会话 → 帖子/媒体批量 → 收尾，帖子按 knowledgeEntryId 挂回素材库条目。"""
+    _isolate(tmp_path, monkeypatch)
+    note = handle('knowledge.ingestXhsEntryV2', {'payload': {
+        'source': {'sourceUrl': 'https://www.xiaohongshu.com/explore/n1', 'externalId': 'note-1'},
+        'note': {'title': '迈瑞医疗解读', 'text': '正文一'},
+    }})
+    created_payload = {
+        'platform': 'xiaohongshu',
+        'homepageUrl': 'https://www.xiaohongshu.com/user/profile/x',
+        'platformUserId': 'x', 'username': '甲',
+        'profile': {'notes': ['n1']}, 'options': {'postLimit': 50, 'includeMedia': True},
+    }
+    created = handle('accounts.createImportSession', {'operationId': 'acct-1', 'payload': created_payload})
+    assert created['account']['id'] and created['session']['id']
+    replay = handle('accounts.createImportSession', {'operationId': 'acct-1', 'payload': created_payload})
+    assert replay['replayed'] is True and replay['session']['id'] == created['session']['id']
+
+    posts = {'accountId': created['account']['id'], 'sessionId': created['session']['id'], 'posts': [
+        {'id': 'p1', 'title': '迈瑞医疗解读', 'url': 'https://www.xiaohongshu.com/explore/n1',
+         'knowledgeEntryId': note['id']},
+        {'id': 'p2', 'title': '只上报没入库的一条', 'url': 'https://www.xiaohongshu.com/explore/n2'},
+    ]}
+    batch = handle('accounts.upsertPostsBatch', {'payload': posts})
+    assert batch['postCount'] == 2 and batch['linked'] == 1 and batch['discarded'] == 0
+
+    # 批量上报的路径只带 accountId：会话要能按账号最近一次导入定位
+    media = handle('accounts.upsertMediaBatch', {'payload': {
+        'accountId': created['account']['id'],
+        'media': [{'mediaId': 'm1', 'postId': 'p1', 'kind': 'image',
+                   'url': 'https://sns-img.example/1.jpg', 'index': 0}],
+    }})
+    assert media['mediaCount'] == 1
+
+    done = handle('accounts.completeImportSession', {'payload': {
+        'sessionId': created['session']['id'], 'status': 'partial',
+        'importedPostCount': 2, 'failedPostCount': 1, 'lastError': '有 1 条采集失败',
+    }})
+    assert done['status'] == 'partial' and done['storedPosts'] == 2 and done['linkedSourceCount'] == 1
+    detail = research.account_session_detail(created['session']['id'])
+    assert detail['source_ids'] == [note['id']]
+    assert {item['kind']: item['total'] for item in detail['items']} == {'post': 2, 'media': 1}
+
+    # 同一批重投（扩展重试）不翻倍
+    handle('accounts.upsertPostsBatch', {'payload': posts})
+    assert research.account_session_detail(created['session']['id'])['items'][0]['total'] == 2
+
+
+def test_account_import_session_rejects_bad_frames(tmp_path, monkeypatch):
+    """账号上报的坏输入要当场说清，不能悄悄收下当成功。"""
+    _isolate(tmp_path, monkeypatch)
+    with pytest.raises(ValueError):
+        handle('accounts.createImportSession', {'payload': {'platform': 'xiaohongshu'}})
+    with pytest.raises(ValueError):
+        handle('accounts.upsertPostsBatch', {'payload': {'sessionId': '不存在', 'posts': [{'id': 'p1'}]}})
+    with pytest.raises(ValueError):
+        handle('accounts.upsertPostsBatch', {'payload': {'accountId': 'a', 'posts': []}})
+    created = handle('accounts.createImportSession', {'payload': {
+        'platform': 'xiaohongshu', 'homepageUrl': 'https://www.xiaohongshu.com/user/profile/y',
+        'posts': [{'id': f'p{n}'} for n in range(research.MAX_ACCOUNT_ITEMS + 5)],
+    }})
+    batch = handle('accounts.upsertPostsBatch', {'payload': {
+        'sessionId': created['session']['id'],
+        'posts': [{'id': f'p{n}'} for n in range(research.MAX_ACCOUNT_ITEMS + 5)],
+    }})
+    assert batch['postCount'] == research.MAX_ACCOUNT_ITEMS and batch['discarded'] == 5
 
 
 def test_zhihu_answer_uses_nested_text():
@@ -113,6 +175,9 @@ def _isolate(tmp_path, monkeypatch):
     monkeypatch.setattr(research, 'DB', tmp_path / 'research.sqlite')
     monkeypatch.setattr(research, 'ROOT', tmp_path)
     monkeypatch.setattr(research, 'ocr_local_images', lambda rel: '')
+    # 宿主日志默认写仓库 .runtime/：不隔离的话用例里的"投递失败/超长帧"会混进真机日志，
+    # 排查时看着像真出的事故。
+    monkeypatch.setattr(mod, 'LOG', tmp_path / 'beav-native-host.log')
 
 
 def test_ingest_receipt_created_then_duplicate(tmp_path, monkeypatch):
@@ -275,10 +340,11 @@ def test_enqueue_failure_is_visible_in_receipt(tmp_path, monkeypatch):
     assert ok['processing'] == {'queued': ['enrich']}
 
 
-def test_oversized_frame_is_refused(monkeypatch):
+def test_oversized_frame_is_refused(tmp_path, monkeypatch):
     """长度头是 4 字节无符号整数，最大能声明 4GB：不设上限一条坏帧就能把宿主吃掉。"""
     class Stub:
         buffer = type('B', (), {'read': staticmethod(lambda n: b'\xff\xff\xff\xff' if n == 4 else b'')})()
 
+    monkeypatch.setattr(mod, 'LOG', tmp_path / 'beav-native-host.log')
     monkeypatch.setattr(mod.sys, 'stdin', Stub())
     assert mod._read() is None

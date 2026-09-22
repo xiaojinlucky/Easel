@@ -202,3 +202,49 @@ def test_isolated_timeout_never_stops_gateway(monkeypatch):
     with pytest.raises(RuntimeError, match='test interruption'):
         ap.runtime.run_agent_command(['agent', 'exec'], 10, isolated=True)
     assert calls == [('tree', 'owned-process')]
+
+
+def test_import_session_routes_and_evidence_picking(setup, monkeypatch):
+    """采集会话 → 画像：列表/详情直通，选证据时去重、跳过不可回读项，且不起真实模型。"""
+    detail = {'id': 'sess-1', 'homepage_url': 'https://www.xiaohongshu.com/user/profile/x',
+              'source_ids': ['s1', 's2', 's1', 'gone', 'deleted'],
+              'items': [{'kind': 'post', 'total': 3, 'linked': 3}]}
+    def session_detail(identifier):
+        if identifier != 'sess-1':
+            raise ap.research.CollectionError('账号导入会话不存在。', 404)
+        return detail
+    monkeypatch.setattr(ap.research, 'list_account_sessions', lambda limit=20: [detail])
+    monkeypatch.setattr(ap.research, 'account_session_detail', session_detail)
+    saved = {'s1': '正文一', 's2': '正文二', 'deleted': ''}
+    def get_source(identifier):
+        if identifier not in saved:
+            raise ap.research.CollectionError('素材不存在。', 404)
+        return {'id': identifier, 'state': 'saved' if saved[identifier] else 'trashed',
+                'content': saved[identifier]}
+    monkeypatch.setattr(ap.research, 'get_source', get_source)
+    captured = {}
+    def fake_build(name, source_ids, homepage_url='', intent=''):
+        captured.update(name=name, source_ids=source_ids, homepage_url=homepage_url)
+        return {'job_id': 'job-1', 'status': 'queued'}
+    monkeypatch.setattr(ap, 'build', fake_build)
+
+    assert setup.get('/api/account-profile/sessions').json() == {'items': [detail]}
+    assert setup.get('/api/account-profile/sessions/sess-1').json()['items'] == detail['items']
+    response = setup.post('/api/account-profile/from-session', json={'session_id': 'sess-1', 'name': '甲'})
+    assert response.status_code == 202
+    assert response.json()['used_source_count'] == 2
+    assert response.json()['linked_source_count'] == 4 and response.json()['skipped_source_count'] == 2
+    assert captured == {'name': '甲', 'source_ids': ['s1', 's2'],
+                        'homepage_url': 'https://www.xiaohongshu.com/user/profile/x'}
+    assert setup.get('/api/account-profile/sessions/nope').status_code == 404
+
+
+def test_from_session_refuses_when_nothing_readable(setup, monkeypatch):
+    monkeypatch.setattr(ap.research, 'account_session_detail',
+                        lambda identifier: {'id': identifier, 'source_ids': ['gone']})
+    def get_source(identifier):
+        raise ap.research.CollectionError('素材不存在。', 404)
+    monkeypatch.setattr(ap.research, 'get_source', get_source)
+    response = setup.post('/api/account-profile/from-session', json={'session_id': 'sess-1', 'name': '甲'})
+    assert response.status_code == 422
+    assert '没有可回读' in response.json()['detail']

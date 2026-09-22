@@ -36,6 +36,13 @@ from easel.research import (  # noqa: E402
     source_exists,
     media_url_allowed,
     asset_exists,
+    account_id_for,
+    open_account_session,
+    get_account_session,
+    latest_account_session,
+    upsert_account_items,
+    finish_account_session,
+    account_session_detail,
 )
 
 MAX_INBOUND_BYTES = 32 * 1024 * 1024   # 单帧上限：长度头能声明到 4GB，不设限一条坏帧就能撑爆宿主
@@ -379,6 +386,105 @@ def _ingest(params: dict, method: str = "") -> dict:
     return receipt
 
 
+ACCOUNT_BATCH_FIELDS = {
+    "accounts.upsertPostsBatch": ("post", "posts", "postCount"),
+    "accounts.upsertCommentsBatch": ("comment", "comments", "commentCount"),
+    "accounts.upsertMediaBatch": ("media", "media", "mediaCount"),
+}
+
+
+def _account_target(params: dict) -> dict:
+    """批量上报按 accountId 定址，sessionId 可能在 body 里也可能缺。"""
+    inner = _unwrap(params)
+    session_id = str(inner.get("sessionId") or params.get("sessionId") or "").strip()
+    if session_id:
+        return get_account_session(session_id)
+    account_id = str(inner.get("accountId") or params.get("accountId") or "").strip()
+    if account_id:
+        session = latest_account_session(account_id)
+        if session:
+            return session
+    raise ValueError("账号导入会话不存在，请在扩展里重新发起采集。")
+
+
+def _receipt(operation_id: str, build) -> dict:
+    """operationId 是扩展按内容算出的指纹：同一份内容重投不重复干活。"""
+    if not operation_id:
+        return build()
+    cached = get_operation(operation_id)
+    if cached:
+        return {**cached, "replayed": True}
+    receipt = build()
+    put_operation(operation_id, receipt)
+    return receipt
+
+
+def _create_import_session(params: dict) -> dict:
+    inner = _unwrap(params)
+    platform = str(inner.get("platform") or "xiaohongshu").strip()
+    homepage = str(inner.get("homepageUrl") or "").strip()
+    user_id = str(inner.get("platformUserId") or "").strip()
+    if not homepage.startswith(("http://", "https://")) and not user_id:
+        raise ValueError("账号导入会话缺少主页地址与平台用户标识。")
+
+    def build():
+        account_id = account_id_for(platform, user_id, homepage)
+        session = open_account_session(
+            account_id, platform, homepage, user_id,
+            str(inner.get("username") or "").strip(),
+            str(inner.get("avatarUrl") or "").strip(),
+            str(inner.get("bio") or "").strip(),
+            _as_dict(inner.get("options")), _as_dict(inner.get("profile")),
+        )
+        return {
+            "success": True,
+            "account": {"id": account_id, "username": session["username"]},
+            "session": {"id": session["id"], "status": session["status"]},
+        }
+
+    return _receipt(str(params.get("operationId") or "").strip(), build)
+
+
+def _upsert_batch(method: str, params: dict) -> dict:
+    kind, field, count_key = ACCOUNT_BATCH_FIELDS[method]
+    session = _account_target(params)
+    inner = _unwrap(params)
+    rows = inner.get(field)
+    if not isinstance(rows, list) or not rows:
+        raise ValueError(f"{field} 必须是非空数组。")
+
+    def build():
+        result = upsert_account_items(session["id"], kind, rows,
+                                      default_post_id=str(inner.get("postId") or "").strip())
+        return {"success": True, "sessionId": session["id"], count_key: result["stored"],
+                "received": result["received"], "linked": result["linked"],
+                "discarded": result["discarded"], "notes": result["notes"]}
+
+    return _receipt(str(params.get("operationId") or "").strip(), build)
+
+
+def _complete_import_session(params: dict) -> dict:
+    session = _account_target(params)
+    inner = _unwrap(params)
+    detail = account_session_detail(session["id"])
+    result = finish_account_session(
+        session["id"],
+        str(inner.get("status") or "completed").strip(),
+        inner.get("importedPostCount") or 0,
+        inner.get("failedPostCount") or 0,
+        str(inner.get("lastError") or "").strip(),
+    )
+    return {
+        "success": True,
+        "sessionId": result["id"],
+        "status": result["status"],
+        "importedPostCount": result["imported_post_count"],
+        "failedPostCount": result["failed_post_count"],
+        "storedPosts": next((item["total"] for item in detail["items"] if item["kind"] == "post"), 0),
+        "linkedSourceCount": len(detail["source_ids"]),
+    }
+
+
 def handle(method: str, params: dict) -> dict:
     if method == "ping":
         return _ok_ping()
@@ -392,7 +498,15 @@ def handle(method: str, params: dict) -> dict:
             "initialization": {"ready": True, "state": "ready"},
             "ingest": {"allowed": True, "reason": "EASEL_RESEARCH"},
         }
-    if method.startswith("knowledge.") or method.startswith("accounts."):
+    if method.startswith("accounts."):
+        if method == "accounts.createImportSession":
+            return _create_import_session(params if isinstance(params, dict) else {})
+        if method in ACCOUNT_BATCH_FIELDS:
+            return _upsert_batch(method, params if isinstance(params, dict) else {})
+        if method == "accounts.completeImportSession":
+            return _complete_import_session(params if isinstance(params, dict) else {})
+        raise ValueError(f"尚未支持的账号档案方法：{method}")
+    if method.startswith("knowledge."):
         if method == "knowledge.batchIngest":
             items = []
             blob = params.get("payload") if isinstance(params, dict) else {}
@@ -405,8 +519,6 @@ def handle(method: str, params: dict) -> dict:
                 except Exception as exc:  # noqa: BLE001
                     items.append({"success": False, "error": str(exc)})
             return {"success": True, "results": items}
-        if method.startswith("accounts."):
-            raise ValueError("账号档案导入尚未接到 Easel，请用保存笔记/网页。")
         return _ingest(params if isinstance(params, dict) else {}, method)
     raise ValueError(f"unsupported method: {method}")
 

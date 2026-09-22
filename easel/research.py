@@ -63,6 +63,9 @@ def connection() -> sqlite3.Connection:
     db.execute('CREATE TABLE IF NOT EXISTS cooldowns (platform TEXT PRIMARY KEY, next_at REAL)')
     db.execute('CREATE TABLE IF NOT EXISTS operations (operation_id TEXT PRIMARY KEY, receipt TEXT, at REAL)')
     db.execute('CREATE TABLE IF NOT EXISTS enrich_tasks (id INTEGER PRIMARY KEY AUTOINCREMENT, source_id TEXT, task TEXT, status TEXT NOT NULL DEFAULT \'pending\', error TEXT DEFAULT \'\', result_json TEXT DEFAULT \'\', attempts INTEGER NOT NULL DEFAULT 0, claim_key INTEGER NOT NULL DEFAULT 0, created_at REAL, updated_at REAL, UNIQUE(source_id, task))')
+    db.execute('CREATE TABLE IF NOT EXISTS account_sessions (id TEXT PRIMARY KEY, account_id TEXT, platform TEXT, homepage_url TEXT, platform_user_id TEXT, username TEXT, avatar_url TEXT, bio TEXT, options_json TEXT, profile_json TEXT, status TEXT NOT NULL DEFAULT \'open\', imported_post_count INTEGER NOT NULL DEFAULT 0, failed_post_count INTEGER NOT NULL DEFAULT 0, last_error TEXT DEFAULT \'\', created_at REAL, updated_at REAL)')
+    db.execute('CREATE TABLE IF NOT EXISTS account_items (session_id TEXT NOT NULL, kind TEXT NOT NULL, external_id TEXT NOT NULL, post_id TEXT NOT NULL DEFAULT \'\', source_id TEXT NOT NULL DEFAULT \'\', url TEXT NOT NULL DEFAULT \'\', title TEXT NOT NULL DEFAULT \'\', payload_json TEXT NOT NULL DEFAULT \'\', created_at REAL, updated_at REAL, PRIMARY KEY (session_id, kind, external_id))')
+    db.execute('CREATE INDEX IF NOT EXISTS account_items_session_kind ON account_items (session_id, kind)')
     db.execute('CREATE VIRTUAL TABLE IF NOT EXISTS sources_fts USING fts5(source_id UNINDEXED, tokens)')
     existing = {row[1] for row in db.execute('PRAGMA table_info(sources)').fetchall()}
     for column, decl in (
@@ -683,6 +686,146 @@ def put_operation(operation_id: str, receipt: dict) -> None:
     with connection() as db:
         db.execute('INSERT OR REPLACE INTO operations (operation_id,receipt,at) VALUES (?,?,?)',
                    (operation_id[:128], json.dumps(receipt, ensure_ascii=False), time.time()))
+
+
+ACCOUNT_ITEM_KINDS = ('post', 'media', 'comment')
+MAX_ACCOUNT_ITEMS = 500          # 扩展把整批帖子一次性上报，默认量 50；留 10 倍余量，超出如实报 discarded
+MAX_ACCOUNT_ITEM_BYTES = 200_000  # 单条 raw 上限：一个异常大的 raw 不该把素材库撑爆
+
+
+def _new_identifier(seed: str) -> str:
+    return hashlib.sha256(seed.encode('utf-8')).hexdigest()[:24]
+
+
+def account_id_for(platform: str, platform_user_id: str, homepage_url: str) -> str:
+    """同一博主反复导入要认成同一个账号：优先平台用户 id，缺了退回主页地址。"""
+    return _new_identifier(f'{platform}|{platform_user_id or homepage_url}'.strip().lower())
+
+
+def open_account_session(account_id: str, platform: str, homepage_url: str, platform_user_id: str,
+                         username: str, avatar_url: str, bio: str, options: dict, profile: dict) -> dict:
+    now = time.time()
+    session_id = _new_identifier(f'{account_id}|{now}|{random.random()}')
+    with connection() as db:
+        db.execute('INSERT INTO account_sessions (id,account_id,platform,homepage_url,platform_user_id,username,'
+                   'avatar_url,bio,options_json,profile_json,status,created_at,updated_at) '
+                   "VALUES (?,?,?,?,?,?,?,?,?,?, 'open',?,?)",
+                   (session_id, account_id, platform[:40], homepage_url[:2000], platform_user_id[:200],
+                    username[:200], avatar_url[:2000], bio[:4000],
+                    json.dumps(options, ensure_ascii=False)[:20000], json.dumps(profile, ensure_ascii=False)[:400000],
+                    now, now))
+    return get_account_session(session_id)
+
+
+def _shape_session(row) -> dict:
+    item = dict(row)
+    for key, field in (('options', 'options_json'), ('profile', 'profile_json')):
+        try:
+            item[key] = json.loads(item.get(field) or '{}')
+        except json.JSONDecodeError:
+            item[key] = {}
+        item.pop(field, None)
+    return item
+
+
+def get_account_session(session_id: str) -> dict:
+    with connection() as db:
+        row = db.execute('SELECT * FROM account_sessions WHERE id=?', (session_id,)).fetchone()
+    if row is None:
+        raise CollectionError('账号导入会话不存在。', 404)
+    return _shape_session(row)
+
+
+def latest_account_session(account_id: str) -> dict | None:
+    """批量上报按 accountId 定址，sessionId 可能缺；缺了认这个账号最近一次会话。"""
+    with connection() as db:
+        row = db.execute('SELECT id FROM account_sessions WHERE account_id=? ORDER BY created_at DESC LIMIT 1',
+                         (account_id,)).fetchone()
+    return _shape_session(db.execute('SELECT * FROM account_sessions WHERE id=?', (row['id'],)).fetchone()) if row else None
+
+
+def list_account_sessions(limit: int = 20) -> list[dict]:
+    limit = max(1, min(int(limit or 20), 100))
+    with connection() as db:
+        rows = db.execute('SELECT * FROM account_sessions ORDER BY created_at DESC LIMIT ?', (limit,)).fetchall()
+        out = []
+        for row in rows:
+            item = _shape_session(row)
+            counts = {kind: 0 for kind in ACCOUNT_ITEM_KINDS}
+            for kind, total in db.execute('SELECT kind,count(*) FROM account_items WHERE session_id=? GROUP BY kind',
+                                          (item['id'],)).fetchall():
+                counts[str(kind)] = total
+            item['item_counts'] = counts
+            out.append(item)
+    return out
+
+
+def upsert_account_items(session_id: str, kind: str, rows: list, default_post_id: str = '') -> dict:
+    """按 (会话, 类型, 条目 id) 覆盖写：同一批重复投递不翻倍，也不静默丢超限部分。"""
+    if kind not in ACCOUNT_ITEM_KINDS:
+        raise CollectionError(f'未知的账号档案条目类型：{kind}')
+    if not isinstance(rows, list):
+        raise CollectionError(f'{kind} 批量数据必须是数组。')
+    accepted = rows[:MAX_ACCOUNT_ITEMS]
+    now = time.time()
+    stored = linked = 0
+    truncated = []
+    with connection() as db:
+        for index, raw in enumerate(accepted):
+            item = raw if isinstance(raw, dict) else {}
+            external_id = str(item.get('id') or item.get(f'{kind}Id') or item.get('platformPostId')
+                              or item.get('commentId') or '').strip()
+            if not external_id:
+                # 没有稳定 id 也要能幂等：拿这条的内容指纹当 id
+                external_id = _new_identifier(json.dumps(item, ensure_ascii=False, sort_keys=True)[:MAX_ACCOUNT_ITEM_BYTES])
+                truncated.append(f'#{index + 1} 缺 id，按内容指纹入库')
+            payload = json.dumps(item, ensure_ascii=False)
+            if len(payload) > MAX_ACCOUNT_ITEM_BYTES:
+                payload = json.dumps({'truncated_from_bytes': len(payload),
+                                      'head': payload[:MAX_ACCOUNT_ITEM_BYTES]}, ensure_ascii=False)
+                truncated.append(f'#{index + 1} 超出单条上限已截断')
+            post_id = str(item.get('postId') or default_post_id or external_id)[:200] if kind != 'post' else external_id[:200]
+            source_id = str(item.get('knowledgeEntryId') or '').strip()[:24]
+            exists = bool(source_id) and db.execute('SELECT 1 FROM sources WHERE id=?', (source_id,)).fetchone() is not None
+            db.execute('INSERT OR REPLACE INTO account_items (session_id,kind,external_id,post_id,source_id,url,title,'
+                       'payload_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?, '
+                       'COALESCE((SELECT created_at FROM account_items WHERE session_id=? AND kind=? AND external_id=?),?),?)',
+                       (session_id, kind, external_id[:200], post_id, source_id if exists else '',
+                        str(item.get('url') or '')[:2000], str(item.get('title') or '')[:300], payload,
+                        session_id, kind, external_id[:200], now, now))
+            stored += 1
+            linked += 1 if exists else 0
+    return {'kind': kind, 'received': len(rows), 'stored': stored, 'linked': linked,
+            'discarded': len(rows) - len(accepted), 'notes': truncated[:10]}
+
+
+def finish_account_session(session_id: str, status: str, imported: int, failed: int, last_error: str) -> dict:
+    if status not in ('completed', 'partial', 'failed'):
+        raise CollectionError(f'未知的导入会话结束状态：{status}')
+    with connection() as db:
+        db.execute("UPDATE account_sessions SET status=?, imported_post_count=?, failed_post_count=?, last_error=?, "
+                   'updated_at=? WHERE id=?',
+                   (status, max(0, int(imported or 0)), max(0, int(failed or 0)), str(last_error or '')[:500],
+                    time.time(), session_id))
+    return get_account_session(session_id)
+
+
+def account_session_detail(session_id: str) -> dict:
+    """给档案页看一次导入到底收了多少、有多少能回跳到素材库条目。"""
+    session = get_account_session(session_id)
+    detail = dict(session)
+    with connection() as db:
+        order = 'CASE kind ' + ' '.join(
+            f"WHEN '{kind}' THEN {index}" for index, kind in enumerate(ACCOUNT_ITEM_KINDS)) + ' ELSE 99 END'
+        rows = db.execute('SELECT kind, count(*) AS total, sum(CASE WHEN source_id<>\'\' THEN 1 ELSE 0 END) AS linked '
+                          f'FROM account_items WHERE session_id=? GROUP BY kind ORDER BY {order}',
+                          (session_id,)).fetchall()
+        posts = db.execute("SELECT external_id, source_id, url, title FROM account_items "
+                           "WHERE session_id=? AND kind='post' ORDER BY created_at LIMIT 50", (session_id,)).fetchall()
+    detail['items'] = [{'kind': row['kind'], 'total': row['total'], 'linked': row['linked'] or 0} for row in rows]
+    detail['source_ids'] = [row['source_id'] for row in posts if row['source_id']]
+    detail['posts'] = [dict(row) for row in posts]
+    return detail
 
 
 def refresh_ocr_batch(limit: int = 20) -> dict:
