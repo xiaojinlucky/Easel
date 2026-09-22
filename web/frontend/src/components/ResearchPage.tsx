@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import AccountImportPanel from './AccountImportPanel';
 
 type Source = {
   id: string; url: string; title: string; platform: string; topic: string;
@@ -89,7 +90,9 @@ function receiptText(s: Source) {
   return '素材已保存。可以直接仿写，或改成可发文案。';
 }
 
-export default function ResearchPage({ onCreate, persona = '' }: { onCreate: (prompt: string, stage?: string) => void; persona?: string }) {
+export default function ResearchPage({ onCreate, persona = '', onProfileActivated }: {
+  onCreate: (prompt: string, stage?: string) => void; persona?: string; onProfileActivated?: (name: string) => void;
+}) {
   const [sources, setSources] = useState<Source[]>([]);
   const [total, setTotal] = useState(0);
   const [kindCounts, setKindCounts] = useState<Record<string, number>>({});
@@ -326,6 +329,7 @@ export default function ResearchPage({ onCreate, persona = '' }: { onCreate: (pr
           <button key={wf.id} className={i === 0 ? 'btn btn-primary' : 'btn'} disabled={busy || !selected.length} onClick={() => useSources(wf)}>{wf.label}</button>
         ))}
       </div>
+      <AccountImportPanel onActivated={onProfileActivated} />
       {!sources.length && <div className="research-empty">还没有素材。用小红书页里的「保存笔记」，或到「采集」保存网页。</div>}
       <div className="research-sources">{sources.map(s => {
         const cover = coverOf(s);

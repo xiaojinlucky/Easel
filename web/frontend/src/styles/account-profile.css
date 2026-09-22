@@ -22,3 +22,12 @@
 .account-profile-columns > div > .btn { order: -1; }
 .account-profile-columns .profile-content { width: 100%; max-height: min(48vh, 420px); overflow-y: auto; overscroll-behavior: contain; overflow-wrap: anywhere; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-elev); }
 .account-profile-columns textarea.field { height: min(48vh, 420px); min-height: 180px; resize: vertical; }
+
+/* 素材库页的采集会话区块：一批导入 = 一行，展开才要模型额度。 */
+.account-session { padding: 14px 0; border-top: 1px solid var(--border, #e5e7eb); }
+.account-session-head { display: flex; flex-wrap: wrap; gap: 10px; align-items: baseline; }
+.account-session-head b { font-size: 14px; overflow-wrap: anywhere; }
+.account-session-head span { color: var(--text-secondary); font-size: 12px; }
+.account-session > small { display: block; margin-top: 4px; color: var(--text-secondary); font-size: 12px; overflow-wrap: anywhere; }
+.account-session-warn { color: #95631e; }
+.account-session .btn { margin-top: 10px; }

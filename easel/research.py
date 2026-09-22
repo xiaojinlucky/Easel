@@ -757,6 +757,13 @@ def list_account_sessions(limit: int = 20) -> list[dict]:
                 counts[str(kind)] = total
             item['item_counts'] = counts
             out.append(item)
+        identifiers = [item['id'] for item in out]
+        marks = ','.join('?' * len(identifiers))
+        linked = dict(db.execute(f'SELECT session_id,count(DISTINCT source_id) FROM account_items '
+                                 f"WHERE source_id<>'' AND session_id IN ({marks}) GROUP BY session_id",
+                                 identifiers).fetchall()) if identifiers else {}
+        for item in out:
+            item['linked_source_count'] = linked.get(item['id'], 0)
     return out
 
 

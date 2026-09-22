@@ -134,10 +134,12 @@ def test_account_import_session_pipeline(tmp_path, monkeypatch):
     detail = research.account_session_detail(created['session']['id'])
     assert detail['source_ids'] == [note['id']]
     assert {item['kind']: item['total'] for item in detail['items']} == {'post': 2, 'media': 1}
+    assert research.list_account_sessions()[0]['linked_source_count'] == 1
 
     # 同一批重投（扩展重试）不翻倍
     handle('accounts.upsertPostsBatch', {'payload': posts})
     assert research.account_session_detail(created['session']['id'])['items'][0]['total'] == 2
+    assert research.list_account_sessions()[0]['linked_source_count'] == 1
 
 
 def test_account_import_session_rejects_bad_frames(tmp_path, monkeypatch):

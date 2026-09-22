@@ -12,6 +12,7 @@ import ModelSettingsPage from './components/ModelSettingsPage';
 import ResearchPage from './components/ResearchPage';
 import './styles/model-settings.css';
 import './styles/research.css';
+import './styles/account-profile.css';
 import TrendsPage from './components/TrendsPage';
 import CalendarPage from './components/CalendarPage';
 import IdeasPage from './components/IdeasPage';
@@ -828,7 +829,7 @@ export default function App() {
       case 'breakdown':
         return <BreakdownPage persona={selectedPersona} />;
       case 'research':
-        return <ResearchPage persona={selectedPersona} onCreate={(prompt, stage) => handleDraftToChat(prompt, stage || 'produce')} />;
+        return <ResearchPage persona={selectedPersona} onCreate={(prompt, stage) => handleDraftToChat(prompt, stage || 'produce')} onProfileActivated={() => { fetchPersonas().then(setPersonas).catch(() => {}); }} />;
       case 'skills':
         return <SkillPage persona={selectedPersona} onDraftToChat={handleDraftToChat} />;
       case 'workflows':

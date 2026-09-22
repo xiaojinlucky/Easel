@@ -171,6 +171,44 @@ export function deletePersona(name: string): Promise<{ ok: boolean; deleted: str
   return request(`/api/persona/${encodeURIComponent(name)}`, { method: 'DELETE' });
 }
 
+// ---- 账号采集会话 → 账号档案（Beav 式自动配置） ----
+export interface AccountImportSession {
+  id: string; account_id: string; platform: string; homepage_url: string; username: string;
+  status: string; imported_post_count: number; failed_post_count: number; last_error: string;
+  created_at: number; item_counts: Record<string, number>; linked_source_count: number;
+}
+export interface AccountProfileJob {
+  job_id: string; name: string; status: string; error: string | null; finished_at: string | null;
+}
+export interface AccountProfileFile {
+  name: string; homepage_url: string;
+  suggestion: { content: string; evidence_ids: string[]; job_id: string; generated_at: string } | null;
+  active: { content: string; version: number; updated_at: string | null };
+}
+export function fetchAccountImportSessions(limit = 20): Promise<{ items: AccountImportSession[] }> {
+  return request(`/api/account-profile/sessions?limit=${limit}`);
+}
+export function buildProfileFromSession(sessionId: string, name: string, intent = ''):
+  Promise<AccountProfileJob & { used_source_count: number; linked_source_count: number; skipped_source_count: number }> {
+  return request('/api/account-profile/from-session', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session_id: sessionId, name, intent }),
+  });
+}
+export function fetchAccountProfileJob(jobId: string): Promise<AccountProfileJob> {
+  return request(`/api/account-profile/jobs/${encodeURIComponent(jobId)}`);
+}
+export function fetchAccountProfile(name: string): Promise<AccountProfileFile> {
+  return request(`/api/account-profile/${encodeURIComponent(name)}`);
+}
+export function activateAccountProfile(name: string, content: string, expectedVersion: number):
+  Promise<{ content: string; version: number; updated_at: string }> {
+  return request(`/api/account-profile/${encodeURIComponent(name)}/active`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content, expected_version: expectedVersion }),
+  });
+}
+
 // ---- 热点雷达 ----
 export interface TrendItem { title: string; hot: string; url: string; }
 export interface TrendGroup { platform: string; label: string; items: TrendItem[]; }
