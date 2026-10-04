@@ -61,9 +61,21 @@ def _profile_dir(base):
 
 _IMG_OK = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
 _API_MEDIA = re.compile(
-    r"(?:https?://(?:127\.0\.0\.1|localhost)(?::\d+)?)?/api/media/",
+    r"^(?:https?://(?:127\.0\.0\.1|localhost)(?::\d+)?)?/api/media/(.+)$",
     re.IGNORECASE,
 )
+_PROTECTED = {"analytics", "wechat"}
+
+
+def _under_root(path, root):
+    """解析后的文件必须落在 root 里面，且路径段不能是系统目录。"""
+    try:
+        rel = Path(path).resolve().relative_to(Path(root).resolve())
+    except ValueError:
+        return None
+    if any(part in {"", ".", ".."} or part.startswith(("_", ".")) or part.lower() in _PROTECTED for part in rel.parts):
+        return None
+    return Path(path).resolve()
 
 
 def resolve_content_image(src, html_path):
@@ -71,28 +83,25 @@ def resolve_content_image(src, html_path):
     src = unquote(str(src or "").strip())
     if not src:
         return None
-    media = _API_MEDIA.search(src)
+    bare = src.split("?", 1)[0].split("#", 1)[0]
+    media = _API_MEDIA.match(bare)
+    outputs = PROJECT_ROOT / "outputs"
     if media:
-        parts = Path(src[media.end():]).parts
+        parts = Path(media.group(1)).parts
         if not parts or any(part in {"", ".", ".."} for part in parts):
             return None
-        if str(parts[0]).startswith(("_", ".")) or str(parts[0]).lower() in {"analytics", "wechat"}:
-            return None
-        candidate = (PROJECT_ROOT / "outputs").joinpath(*parts).resolve()
-        try:
-            candidate.relative_to((PROJECT_ROOT / "outputs").resolve())
-        except ValueError:
-            return None
-        if candidate.suffix.lower() in _IMG_OK and candidate.is_file():
+        candidate = _under_root(outputs.joinpath(*parts), outputs)
+        if candidate and candidate.suffix.lower() in _IMG_OK and candidate.is_file():
             return candidate
         return None
-    if src.lower().startswith("http://") or src.lower().startswith("https://") or src.startswith("//"):
+    if bare.lower().startswith(("http://", "https://", "//")):
         return None
-    img = Path(src)
-    if not img.is_absolute() and not img.is_file():
-        img = Path(html_path).resolve().parent / src
-    if img.is_file() and img.suffix.lower() in _IMG_OK:
-        return img
+    raw = Path(bare)
+    if not raw.is_absolute():
+        raw = Path(html_path).resolve().parent / raw
+    candidate = _under_root(raw, outputs)
+    if candidate and candidate.suffix.lower() in _IMG_OK and candidate.is_file():
+        return candidate
     return None
 
 

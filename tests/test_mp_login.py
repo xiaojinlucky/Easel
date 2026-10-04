@@ -79,5 +79,62 @@ class MpLoginTests(unittest.TestCase):
                 self.assertEqual(module.cmd_login(args), 1)
             self.assertEqual(module.login_state.read_status(args.status_file)['state'], 'error')
 
+    def test_weixin_resolve_content_image_maps_api_media(self):
+        script = ROOT / 'skills/shared/scripts/weixin_mp_stats.py'
+        spec = importlib.util.spec_from_file_location('mp_stats_image', script)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        with tempfile.TemporaryDirectory() as d:
+            tmp_path = Path(d)
+            module.PROJECT_ROOT = tmp_path
+            image = tmp_path / 'outputs' / 'gallery' / 'a.png'
+            image.parent.mkdir(parents=True)
+            image.write_bytes(b'png')
+            html = tmp_path / 'outputs' / 'articles' / 'a.html'
+            html.parent.mkdir(parents=True)
+            html.write_text('<p></p>', encoding='utf-8')
+            self.assertEqual(module.resolve_content_image('/api/media/gallery/a.png', html), image.resolve())
+            self.assertEqual(
+                module.resolve_content_image('https://127.0.0.1:7870/api/media/gallery/a.png', html),
+                image.resolve(),
+            )
+            self.assertEqual(
+                module.resolve_content_image('https://127.0.0.1:7860/api/media/gallery/a.png', html),
+                image.resolve(),
+            )
+            secret = tmp_path / 'outputs' / '_login' / 'secret.png'
+            secret.parent.mkdir(parents=True)
+            secret.write_bytes(b'secret')
+            outside = tmp_path / 'outside.png'
+            outside.write_bytes(b'out')
+            self.assertIsNone(module.resolve_content_image('', html))
+            self.assertIsNone(module.resolve_content_image('https://cdn.example/x.png', html))
+            self.assertIsNone(module.resolve_content_image('https://cdn.example/api/media/gallery/a.png', html))
+            self.assertIsNone(module.resolve_content_image('/api/media/_login/secret.png', html))
+            self.assertIsNone(module.resolve_content_image('/api/media/../secret.png', html))
+            self.assertIsNone(module.resolve_content_image('../_login/secret.png', html))
+            self.assertIsNone(module.resolve_content_image(r'..\_login\secret.png', html))
+            self.assertIsNone(module.resolve_content_image(str(outside), html))
+            self.assertEqual(
+                module.resolve_content_image('http://127.0.0.1:7870/api/media/gallery/a.png?x=1', html),
+                image.resolve(),
+            )
+
+    def test_weixin_profile_lock_rejects_second_holder(self):
+        script = ROOT / 'skills/shared/scripts/weixin_mp_stats.py'
+        spec = importlib.util.spec_from_file_location('mp_stats_lock', script)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        with tempfile.TemporaryDirectory() as d:
+            prof = Path(d) / 'WeixinMpProfile'
+            holder = module._lock_profile(prof)
+            try:
+                with self.assertRaises(RuntimeError):
+                    module._lock_profile(prof)
+            finally:
+                module._unlock_profile(holder)
+            again = module._lock_profile(prof)
+            module._unlock_profile(again)
+
 if __name__ == '__main__':
     unittest.main()
