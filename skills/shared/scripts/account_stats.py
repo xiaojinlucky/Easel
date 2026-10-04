@@ -528,6 +528,8 @@ _XHS_NOTES_JS = """() => {
     let noteId = '';
     try { noteId = (JSON.parse(c.getAttribute('data-impression') || '{}')
                     .noteTarget || {}).value?.noteId || ''; } catch (e) {}
+    const links = [...c.querySelectorAll('a[href]')];
+    if (links.some(a => ((a.getAttribute('href') || '') + ' ' + (a.href || '')).includes('/publish/publish'))) return;
     let href = '';
     const a = c.querySelector("a[href*='xsec_token'], a[href*='/explore/'], a[href*='/item/']");
     if (a) href = a.href || '';
@@ -921,6 +923,7 @@ def cmd_selftest(_a) -> int:
     assert is_public_xhs_note({"title": "还没写完", "text": "还没写完 草稿 编辑"}) is False
     assert is_public_xhs_note({"title": "还没写完", "text": "草稿 编辑"}) is False
     assert is_public_xhs_note({"title": "有标题草稿", "href": "https://creator.xiaohongshu.com/publish/publish?id=1"}) is False
+    assert "querySelectorAll('a[href]')" in _XHS_NOTES_JS
     print("✅ selftest 通过（解析 + 概览分方向取数(修获赞bug) + 近7日环比 + 多窗口增长 + 配置/代理 + 接口token提取 + 排除草稿）")
     return 0
 
