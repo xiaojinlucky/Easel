@@ -488,6 +488,8 @@ def is_public_xhs_note(note: dict) -> bool:
     if title in _XHS_UNPUBLISHED_TITLES:
         return False
     text = note.get("text") or ""
+    if title and title in text:
+        text = text.replace(title, "", 1)
     if re.search(r"(草稿|未发布|待发布)", text) and "已发布" not in text:
         return False
     href = note.get("href") or note.get("url") or ""
@@ -520,8 +522,9 @@ _XHS_NOTES_JS = """() => {
     const titleEl = c.querySelector('.note-card__title');
     const title = (titleEl ? titleEl.textContent : '').trim().slice(0, 60);
     const text = (c.innerText || '').replace(/\\s+/g, ' ');
+    const body = title && text.indexOf(title) >= 0 ? text.replace(title, '') : text;
     if (skipTitle.has(title)) return;
-    if (/(草稿|未发布|待发布)/.test(text) && !/已发布/.test(text)) return;
+    if (/(草稿|未发布|待发布)/.test(body) && !/已发布/.test(body)) return;
     let noteId = '';
     try { noteId = (JSON.parse(c.getAttribute('data-impression') || '{}')
                     .noteTarget || {}).value?.noteId || ''; } catch (e) {}
@@ -914,6 +917,8 @@ def cmd_selftest(_a) -> int:
     assert is_public_xhs_note({"title": "GPT6 两小时速通课题答辩PPT", "text": "展示 12"})
     assert is_public_xhs_note({"title": "无笔记标题"}) is False
     assert is_public_xhs_note({"title": "(无标题)"}) is False
+    assert is_public_xhs_note({"title": "论文草稿三天改完", "text": "论文草稿三天改完 展示 12", "href": "https://www.xiaohongshu.com/explore/abc"})
+    assert is_public_xhs_note({"title": "还没写完", "text": "还没写完 草稿 编辑"}) is False
     assert is_public_xhs_note({"title": "还没写完", "text": "草稿 编辑"}) is False
     assert is_public_xhs_note({"title": "有标题草稿", "href": "https://creator.xiaohongshu.com/publish/publish?id=1"}) is False
     print("✅ selftest 通过（解析 + 概览分方向取数(修获赞bug) + 近7日环比 + 多窗口增长 + 配置/代理 + 接口token提取 + 排除草稿）")

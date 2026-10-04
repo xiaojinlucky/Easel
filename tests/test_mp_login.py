@@ -119,6 +119,24 @@ class MpLoginTests(unittest.TestCase):
                 module.resolve_content_image('http://127.0.0.1:7870/api/media/gallery/a.png?x=1', html),
                 image.resolve(),
             )
+            amped = tmp_path / 'outputs' / 'articles' / 'a&b.png'
+            amped.write_bytes(b'amp')
+            hashed = tmp_path / 'outputs' / 'articles' / '图#1.png'
+            hashed.write_bytes(b'hash')
+            self.assertEqual(module.resolve_content_image(str(amped).replace('&', '&amp;'), html), amped.resolve())
+            self.assertEqual(module.resolve_content_image('图#1.png', html), hashed.resolve())
+            self.assertEqual(module.resolve_content_image('/api/media/articles/a&amp;b.png', html), amped.resolve())
+            side = tmp_path / 'side'
+            side.mkdir()
+            fig = side / 'fig.png'
+            fig.write_bytes(b'fig')
+            side_html = side / 'note.html'
+            side_html.write_text('<p></p>', encoding='utf-8')
+            self.assertEqual(module.resolve_content_image('fig.png', side_html), fig.resolve())
+            self.assertIsNone(module.resolve_content_image('../outside.png', side_html))
+            self.assertFalse(module.image_src_must_upload('https://cdn.example/x.png'))
+            self.assertTrue(module.image_src_must_upload('fig.png'))
+            self.assertTrue(module.image_src_must_upload('/api/media/gallery/a.png'))
 
     def test_weixin_profile_lock_rejects_second_holder(self):
         script = ROOT / 'skills/shared/scripts/weixin_mp_stats.py'

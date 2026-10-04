@@ -14,6 +14,7 @@ validate_gzh_html.py（本预览页含 script/style，不参与校验）。
 """
 
 import base64
+from html import unescape
 import mimetypes
 import os
 import re
@@ -25,6 +26,10 @@ from urllib.parse import unquote
 # 否则它要回源抓 src 指向的 Easel 本地/相对地址 → 抓不到 → 图片超时/裂图。
 _IMG_SRC = re.compile(r'(<img\b[^>]*?\bsrc\s*=\s*)(["\'])(.*?)\2', re.IGNORECASE)
 _INLINE_EXT = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp"}
+_INLINE_MIME = {
+    ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+    ".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml", ".bmp": "image/bmp",
+}
 _LOCAL_MEDIA = re.compile(
     r"^(?:https?://(?:127\.0\.0\.1|localhost)(?::\d+)?)?/api/media/(.+)$",
     re.IGNORECASE,
@@ -45,28 +50,40 @@ def _contained(path, root):
     return os.path.realpath(path)
 
 
+def _src_forms(src):
+    text = unescape(unquote((src or "").strip()))
+    if not text or text.startswith("data:"):
+        return []
+    forms = [text]
+    no_query = text.split("?", 1)[0]
+    if no_query and no_query not in forms:
+        forms.append(no_query)
+    if "#" in no_query:
+        cut = no_query.split("#", 1)[0]
+        if cut and cut not in forms:
+            forms.append(cut)
+    return forms
+
+
 def _local_image(src, base_dir, outputs_root):
-    s = unquote((src or "").strip())
-    if not s or s.startswith("data:"):
-        return None
-    bare = s.split("?", 1)[0].split("#", 1)[0]
-    media = _LOCAL_MEDIA.match(bare)
-    if media:
-        parts = re.split(r"[\\/]", media.group(1))
-        if not parts or any(part in {"", ".", ".."} for part in parts):
-            return None
-        candidate = _contained(os.path.join(outputs_root, *parts), outputs_root)
-    elif bare.lower().startswith(("http://", "https://", "//")):
-        return None
-    else:
-        raw = bare if os.path.isabs(bare) else os.path.join(base_dir, bare)
-        candidate = _contained(raw, base_dir)
-    if not candidate:
-        return None
-    ext = os.path.splitext(candidate)[1].lower()
-    if ext not in _INLINE_EXT or not os.path.isfile(candidate):
-        return None
-    return candidate
+    for bare in _src_forms(src):
+        media = _LOCAL_MEDIA.match(bare)
+        if media:
+            parts = re.split(r"[\\/]", media.group(1))
+            if not parts or any(part in {"", ".", ".."} for part in parts):
+                continue
+            candidate = _contained(os.path.join(outputs_root, *parts), outputs_root)
+        elif bare.lower().startswith(("http://", "https://", "//")):
+            continue
+        else:
+            raw = bare if os.path.isabs(bare) else os.path.join(base_dir, bare)
+            candidate = _contained(raw, base_dir)
+        if not candidate:
+            continue
+        ext = os.path.splitext(candidate)[1].lower()
+        if ext in _INLINE_EXT and os.path.isfile(candidate):
+            return candidate
+    return None
 
 
 def _inline_images(html, base_dir, outputs_root=None):
@@ -84,7 +101,7 @@ def _inline_images(html, base_dir, outputs_root=None):
                 data = fh.read()
         except OSError:
             return m.group(0)
-        mime = mimetypes.guess_type(img)[0] or ("image/svg+xml" if ext == ".svg" else "image/png")
+        mime = _INLINE_MIME.get(ext) or mimetypes.guess_type(img)[0] or "image/png"
         b64 = base64.b64encode(data).decode("ascii")
         return f'{prefix}{quote}data:{mime};base64,{b64}{quote}'
     return _IMG_SRC.sub(repl, html)

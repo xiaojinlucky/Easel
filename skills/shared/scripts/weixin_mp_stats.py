@@ -13,6 +13,7 @@ mp 走直连（不经 JP 出口），避免异地安全校验。
 输出：stats 打印与 account_stats.py/bili_login.py 一致的统一 JSON dict（stdout 末行以 { 开头）。
 """
 import argparse
+from html import unescape
 import json
 import os
 import re
@@ -78,30 +79,54 @@ def _under_root(path, root):
     return Path(path).resolve()
 
 
+def _src_forms(src):
+    """HTML 转义先还原。问号是网址参数；井号只有前面那段已经是文件时才当成网址锚点。"""
+    text = unescape(unquote(str(src or "").strip()))
+    if not text or text.startswith("data:"):
+        return []
+    forms = [text]
+    no_query = text.split("?", 1)[0]
+    if no_query and no_query not in forms:
+        forms.append(no_query)
+    if "#" in no_query:
+        cut = no_query.split("#", 1)[0]
+        if cut and cut not in forms:
+            forms.append(cut)
+    return forms
+
+
+def image_src_must_upload(src):
+    """正文里的本地图、本机内容库地址必须传上去。普通外链留给公众号自己抓。"""
+    forms = _src_forms(src)
+    if not forms:
+        return False
+    form = forms[0]
+    low = form.lower()
+    if low.startswith(("http://", "https://", "//")):
+        return any(_API_MEDIA.match(item) for item in forms)
+    return True
+
+
 def resolve_content_image(src, html_path):
     """Turn preview /api/media/ or relative src into a local file, else None."""
-    src = unquote(str(src or "").strip())
-    if not src:
-        return None
-    bare = src.split("?", 1)[0].split("#", 1)[0]
-    media = _API_MEDIA.match(bare)
     outputs = PROJECT_ROOT / "outputs"
-    if media:
-        parts = Path(media.group(1)).parts
-        if not parts or any(part in {"", ".", ".."} for part in parts):
-            return None
-        candidate = _under_root(outputs.joinpath(*parts), outputs)
+    html_dir = Path(html_path).resolve().parent
+    for form in _src_forms(src):
+        media = _API_MEDIA.match(form)
+        if media:
+            parts = Path(media.group(1)).parts
+            if not parts or any(part in {"", ".", ".."} for part in parts):
+                continue
+            candidate = _under_root(outputs.joinpath(*parts), outputs)
+        elif form.lower().startswith(("http://", "https://", "//")):
+            continue
+        else:
+            raw = Path(form)
+            if not raw.is_absolute():
+                raw = html_dir / raw
+            candidate = _under_root(raw, outputs) or _under_root(raw, html_dir)
         if candidate and candidate.suffix.lower() in _IMG_OK and candidate.is_file():
             return candidate
-        return None
-    if bare.lower().startswith(("http://", "https://", "//")):
-        return None
-    raw = Path(bare)
-    if not raw.is_absolute():
-        raw = Path(html_path).resolve().parent / raw
-    candidate = _under_root(raw, outputs)
-    if candidate and candidate.suffix.lower() in _IMG_OK and candidate.is_file():
-        return candidate
     return None
 
 
@@ -657,22 +682,35 @@ def cmd_publish(a):
                 img = Path(path) if path else None
                 if img is None or not img.is_file():
                     return None
-                mime = "image/png" if img.suffix.lower() == ".png" else "image/jpeg"
+                mime = {
+                    ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+                    ".gif": "image/gif", ".webp": "image/webp", ".bmp": "image/bmp",
+                }.get(img.suffix.lower(), "image/jpeg")
                 jj = _upload_material(img, mime)
                 c = jj.get("content")
                 url = jj.get("cdn_url") or (c.get("cdn_url") if isinstance(c, dict) else None)
                 return url
 
+            missed = []
+
             def _repl(m):
                 src = m.group(1)
-                if src.startswith("http") and "/api/media/" not in src:
+                if not image_src_must_upload(src):
                     return m.group(0)
                 local = resolve_content_image(src, a.html)
                 if local is None:
+                    missed.append(src)
                     return m.group(0)
                 url = _upload_content_img(local)
-                return m.group(0).replace(src, url) if url else m.group(0)
+                if not url:
+                    missed.append(src)
+                    return m.group(0)
+                return m.group(0).replace(src, url)
             html = re.sub(r'<img[^>]*\bsrc=["\']([^"\']+)["\']', _repl, html)
+            if missed:
+                out["error"] = "正文有图片没传上，草稿没有创建"
+                print(json.dumps(out, ensure_ascii=False))
+                return 1
 
             # 2) operate_appmsg 建草稿
             op_url = (f"https://mp.weixin.qq.com/cgi-bin/operate_appmsg?t=ajax-response&sub=create&type=10"
