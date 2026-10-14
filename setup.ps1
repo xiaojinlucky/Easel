@@ -132,7 +132,40 @@ if ($onboardHelp -match '--no-install-daemon' -and $onboardHelp -notmatch '--ski
 if ($LASTEXITCODE -ne 0) { Fail 'OpenClaw profile 初始化失败，请检查上方输出。' }
 
 Info '同步 skills 与 workspace...'
-$workspace = Join-Path $HOME '.openclaw\workspace-easel'
+# workspace 目标不能写死：OpenClaw 的默认布局变过（2026.6.x 是 ~\.openclaw\workspace-easel，
+# 2026.9.x 起是 ~\.openclaw-easel\workspace）。写死其一就会在另一个版本上装到 agent 不读的
+# 目录里，而这里和 doctor 都照样报成功（issue #19）。统一问 easel\openclaw_workspace.py。
+#
+# 这段有两个 Windows 专属的坑，改动前请先看明白：
+#   1. 顶上是 $ErrorActionPreference='Stop'。此时只要对原生命令做任何 stderr 重定向
+#      （2>$null / 2>&1 / *>），PowerShell 5.1 会把 stderr 的每一行包成 ErrorRecord 抛出
+#      NativeCommandError —— 脚本级终止，下面的回退分支根本轮不到。所以这里**不重定向**，
+#      让 Python 的报错原样显示给用户，只用 $LASTEXITCODE 判成败。
+#   2. PS 5.1 按 [Console]::OutputEncoding（中文系统是 OEM 936）解码原生命令的 stdout，
+#      而 Python 那边输出的是 UTF-8（开头设了 PYTHONUTF8=1，模块里也显式 reconfigure）。
+#      路径含中文时两边对不上就是乱码。把 OutputEncoding 临时钉成 UTF-8，用完还原。
+$workspace = ''
+$prevOutEnc = [Console]::OutputEncoding
+try {
+    [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false
+    $wsOut = & $Python (Join-Path $Root 'easel\openclaw_workspace.py')
+    if ($LASTEXITCODE -eq 0) { $workspace = ($wsOut | Select-Object -Last 1) }
+} catch {
+    Write-Warning "解析 workspace 时出错：$($_.Exception.Message)"
+} finally {
+    [Console]::OutputEncoding = $prevOutEnc
+}
+$workspace = "$workspace".Trim()
+if ([string]::IsNullOrWhiteSpace($workspace)) {
+    # 走到这里说明 Python 压根没跑起来（解析器内部的逐级退化没机会执行）。先认用户的显式覆盖。
+    if ($env:EASEL_OPENCLAW_WORKSPACE) {
+        $workspace = $env:EASEL_OPENCLAW_WORKSPACE
+    } else {
+        $workspace = Join-Path $HOME '.openclaw\workspace-easel'
+    }
+    Write-Warning "无法向 openclaw 问出 workspace，回退到 $workspace；若 agent 读不到技能，请设 EASEL_OPENCLAW_WORKSPACE 后重跑。"
+}
+Info "  workspace → $workspace"
 $skills = Join-Path $workspace 'skills'
 New-Item -ItemType Directory -Force -Path $skills | Out-Null
 if (Test-Path (Join-Path $Root 'skills\openclaw')) { Copy-Item (Join-Path $Root 'skills\openclaw\*') $skills -Recurse -Force }
@@ -210,7 +243,10 @@ if strip_nulls(providers):
 # 仅当真正写了 anthropic provider 时，才补设它的 provider 级超时（见文末 timeoutSeconds）；
 # 否则会给 OpenAI/MAAS 用户凭空造出一个只有 timeoutSeconds、缺 baseUrl/models 的残缺 anthropic provider。
 $anthropicSynced = $false
-if (Is-UsableKey $envValues['OPENAI_MAAS_API_KEY'] -and $envValues.ContainsKey('OPENAI_MAAS_ENDPOINT')) {
+# 注意函数调用外面这对括号不能省：`if (Is-UsableKey $x -and $y)` 会让解析器进入命令模式，
+# 把 `-and` 当成 Is-UsableKey 的参数名（简单函数会把它静默吞进 $args），
+# 于是 ContainsKey 那半边守卫被丢掉且不报错。加括号才让 -and 回到运算符语义。
+if ((Is-UsableKey $envValues['OPENAI_MAAS_API_KEY']) -and $envValues.ContainsKey('OPENAI_MAAS_ENDPOINT')) {
     $model = if ($envValues.ContainsKey('OPENAI_MAAS_MODEL')) { $envValues['OPENAI_MAAS_MODEL'] } else { 'gpt-5.5' }
     $port = if ($envValues.ContainsKey('OPENAI_MAAS_ADAPTER_PORT')) { $envValues['OPENAI_MAAS_ADAPTER_PORT'] } else { '18791' }
     $adapter = Join-Path $Root 'scripts\openai_maas_adapter.py'
@@ -226,14 +262,14 @@ if (Is-UsableKey $envValues['OPENAI_MAAS_API_KEY'] -and $envValues.ContainsKey('
         @{ path = 'models.providers.openai.models'; value = @(@{ id = $model; name = 'OpenAI model'; reasoning = $true; input = @('text', 'image') }) },
         @{ path = 'agents.defaults.model.primary'; value = "openai/$model" }
     )
-} elseif (Is-UsableKey $envValues['EASEL_LLM_API_KEY'] -and $envValues.ContainsKey('EASEL_LLM_BASE_URL')) {
+} elseif ((Is-UsableKey $envValues['EASEL_LLM_API_KEY']) -and $envValues.ContainsKey('EASEL_LLM_BASE_URL')) {
     # 原子写入整块 provider（含 header 与 anthropic-version）；整块替换会顺带清掉旧的专用 header。
     $hdr = if ($envValues.ContainsKey('EASEL_LLM_API_KEY_HEADER')) { $envValues['EASEL_LLM_API_KEY_HEADER'] } else { 'api-key' }
     $ver = if ($envValues.ContainsKey('EASEL_LLM_ANTHROPIC_VERSION')) { $envValues['EASEL_LLM_ANTHROPIC_VERSION'] } else { '2023-06-01' }
     Write-AnthropicProvider $envValues['EASEL_LLM_BASE_URL'] $envValues['EASEL_LLM_API_KEY'] $hdr $ver
     $anthropicSynced = $true
     OpenClaw-Config 'agents.defaults.model.primary' $(if ($envValues.ContainsKey('CLAUDE_MODEL')) { $envValues['CLAUDE_MODEL'] } else { 'anthropic/claude-sonnet-4-6' })
-} elseif (Is-UsableKey $envValues['ANTHROPIC_AUTH_TOKEN'] -and $envValues.ContainsKey('ANTHROPIC_BASE_URL')) {
+} elseif ((Is-UsableKey $envValues['ANTHROPIC_AUTH_TOKEN']) -and $envValues.ContainsKey('ANTHROPIC_BASE_URL')) {
     Write-AnthropicProvider $envValues['ANTHROPIC_BASE_URL'] $envValues['ANTHROPIC_AUTH_TOKEN'] '' ''
     $anthropicSynced = $true
     OpenClaw-Config 'agents.defaults.model.primary' $(if ($envValues.ContainsKey('CLAUDE_MODEL')) { $envValues['CLAUDE_MODEL'] } else { 'anthropic/claude-sonnet-4-6' })
@@ -270,6 +306,13 @@ if ($embeddingKey -and $embeddingUrl -and $embeddingModel) {
     if (($embeddingKeyNames + $embeddingUrlNames + $embeddingModelNames | Where-Object { $envValues.ContainsKey($_) }).Count -gt 0) { Write-Warning '向量 API 配置不完整，已关闭向量检索；需要同时设置向量 API key、Base URL 和模型名' } else { Info '未配置独立向量 API，使用关键词记忆检索' }
 }
 OpenClaw-Config 'agents.defaults.timeoutSeconds' '7200'; OpenClaw-Config 'gateway.mode' 'local'; OpenClaw-Config 'gateway.bind' 'loopback'; OpenClaw-Config 'gateway.auth.mode' 'none'
+# 对话直连常驻网关（web/app.py 的 http 传输层）要用 OpenAI 兼容端点，而 openclaw 默认不挂这条
+# 路由（chatCompletions.enabled 默认 false），不开则 POST /v1/chat/completions 一律 404、只能
+# 退回每轮 spawn 客户端的老路径。端点只绑 loopback + auth.mode=none 的本机网关，不扩暴露面。
+# 走尽力而为版：老版本没这个 key 时只是拿不到提速，不该让整个安装失败。
+if (-not (Try-OpenClawConfig 'gateway.http.endpoints.chatCompletions.enabled' 'true' -Json)) {
+    Info '当前 OpenClaw 不支持 chatCompletions 端点，对话将走每轮启动客户端的兼容路径（可用，只是每轮慢几秒）'
+}
 # 单次 LLM 请求的「空闲超时」。尽力而为：老版本 OpenClaw（如 2026.3.x）的 provider schema 不认识
 # timeoutSeconds，会报 Unrecognized key 并拒绝写入。这里吞掉这条噪音、绝不让它中断安装；
 # 新版本 OpenClaw 才会真正把它调到 600s。想彻底拿到更长超时，请 npm i -g openclaw@latest 升级。

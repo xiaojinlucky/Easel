@@ -1,0 +1,39 @@
+/* 资产库（对齐 Beav 的资产库页面形态：左侧分类栏 + 右侧卡片网格） */
+.asset-toolbar{display:flex;align-items:center;gap:12px;margin:18px 0 20px;flex-wrap:wrap}
+.asset-search{display:flex;align-items:center;gap:9px;flex:1;min-width:260px;border:1px solid var(--border);border-radius:10px;background:white;padding:0 12px;height:40px;color:var(--text-secondary)}
+.asset-search input{border:0;outline:0;flex:1;font:inherit;font-size:13px;background:transparent;color:var(--text);height:100%}
+.asset-search kbd{border:1px solid var(--border);border-radius:5px;padding:2px 6px;font-size:10px;color:var(--text-tertiary);font-family:inherit}
+.asset-toolbar select{border:1px solid var(--border);border-radius:9px;background:white;padding:10px 12px;font:inherit;font-size:13px;color:var(--text)}
+.asset-layout{display:grid;grid-template-columns:170px 1fr;gap:24px;align-items:start}
+.asset-rail{display:flex;flex-direction:column;gap:4px;position:sticky;top:0}
+.asset-rail-item{display:flex;align-items:center;justify-content:space-between;gap:8px;border:0;background:transparent;padding:9px 12px;border-radius:9px;font:inherit;font-size:13px;color:var(--text-secondary);cursor:pointer;text-align:left}
+.asset-rail-item:hover{background:var(--surface-2);color:var(--text)}
+.asset-rail-item.active{background:#edf6f7;color:#14727d;font-weight:600}
+.asset-rail-item b{font-size:11px;font-weight:600;color:var(--text-tertiary)}
+.asset-rail-item.active b{color:#14727d}
+.asset-grid-wrap{min-width:0}
+.asset-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:16px}
+.asset-card{border:1px solid var(--border);border-radius:14px;background:white;overflow:hidden;transition:border-color .15s,box-shadow .15s}
+.asset-card:hover{border-color:var(--border-strong);box-shadow:0 4px 16px rgba(20,60,80,.07)}
+.asset-card-main{display:block;width:100%;border:0;background:transparent;padding:0;text-align:left;cursor:pointer;font:inherit;color:inherit}
+.asset-cover{height:112px;background:var(--surface-2);display:flex;align-items:center;justify-content:center;overflow:hidden}
+.asset-cover img{width:100%;height:100%;object-fit:cover;display:block}
+.asset-cover-empty{color:#14727d;font-size:22px;font-weight:600;letter-spacing:1px;background:linear-gradient(135deg,#eff9f8,#e6f3f4)}
+.asset-card-body{padding:13px 15px 15px}
+.asset-card-top{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
+.asset-card-top h4{margin:0;font-size:14px;line-height:1.45;word-break:break-word}
+.asset-type{flex-shrink:0;font-size:10px;border:1px solid #bddbdc;background:#eff9f8;color:#287476;border-radius:999px;padding:2px 8px;white-space:nowrap}
+.asset-category{display:inline-block;margin-top:7px;font-size:11px;color:var(--text-secondary);background:var(--surface-2);border-radius:5px;padding:2px 7px}
+.asset-category.muted{color:var(--text-tertiary);background:transparent;border:1px dashed var(--border)}
+.asset-card-body p{margin:9px 0 0;font-size:12px;line-height:1.7;color:var(--text-secondary)}
+.asset-tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.asset-tags span{font-size:11px;color:#217d8a}
+.asset-tags span.alias{color:var(--text-tertiary)}
+.asset-editor{width:560px;max-width:100%}
+.asset-editor-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.asset-editor-head h3{font-size:17px}
+.asset-form{display:flex;flex-direction:column;gap:13px;margin:14px 0 18px}
+.asset-form label{display:flex;flex-direction:column;gap:7px;font-size:12px;font-weight:600;color:var(--text-secondary)}
+.asset-form input,.asset-form select,.asset-form textarea{border:1px solid var(--border);border-radius:8px;padding:10px 11px;font:inherit;font-size:13px;background:white;color:var(--text);font-weight:400}
+.asset-form textarea{resize:vertical;line-height:1.8}
+.asset-form-row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:11px}

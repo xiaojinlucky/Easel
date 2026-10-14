@@ -5,10 +5,10 @@ import type { ComponentType } from 'react';
 import {
   IconChat, IconSkills, IconOutputs, IconAccounts, IconProfile,
   IconNewChat, IconEdit, IconArchive, IconUnarchive, IconTrash, IconChevron,
-  IconDashboard, IconWorkflow, IconSettings, IconResearch,
+  IconDashboard, IconWorkflow, IconSettings, IconResearch, IconLayers, IconCompass, IconSearch,
 } from './icons';
 
-export type Page = 'dashboard' | 'chat' | 'trends' | 'ideas' | 'calendar' | 'publish' | 'breakdown' | 'skills' | 'workflows' | 'outputs' | 'accounts' | 'profile' | 'model-settings' | 'research';
+export type Page = 'dashboard' | 'chat' | 'trends' | 'ideas' | 'calendar' | 'publish' | 'breakdown' | 'skills' | 'workflows' | 'outputs' | 'accounts' | 'profile' | 'model-settings' | 'research' | 'assets' | 'topics' | 'watch';
 
 interface SidebarProps {
   currentPage: Page;
@@ -28,15 +28,17 @@ interface SidebarProps {
   gatewayStatus: string;
 }
 
-// 主导航（精简）；热点雷达/选题库/内容日历/发布中心 收进「工作台」，不占侧栏
 const NAV: { page: Page; Icon: ComponentType<{ size?: number }>; label: string }[] = [
   { page: 'dashboard', Icon: IconDashboard, label: '工作台' },
   { page: 'chat', Icon: IconChat, label: '对话' },
-  { page: 'research', Icon: IconResearch, label: '调研' },
+  { page: 'research', Icon: IconResearch, label: '知识库' },
+  { page: 'assets', Icon: IconLayers, label: '资产库' },
+  { page: 'topics', Icon: IconCompass, label: '灵感漫步' },
   { page: 'skills', Icon: IconSkills, label: '技能库' },
   { page: 'workflows', Icon: IconWorkflow, label: '工作流' },
   { page: 'outputs', Icon: IconOutputs, label: '内容库' },
   { page: 'accounts', Icon: IconAccounts, label: '账号' },
+  { page: 'watch', Icon: IconSearch, label: '盯账号' },
   { page: 'profile', Icon: IconProfile, label: '画像' },
   { page: 'model-settings', Icon: IconSettings, label: 'AI 模型设置' },
 ];
@@ -172,11 +174,11 @@ export default function Sidebar({
       <div className="sidebar-status">
         <span className={`status-dot ${gatewayStatus === 'connected' ? '' : 'offline'}`} />
         {gatewayStatus === 'connected'
-          ? '网关已连接'
+          ? '对话可用'
           : gatewayStatus === 'disconnected'
-            ? '网关离线'
-            : '连接中…'}
-        <span style={{ marginLeft: 'auto', fontSize: 14, color: 'var(--text-tertiary)' }}>subnav-1</span>
+            ? '对话暂时不可用'
+            : '正在连接…'}
+
       </div>
     </div>
   );

@@ -352,6 +352,36 @@ def check_all(python: str, dir_: str | None = None, only: list[str] | None = Non
     return out
 
 
+# 读改写整个在一次 PowerShell 里做完：既避免读/写之间的竞态，也保证类型不被降级。
+# 不能用 [Environment]::GetEnvironmentVariable('Path','User')：它读 REG_EXPAND_SZ 时会把
+# %USERPROFILE% 这类引用**展开**成字面路径；而 SetEnvironmentVariable 写回是 REG_SZ。
+# 两者一合，用户 PATH 里原有的间接引用就被永久压平、值类型也降级了（换机器/漫游配置即失效）。
+# 这里用 DoNotExpandEnvironmentNames 取原值，写回时沿用原来的 ValueKind。
+# 代价：不再广播 WM_SETTINGCHANGE，已开着的 Explorer/终端看不到更新 —— 与调用方
+# 「新进程生效」的提示一致，新开的终端启动时直接读注册表，不受影响。
+_PS_APPEND_USER_PATH = r"""
+$ErrorActionPreference = 'Stop'
+$key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
+if ($null -eq $key) { exit 2 }
+try {
+    if ($key.GetValueNames() -contains 'Path') {
+        $raw  = [string]$key.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+        $kind = $key.GetValueKind('Path')
+    } else {
+        $raw  = ''
+        $kind = [Microsoft.Win32.RegistryValueKind]::ExpandString
+    }
+    $want = $env:EASEL_NEW_DIR.TrimEnd('\', '/')
+    foreach ($p in ($raw -split ';')) {
+        if ($p -and $p.TrimEnd('\', '/') -eq $want) { exit 3 }
+    }
+    $sep = if ($raw -and -not $raw.EndsWith(';')) { ';' } else { '' }
+    $key.SetValue('Path', ($raw + $sep + $env:EASEL_NEW_DIR), $kind)
+    exit 0
+} finally { $key.Close() }
+"""
+
+
 def _ensure_user_path(d: str) -> str:
     """把目录追加进用户 PATH（幂等）。返回 changed | present | fail | skip。
 
@@ -362,23 +392,13 @@ def _ensure_user_path(d: str) -> str:
         return "skip"
     ps = shutil.which("powershell") or "powershell"
     try:
-        cur = subprocess.run(
-            [ps, "-NoProfile", "-Command",
-             "[Environment]::GetEnvironmentVariable('Path','User')"],
-            capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=60).stdout.strip()
-        parts = [p.rstrip("\\/") for p in cur.split(";") if p]
-        if any(os.path.normcase(p) == os.path.normcase(d.rstrip("\\/")) for p in parts):
-            return "present"
-        new = (cur + ";" if cur and not cur.endswith(";") else cur) + d
-        # 新值走子进程环境变量递过去，绝不拼进命令串：PATH 里只要有一个单引号，
+        # 目录走子进程环境变量递过去，绝不拼进脚本串：PATH 里只要有一个单引号，
         # 拼串写法就会截断字面量、后半截被当 PowerShell 代码执行
         proc = subprocess.run(
-            [ps, "-NoProfile", "-Command",
-             "[Environment]::SetEnvironmentVariable('Path', $env:EASEL_NEW_PATH, 'User')"],
+            [ps, "-NoProfile", "-Command", _PS_APPEND_USER_PATH],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=60, env={**os.environ, "EASEL_NEW_PATH": new})
-        return "changed" if proc.returncode == 0 else "fail"
+            timeout=60, env={**os.environ, "EASEL_NEW_DIR": d})
+        return {0: "changed", 3: "present"}.get(proc.returncode, "fail")
     except Exception:  # noqa: BLE001
         return "fail"
 
@@ -537,6 +557,16 @@ def cmd_selftest(_a) -> int:
 
 
 def main() -> int:
+    # 输出里全是中文。Windows 上 stdout 一旦是管道（被面板/agent 捕获），Python 就按
+    # 系统 locale 编码（cp936/cp1252）写，配方表里的中文直接 UnicodeEncodeError 崩掉，
+    # stdout 一个字节都不出 —— 调用方拿到空串，只会以为「配方表是空的」。
+    # 面板的安装接口就是这么被整条废掉的：id 白名单永远为空，装什么都报「无效的工具 id」。
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):  # 被重定向成非 TextIOWrapper 时忽略
+            pass
+
     ap = argparse.ArgumentParser(
         description="环境工具一键安装器（检测 → 一键装 → 装后校验）",
         formatter_class=argparse.RawDescriptionHelpFormatter)

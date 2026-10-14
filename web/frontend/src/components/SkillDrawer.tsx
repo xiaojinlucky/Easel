@@ -88,14 +88,13 @@ export default function SkillDrawer({ skillName, persona, onClose, onConfigured,
         <div className="drawer-header">
           <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
             <div>
-              <div className="skill-detail-title">{detail ? skillSummary(detail) : skillName}</div>
-              <div className="skill-card-slug" style={{ marginTop: 4 }}>{skillName}</div>
+              <div className="skill-detail-title">{detail ? skillSummary(detail) : '这个技能'}</div>
               <div className="skill-detail-meta">
                 {detail?.layer && <span className="badge badge-accent">{layerLabel(detail.layer) || detail.layer}</span>}
                 {detail?.needsApi && (
                   detail.apiConfigured
                     ? <span className="badge badge-ok">✓ 已配置</span>
-                    : <span className="badge badge-warn">❗ 需配置 API</span>
+                    : <span className="badge badge-warn">需要先填密钥</span>
                 )}
               </div>
             </div>
@@ -109,9 +108,9 @@ export default function SkillDrawer({ skillName, persona, onClose, onConfigured,
           {/* API 配置 */}
           {detail?.needsApi && detail.apiSpec && (
             <div className="panel">
-              <div className="panel-title">🔑 {detail.apiSpec.label} · API 配置
+              <div className="panel-title">{detail.apiSpec.label}
                 <span style={{ fontWeight: 400, color: 'var(--text-secondary)', fontSize: 14 }}>
-                  （任选一个服务商填齐即可用）
+                  （选一个服务填齐就能用）
                 </span>
               </div>
               {detail.apiSpec.settings.length > 0 && (
@@ -131,14 +130,14 @@ export default function SkillDrawer({ skillName, persona, onClose, onConfigured,
                           value={envInputs[k.env] ?? ''}
                           onChange={(e) => setEnvInputs((p) => ({ ...p, [k.env]: e.target.value }))}
                         >
-                          <option value="">{k.configured ? `当前：${k.masked}` : `请选择 ${k.env}`}</option>
+                          <option value="">{k.configured ? `当前：${k.masked}` : `请选择${k.label}`}</option>
                           {k.choices.map((choice) => <option key={choice} value={choice}>{choice}</option>)}
                         </select>
                       ) : (
                         <input
                           className="field"
                           type={k.secret ? 'password' : 'text'}
-                          placeholder={k.configured ? '留空则保持不变，输入以覆盖' : `请输入 ${k.env}`}
+                          placeholder={k.configured ? '不改就留空' : `填写${k.label}`}
                           value={envInputs[k.env] || ''}
                           onChange={(e) => setEnvInputs((p) => ({ ...p, [k.env]: e.target.value }))}
                         />
@@ -168,14 +167,14 @@ export default function SkillDrawer({ skillName, persona, onClose, onConfigured,
                         {k.choices.length > 0 ? (
                           <select className="field" value={envInputs[k.env] ?? ''}
                             onChange={(e) => setEnvInputs((p) => ({ ...p, [k.env]: e.target.value }))}>
-                            <option value="">{k.configured ? `当前：${k.masked}` : `请选择 ${k.env}`}</option>
+                            <option value="">{k.configured ? `当前：${k.masked}` : `请选择${k.label}`}</option>
                             {k.choices.map((choice) => <option key={choice} value={choice}>{choice}</option>)}
                           </select>
                         ) : (
                           <input
                             className="field"
                             type={k.secret ? 'password' : 'text'}
-                            placeholder={k.configured ? '留空则保持不变，输入以覆盖' : `请输入 ${k.env}`}
+                            placeholder={k.configured ? '不改就留空' : `填写${k.label}`}
                             value={envInputs[k.env] || ''}
                             onChange={(e) => setEnvInputs((p) => ({ ...p, [k.env]: e.target.value }))}
                           />
@@ -187,7 +186,7 @@ export default function SkillDrawer({ skillName, persona, onClose, onConfigured,
               })}
               <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 8 }}>
                 <button className="btn btn-primary btn-sm" onClick={handleSaveEnv} disabled={saving}>
-                  {saving ? '保存中…' : '保存到 .env'}
+                  {saving ? '保存中…' : '保存'}
                 </button>
                 {savedMsg && <span style={{ fontSize: 14, color: savedMsg.includes('✓') ? 'var(--green)' : 'var(--text-secondary)' }}>{savedMsg}</span>}
               </div>
@@ -199,7 +198,7 @@ export default function SkillDrawer({ skillName, persona, onClose, onConfigured,
             <div className="panel-title">▶ 运行</div>
             {blocked && (
               <div style={{ fontSize: 14, color: 'var(--amber)', marginBottom: 10 }}>
-                该 SKILL 需要先配置上面的 API 才能运行。
+                先把上面的密钥填好，这个技能才能用。
               </div>
             )}
             <textarea
@@ -215,7 +214,7 @@ export default function SkillDrawer({ skillName, persona, onClose, onConfigured,
                   className="btn btn-primary"
                   type="button"
                   onClick={() => {
-                    const text = input.trim() || `请执行 /${skillName}`;
+                    const text = input.trim() || `请用「${detail ? skillSummary(detail) : '这个技能'}」处理我接下来要说的内容`;
                     onDraftToChat(text, detail?.layer, skillName);
                     onClose();
                   }}
@@ -226,7 +225,7 @@ export default function SkillDrawer({ skillName, persona, onClose, onConfigured,
               <button className="btn" onClick={handleRun} disabled={running || !input.trim() || blocked}>
                 {running
                   ? <><span className="spinner" style={{ width: 14, height: 14, margin: 0 }} />执行中…</>
-                  : '就地执行'}
+                  : '在这里试一次'}
               </button>
             </div>
             {runErr && <div style={{ color: 'var(--red)', fontSize: 14, marginTop: 10 }}>{runErr}</div>}

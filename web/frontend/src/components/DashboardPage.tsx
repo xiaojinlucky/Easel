@@ -11,7 +11,7 @@ import type { Page } from './Sidebar';
 import { getWhoamiCache, verifyStale } from '../lib/whoami';
 import {
   IconFire, IconCalendar, IconOutputs, IconChat, IconSkills, IconAccounts,
-  IconIdea, IconPublish, IconWorkflow,
+  IconIdea, IconPublish, IconWorkflow, IconSearch,
 } from './icons';
 
 /** 大数格式化：12000 → 1.2万。 */
@@ -116,6 +116,7 @@ export default function DashboardPage({ persona, gatewayStatus, onNavigate, onUs
   const loggedIn = accounts.filter((a) => a.loggedIn).length;
 
   const quick: { label: string; page: Page; Icon: typeof IconChat }[] = [
+    { label: '盯账号', page: 'watch', Icon: IconSearch },
     { label: '开始对话', page: 'chat', Icon: IconChat },
     { label: '看热点', page: 'trends', Icon: IconFire },
     { label: '拆爆款', page: 'breakdown', Icon: IconSkills },
@@ -222,7 +223,7 @@ export default function DashboardPage({ persona, gatewayStatus, onNavigate, onUs
           {recent.map((g) => (
             <div key={g.name} className="dash-output" onClick={() => onNavigate('outputs')}>
               <span className="dash-output-name">{g.meta?.title || g.name}</span>
-              <span className="badge">{g.meta?.platform || (g.type === 'dir' ? `${g.fileCount ?? 0} 文件` : '单文件')}</span>
+              <span className="badge">{g.meta?.platform || (g.type === 'dir' ? '一组内容' : '一条内容')}</span>
             </div>
           ))}
         </div>

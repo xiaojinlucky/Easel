@@ -78,6 +78,11 @@ def save(data: dict) -> dict:
         "nodes": [_normalize_node(n) for n in nodes],
         "edges": [_normalize_edge(e) for e in edges],
     }
+    if "note" in data:
+        note = data.get("note")
+        if not isinstance(note, str):
+            raise ValueError("备注必须是一段文字。")
+        graph["note"] = note
     errors = validate(graph, for_run=False)
     if errors:
         raise ValueError("；".join(errors))

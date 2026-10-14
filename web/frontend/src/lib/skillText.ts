@@ -3,13 +3,13 @@ export const LAYER_ZH: Record<string, string> = {
   plan: '策划',
   produce: '制作',
   publish: '发布',
-  attribute: '归因',
+  attribute: '复盘',
   general: '基础',
 };
 
 export function layerLabel(layer?: string): string {
   if (!layer) return '';
-  return LAYER_ZH[layer] || layer;
+  return LAYER_ZH[layer] || '其他';
 }
 
 export function skillSummary(s: { name: string; summary?: string; description?: string }): string {

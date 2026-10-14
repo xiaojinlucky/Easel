@@ -4,7 +4,7 @@ import { fetchOutputs, fetchOutputContent, mediaUrl, deleteOutput } from '../lib
 import type { OutputNode, OutputMeta } from '../lib/api';
 import { renderMarkdown } from '../lib/sanitize';
 import { IconOutputs, IconImage, IconVideo, IconMusic, IconFile, IconFolder, IconRefresh, IconChevron, IconTrash } from './icons';
-import WorkflowDraftBar from './WorkflowDraftBar';
+
 
 const FILTERS: { key: string; label: string }[] = [
   { key: 'all', label: '全部' },
@@ -74,11 +74,7 @@ function Thumb({ f, big }: { f: OutputNode | null; big?: boolean }) {
   return <div className="gcard-ph">{kindIcon(f?.kind, big ? 34 : 30)}</div>;
 }
 
-export default function OutputsPage({
-  onDraftToChat,
-}: {
-  onDraftToChat?: (text: string, stage?: string, skill?: string, workflowId?: string) => void;
-}) {
+export default function OutputsPage() {
   const [roots, setRoots] = useState<OutputNode[]>([]);
   const [treeError, setTreeError] = useState('');
   const [stack, setStack] = useState<string[]>([]);   // 当前所在的文件夹名称路径
@@ -90,7 +86,7 @@ export default function OutputsPage({
 
   const load = useCallback(() => {
     setTreeError('');
-    fetchOutputs().then(setRoots).catch(() => setTreeError('加载产物列表失败'));
+    fetchOutputs().then(setRoots).catch(() => setTreeError('没有打开'));
   }, []);
   useEffect(() => { load(); }, [load]);
 
@@ -125,15 +121,14 @@ export default function OutputsPage({
 
   const remove = useCallback(async (node: OutputNode, e: React.MouseEvent) => {
     e.stopPropagation();
-    const isDir = node.type === 'dir';
-    const label = isDir ? `项目/文件夹「${node.meta?.title || node.name}」及其全部内容` : `文件「${node.name}」`;
-    if (!window.confirm(`确定删除${label}？\n此操作不可恢复。`)) return;
+    const label = node.meta?.title || node.name;
+    if (!window.confirm(`删除「${label}」？`)) return;
     try {
       await deleteOutput(node.path);
       setSelected((cur) => (cur?.path === node.path ? null : cur));
       load();
-    } catch (err) {
-      alert((err as Error).message || '删除失败');
+    } catch {
+      alert('没删掉');
     }
   }, [load]);
 
@@ -157,7 +152,7 @@ export default function OutputsPage({
     if (selected.kind === 'audio') return <audio src={url} controls style={{ width: '100%' }} />;
     if (selected.kind === 'text' && isHtml(selected.name)) return (
       <>
-        <iframe src={url} title={selected.name} sandbox=""
+        <iframe src={`${url}?v=${selected.mtime ?? 0}`} title={selected.name} sandbox="allow-scripts" allow="clipboard-write"
           style={{ width: '100%', height: '68vh', border: '1px solid var(--border)', borderRadius: 'var(--radius)', background: '#fff' }} />
         <div style={{ marginTop: 8 }}><a href={url} target="_blank" rel="noreferrer" style={{ color: 'var(--accent-start)', fontSize: 14 }}>在新标签打开 ↗</a></div>
       </>
@@ -176,7 +171,7 @@ export default function OutputsPage({
     return (
       <div key={d.path} className="card card-hover gcard" onClick={() => enterDir(d.name)}>
         <div className="gcard-thumb">
-          <span className="gcard-kind">{m?.kind ? (KIND_LABEL[m.kind] || m.kind) : '文件夹'}</span>
+          <span className="gcard-kind">{m?.kind ? (KIND_LABEL[m.kind] || '') : ''}</span>
           <button className="gcard-del" title="删除" onClick={(e) => remove(d, e)}><IconTrash size={14} /></button>
           {cover ? <Thumb f={cover} big /> : <div className="gcard-ph"><IconFolder size={38} /></div>}
         </div>
@@ -187,7 +182,7 @@ export default function OutputsPage({
           <div className="gcard-sub" style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
             {m?.platform && <span style={badge}>{m.platform}</span>}
             {m?.status && <span style={statusBadge(m.status)}>{STATUS_LABEL[m.status] || m.status}</span>}
-            <span>{d.fileCount ?? 0} 个文件</span>
+            <span>{d.fileCount ?? 0}</span>
           </div>
         </div>
       </div>
@@ -225,19 +220,8 @@ export default function OutputsPage({
               </span>
             ))}
           </h1>
-          <p className="page-subtitle">
-            {atTop
-              ? `按项目归档，共 ${roots.length} 个项目。点项目进去看成品与素材。`
-              : `${dirs.length} 个文件夹 · ${files.length} 个文件（可继续点开子文件夹）`}
-          </p>
         </div>
         <div className="gallery-head-actions">
-          {stack.length > 0 && (
-            <WorkflowDraftBar
-              context={`处理内容库项目「${projectMeta?.title || stack[0] || '当前目录'}」。`}
-              onDraftToChat={onDraftToChat}
-            />
-          )}
           <button className="btn btn-sm" onClick={load}><IconRefresh size={14} /> 刷新</button>
         </div>
       </div>
@@ -266,7 +250,7 @@ export default function OutputsPage({
       {empty && !treeError ? (
         <div className="empty-state" style={{ height: 300 }}>
           <div className="empty-icon"><IconOutputs size={44} /></div>
-          <p>{atTop ? '还没有产物——去对话或技能库生成第一条内容吧' : '这个文件夹是空的'}</p>
+          <p>{atTop ? '还没有内容' : '空的'}</p>
         </div>
       ) : hasSplit ? (
         <>
@@ -283,7 +267,7 @@ export default function OutputsPage({
           {(dirs.length > 0 || restFiles.length > 0) && (
             <>
               <div className="section-label" style={{ margin: '18px 0 8px', fontSize: 14, fontWeight: 600, color: 'var(--text-tertiary)' }}>
-                素材 / 过程文件
+                其他
               </div>
               <div className="gallery-grid">
                 {dirs.map(renderDir)}
@@ -305,13 +289,12 @@ export default function OutputsPage({
             <div className="drawer-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <div style={{ minWidth: 0 }}>
                 <div className="skill-detail-title" style={{ fontSize: 16 }}>{selected.name}</div>
-                <div style={{ fontSize: 14, color: 'var(--text-tertiary)', marginTop: 3, fontFamily: "'SF Mono','Consolas',monospace" }}>{selected.path}</div>
               </div>
               <button className="icon-btn" onClick={() => setSelected(null)}>×</button>
             </div>
             <div className="drawer-body">{preview()}</div>
             <div style={{ padding: '10px 16px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-end' }}>
-              <button className="btn btn-sm btn-danger" onClick={(e) => remove(selected, e)}><IconTrash size={13} /> 删除此文件</button>
+              <button className="btn btn-sm btn-danger" onClick={(e) => remove(selected, e)}><IconTrash size={13} /> 删除</button>
             </div>
           </div>
         </div>

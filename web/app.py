@@ -95,9 +95,10 @@ OPENCLAW_PROFILE = PROFILE
 # agents.defaults/workspace 与 cwd 都指向 ~/.openclaw/workspace-easel（junction → G:\EaselData）。
 # 因此不能写成 f"workspace-{OPENCLAW_PROFILE}" —— 那个目录不存在。
 OPENCLAW_WORKSPACE = Path.home() / ".openclaw" / "workspace-easel"
-# 对话传输层：cli=每轮 spawn `openclaw agent`（默认，久经考验）；http=直连常驻 gateway 的
-# OpenAI 兼容端点（省掉每轮 6-7s 冷启动）。默认保持 cli —— http 路径目前还不具备 CLI 路径的
-# 几项保证（见 _run_gateway_turn 上方说明），想提速的部署显式设 EASEL_CHAT_TRANSPORT=http 开启。
+# 对话传输层：cli＝每轮 spawn（默认）；http＝直连常驻网关，省掉冷启动。
+# 上游默认改成了 http，并用「有没有 uuid5 的 jsonl」判断旧会话。
+# 本机旧对话在 sqlite 里，那个 jsonl 不存在，默认 http 会在端点打开后把旧对话带上另一套模型。
+# 所以这里仍默认 cli。要提速再设 EASEL_CHAT_TRANSPORT=http。一旦某会话在 http 上完整答完，就钉住，不中途换边。
 CHAT_TRANSPORT = os.environ.get("EASEL_CHAT_TRANSPORT", "cli").strip().lower()
 # OpenClaw 会话历史（transcript）目录：<profile 配置目录>/agents/main/sessions/<session-id>.jsonl
 OPENCLAW_SESSIONS_DIR = Path.home() / f".openclaw-{OPENCLAW_PROFILE}" / "agents" / "main" / "sessions"
@@ -151,21 +152,34 @@ class _GatewayHttpProc:
         return 0
 
 
-def _gateway_http_ready() -> bool:
-    """探测 gateway 的 OpenAI 兼容端点是否可用（不可用则自动回退 CLI 路径）。
+_HTTP_READY_CACHE: dict = {"at": -1e9, "ok": False}
+_HTTP_READY_TTL = 60.0
 
-    需要 openclaw 侧开启 gateway.http.endpoints.chatCompletions。
+
+def _gateway_http_ready(force: bool = False) -> bool:
+    """探测 /v1/chat/completions 是否真的挂上。
+
+    不能探 /v1/models：网关页面的兜底路由没开端点也会返回 200。
+    空 body 打真端点，开了返回 400，没开是 404。不消耗一次模型调用。
     """
+    now = time.monotonic()
+    if not force and now - _HTTP_READY_CACHE["at"] < _HTTP_READY_TTL:
+        return bool(_HTTP_READY_CACHE["ok"])
+    ok = False
     try:
         import httpx  # noqa: F401  HTTP 路径全靠它做 SSE；没装就当端点不可用，回退 CLI
-    except ImportError:
-        return False
-    try:
-        rq = urllib.request.Request("http://127.0.0.1:18789/v1/models")
-        with urllib.request.urlopen(rq, timeout=2) as resp:
-            return resp.status == 200
+        rq = urllib.request.Request(
+            "http://127.0.0.1:18789/v1/chat/completions", data=b"{}",
+            headers={"Content-Type": "application/json"}, method="POST")
+        try:
+            with urllib.request.urlopen(rq, timeout=3):
+                ok = False
+        except urllib.error.HTTPError as e:
+            ok = e.code == 400
     except Exception:  # noqa: BLE001
-        return False
+        ok = False
+    _HTTP_READY_CACHE.update(at=now, ok=ok)
+    return ok
 
 
 def _heal_openclaw_session(sk: str) -> None:
@@ -462,9 +476,12 @@ app.add_middleware(TrustedHostMiddleware, allowed_hosts=['localhost', '127.0.0.1
 # settings_router 用文件顶部导入的 easel.model_settings_api（换型号才再验证的实现），
 # 这里不再从 web.settings_api 覆盖同名变量——上游那份没有 determined_models()。
 from web.research_api import router as research_router
+from web.assets_api import router as assets_router
+from web.topics_api import router as topics_router
 from web.clipper_api import router as clipper_router
 from web.capabilities_api import router as capabilities_router
 from web.account_profile_api import router as account_profile_router
+from web.watch_api import router as watch_router
 from web.publishing_api import router as publishing_router
 from web.wechat_api import router as wechat_router
 from web.wechat_monitor_api import router as wechat_monitor_router
@@ -477,9 +494,12 @@ app.include_router(platform_registry_router)
 app.include_router(publishing_router)
 app.include_router(settings_router)
 app.include_router(research_router)
+app.include_router(assets_router)
+app.include_router(topics_router)
 app.include_router(clipper_router)
 app.include_router(capabilities_router)
 app.include_router(account_profile_router)
+app.include_router(watch_router)
 
 
 @app.middleware('http')
@@ -740,14 +760,31 @@ def _skill_api_configured(skill: str, env: dict[str, str] | None = None) -> bool
     return False
 
 
+_ENV_VALUE_OK = re.compile(r'[A-Za-z0-9_.:/+\-=~,%?#\[\]]*')
+
+
 def _guard_env_values(updates: dict[str, str]) -> None:
-    """集中拦截 .env 值注入：值里带换行就能往 .env 追加任意行，而 setup.sh 会 `source .env`
-    —— 那等于任何能调到写 .env 接口的人都能执行命令。键名同理。两个写入口都必须先过这道。"""
+    """拦住 .env 注入。换行能追加任意行；$(…) 和分号能在 source .env 时执行命令。
+
+    这里只写密钥、地址、模型名和端口，不需要空格或外壳元字符。
+    """
     for k, v in updates.items():
         if any(c in (k or '') for c in '\r\n=') or not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', k or ''):
             raise HTTPException(400, f'非法的配置键名：{(k or "")[:40]!r}')
-        if any(c in (v or '') for c in '\r\n\x00'):
+        v = v or ''
+        if any(c in v for c in '\r\n\x00'):
             raise HTTPException(400, f'配置值不能包含换行符：{k}')
+        if not _ENV_VALUE_OK.fullmatch(v):
+            bad = ''.join(sorted({c for c in v if not _ENV_VALUE_OK.fullmatch(c)}))
+            raise HTTPException(400, f'配置值含不允许的字符（{bad!r}）：{k}')
+
+
+def _is_local_gateway_base(url: str) -> bool:
+    """供应商是不是挂在本机模型网关 127.0.0.1:8890 上。
+
+    网关模式下配置里的地址和面板回传的上游地址天生不同，不能当成「换了地址」。
+    """
+    return str(url or '').startswith('http://127.0.0.1:8890')
 
 
 # 设置面板里「改了 Base URL 就必须重填 Key」要比对的 .env 键位（槽位 → (base 键, key 键)）。
@@ -1550,7 +1587,7 @@ def _sync_openclaw_chat(provider_updates: dict[str, dict], keep_custom: set[str]
             base, key, model = vals.get('base', ''), vals.get('key', ''), vals.get('model', '')
             if base and prov.get('baseUrl') != base:
                 _cur = str(prov.get('baseUrl') or '')
-                if _cur.startswith('http://127.0.0.1:8890'):
+                if _is_local_gateway_base(_cur):
                     pass  # 本地模型网关模式：保留网关地址（真实上游在 easel-models.yaml），勿改回直连
                 else:
                     prov['baseUrl'] = base
@@ -1723,7 +1760,7 @@ async def api_settings_models_save(req: ModelSaveRequest):
         # 自定义供应商压根不写 .env，前面那道 _SLOT_ENV_KEYS 闸拦不到它。
         if is_chat and pkey and base and not key:
             _pb, _pk = _cur_prov.get(pkey, ('', ''))
-            if _pk and base != _pb.strip().rstrip('/'):
+            if _pk and base != _pb.strip().rstrip('/') and not _is_local_gateway_base(_pb):
                 raise HTTPException(400, f'更换 Base URL 时必须重新填写 API Key（{pkey}）')
         if is_chat and pkey and getattr(row, 'primary', False) and model:
             primary_ref = f'{pkey}/{model}'
@@ -1920,6 +1957,38 @@ def _openclaw_session_id(sk: str) -> str:
 def _session_flock_path(sk: str) -> Path:
     safe = _openclaw_session_id(sk)
     return SESSIONS_DIR / f"{safe}.lock"
+
+
+def _transport_pin_file(sk: str) -> Path:
+    safe = re.sub(r"[^A-Za-z0-9_.-]", "_", sk)[:120]
+    return SESSIONS_DIR / f"{safe}.transport"
+
+
+def _resolve_transport(sk: str) -> str:
+    """同一会话不中途换传输方式。
+
+    CLI 用固定的会话文件；直连网关另起一份记录。换边等于把已经聊过的内容丢掉。
+    已有 CLI 记录就继续 CLI；钉过 http 就继续 http；都没有才按总开关和探针决定。
+    """
+    if (OPENCLAW_SESSIONS_DIR / f"{_openclaw_session_id(sk)}.jsonl").is_file():
+        return "cli"
+    try:
+        if _transport_pin_file(sk).read_text(encoding="utf-8").strip() == "http":
+            return "http"
+    except OSError:
+        pass
+    return "http" if (CHAT_TRANSPORT == "http" and _gateway_http_ready()) else "cli"
+
+
+def _pin_transport(sk: str, kind: str) -> None:
+    """只有这一轮真的在 http 上写出了内容，才把会话钉在 http 上。"""
+    if kind != "http":
+        return
+    try:
+        SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+        _transport_pin_file(sk).write_text("http", encoding="utf-8")
+    except OSError:
+        pass
 
 
 class _CrossProcLock:
@@ -2241,10 +2310,9 @@ async def api_chat_stream(req: ChatRequest):
                                 to_client("error", f"❌ 网关返回错误：{str(d['error'])[:160]}")
                                 return
                             delta = (d.get("choices") or [{}])[0].get("delta") or {}
-                            # 思考流：HTTP 模式不 tail 共享 raw 文件，thinking 事件的唯一来源就是
-                            # 这里的 reasoning 增量。不接的话「💭 思考过程」面板在本路径下永远是空的。
                             rc = delta.get("reasoning_content") or delta.get("reasoning")
                             if rc:
+                                run_info["sse_thinking"] = True
                                 run_info["thinking_chars"] += len(rc)
                                 _emit("thinking", rc)
                             c = delta.get("content")
@@ -2254,6 +2322,9 @@ async def api_chat_stream(req: ChatRequest):
                             if delta.get("tool_calls") and not tool_noted:
                                 tool_noted = True
                                 to_client("activity", "🔧 正在执行操作…")
+                # SSE 已经完整结束时，不要再拿还在睡的 raw tail 判断「没写完」。
+                if got_text and saw_done:
+                    run_info["sse_done"] = True
                 # 流正常结束却既没正文也没 [DONE]：多半是端点没真开或中途断了。
                 # 不报错的话这一轮会静默落一条空回答，还会被 /api/chat/last 原样取回。
                 if not got_text and not saw_done:
@@ -2324,7 +2395,7 @@ async def api_chat_stream(req: ChatRequest):
             await asyncio.to_thread(require_subscription)
             # 探测同样阻塞（urllib，最多 2s）：http=直连常驻网关（OpenAI 兼容端点，
             # 免每轮进程冷启动）；否则走 cli spawn 路径。
-            is_http = CHAT_TRANSPORT == "http" and await asyncio.to_thread(_gateway_http_ready)
+            is_http = (await asyncio.to_thread(_resolve_transport, sk)) == "http"
             if is_http:
                 # HTTP 直连常驻网关：无进程冷启动（agent 在 gateway 进程里跑）
                 proc = _GatewayHttpProc()
@@ -2478,11 +2549,15 @@ async def api_chat_stream(req: ChatRequest):
             if not delta:
                 return
             if ev == "assistant_text_stream" and et == "text_delta":
+                if is_http:
+                    return
                 run_info["token_chars"] += len(delta)
                 run_info["text_tail"] = (run_info.get("text_tail", "") + delta)[-160:]
                 _emit("token", delta)
                 return
             if ev == "assistant_thinking_stream" and et == "thinking_delta":
+                if run_info.get("sse_thinking"):
+                    return
                 run_info["thinking_chars"] += len(delta)
                 _emit("thinking", delta)
                 return
@@ -2521,7 +2596,9 @@ async def api_chat_stream(req: ChatRequest):
                 loop.call_soon_threadsafe(q.put_nowait, SENTINEL)
 
         stdout_fut = None
-        if not is_http:
+        if is_http:
+            loop.run_in_executor(None, _tail)
+        else:
             stdout_fut = loop.run_in_executor(None, _drain_stdout)
             loop.run_in_executor(None, _tail)
 
@@ -2573,7 +2650,7 @@ async def api_chat_stream(req: ChatRequest):
                 except Exception:
                     pass
             sr = run_info.get("stop_reason")
-            if not emitted:
+            if not emitted and not is_http:
                 clean = ''
                 if rc == 0 and sk not in _STOPPED_CHAT and not timed_out:
                     try:
@@ -2590,8 +2667,10 @@ async def api_chat_stream(req: ChatRequest):
                     full_text.append(clean)
                     to_client("token", clean)
                 elif rc not in (0, None):
-                    err = clean_agent_output("".join(stdout_lines))[:200]
-                    failure = f"❌ 执行失败（退出码 {rc}）{' — ' + err if err else ''}"
+                    err = clean_agent_output("".join(stdout_lines))[:500]
+                    if err:
+                        print(f"[chat] agent failed rc={rc}: {err[:300]}", flush=True)
+                    failure = "没写完。"
                     full_text.append(failure)
                     to_client("error", failure)
             # 收尾检测：即使已吐了内容，只要不是「正常收尾」就显式告知——
@@ -2602,26 +2681,21 @@ async def api_chat_stream(req: ChatRequest):
             if (emitted or run_info["thinking_chars"]) and sk not in _STOPPED_CHAT:
                 note = None
                 if sr and sr in ("max_tokens", "length", "model_length"):
-                    note = (f"\n\n---\n⚠️ 上面这条**被截断**了（stopReason={sr}，单条回复触顶）。"
-                            f"回我「继续」我接着写完，或让我把任务拆小一点。")
+                    note = "\n\n没写完。"
                 elif rc not in (0, None):
-                    note = (f"\n\n---\n⚠️ 生成**被中断**（退出码 {rc}，多半是超时或系统负载过高把进程杀了），"
-                            f"不是正常收尾。可以让我重试。")
+                    note = "\n\n没写完。"
                 elif sr == "tool_use":
-                    note = ("\n\n---\n⚠️ 我刚做完这一步、**正要执行下一步操作时中断了**"
-                            "（本轮以工具调用结尾却没能继续，前端把它当成答完了）。回我「继续」我接着做。")
-                elif run_info.get("last_ev") not in (None, "assistant_message_end"):
-                    note = ("\n\n---\n⚠️ 这条**可能没写完**——模型的输出/思考流被中断、没有正常收尾"
-                            "（多为网络或模型代理把长回复的流掐断了）。回我「继续」，或重试。")
+                    note = "\n\n没写完。"
+                elif not (is_http and run_info.get("sse_done")) and run_info.get("last_ev") not in (None, "assistant_message_end"):
+                    note = "\n\n没写完。"
                 elif run_info.get("text_tail", "").rstrip()[-1:] in ("：", ":"):
-                    # 正常收尾但正文停在冒号 = 模型"我要做X："后没接着做（多为要接工具/下一步却断了）。
-                    # 用户实测「所有莫名停止都停在冒号」——这一条兜住这个模式。
-                    note = ("\n\n---\n⚠️ 我似乎停在了冒号处、没接着把后面的内容/操作做出来。"
-                            "回我「继续」我补上。")
+                    note = "\n\n没写完。"
                 if note:
                     full_text.append(note)
                     to_client("token", note)
         finally:
+            if is_http and run_info.get("sse_done"):
+                _pin_transport(sk, "http")
             user_stopped = sk in _STOPPED_CHAT
             _STOPPED_CHAT.discard(sk)
             # Reaching finally while the child is alive means timeout, explicit
@@ -3090,6 +3164,9 @@ async def api_media(path: str):
     headers = {'X-Content-Type-Options': 'nosniff'}
     if full.suffix.lower() in ('.html', '.htm', '.svg', '.xhtml'):
         headers['Content-Security-Policy'] = "sandbox allow-scripts allow-downloads; frame-ancestors 'self'"
+    if full.suffix.lower() in {'.html', '.htm'}:
+        headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+        headers['Pragma'] = 'no-cache'
     return FileResponse(full, headers=headers)
 
 

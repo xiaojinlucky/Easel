@@ -269,6 +269,39 @@ def list_sources(query: str = '', limit: int = 200, offset: int = 0, kind: str =
             'limit': limit, 'offset': offset, 'engine': engine}
 
 
+def tag_cloud(limit: int = 300) -> dict:
+    """聚合全部已保存素材的标签与来源计数（知识库页「全部标签」抽屉用）。
+
+    标签在库里是逗号分隔字符串，SQL 侧拆不干净，所以取回来在 Python 里聚合。
+    只算 state=saved 且未删除的条目，与素材库列表口径一致。
+    """
+    counts: dict[str, int] = {}
+    sites: dict[str, dict] = {}
+    with connection() as db:
+        rows = db.execute(
+            "SELECT tags,platform,kind FROM sources WHERE deleted_at=0 AND state='saved'"
+        ).fetchall()
+    for tags, platform, kind in rows:
+        site = str(platform or '').strip()
+        kind_name = str(kind or '').strip()
+        label = site or kind_name or '未标注来源'
+        # 带上原始字段：platform 为空时 label 会落回 kind，前端拿 label 直接当 platform 筛会筛空。
+        # /sources 同时支持 platform= 与 kind=，所以把两个真实可筛值一起给出去。
+        node = sites.setdefault(label, {
+            'name': label, 'count': 0,
+            'platform': site, 'kind': '' if site else kind_name,
+        })
+        node['count'] += 1
+        for tag in {t.strip() for t in str(tags or '').split(',') if t.strip()}:
+            counts[tag] = counts.get(tag, 0) + 1
+    ranked = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[: max(1, limit)]
+    return {
+        'tags': [{'name': name, 'count': count} for name, count in ranked],
+        'total_tags': len(counts),
+        'sites': sorted(sites.values(), key=lambda v: (-v['count'], v['name'])),
+    }
+
+
 def get_source(identifier: str) -> dict:
     with connection() as db:
         row = db.execute('SELECT * FROM sources WHERE id=?', (identifier,)).fetchone()
@@ -402,6 +435,7 @@ def save_source(url: str, title: str, platform: str, topic: str, content: str, m
         index_source(identifier)
     except sqlite3.Error:
         pass
+    sync_knowledge(identifier, result)
     return result
 
 
@@ -879,25 +913,71 @@ def _knowledge_site(item: dict) -> str:
     return cleaned or 'imported'
 
 
-def export_folder(identifier: str) -> dict:
-    """照 Beav 目录约定导出：knowledge/<site>/<id>/meta.json+content.md（Obsidian 可直接吃）。"""
-    item = get_source(identifier)
-    site = _knowledge_site(item)
-    folder = ROOT / 'knowledge' / site / identifier
-    folder.mkdir(parents=True, exist_ok=True)
+# —— 知识库磁盘视图：一条素材 = 一个文件夹，对齐 Beav 的 knowledge/<site>/<id>/ ——
+# sqlite 仍是索引与队列的真源；这里落的是「用户能直接用 Obsidian / 记事本打开、能直接 grep」的那一份。
+KNOWLEDGE = ROOT / 'knowledge'
+KNOWLEDGE_TRASH = KNOWLEDGE / '.trash'
+
+
+def _knowledge_dir(item: dict) -> Path:
+    return KNOWLEDGE / _knowledge_site(item) / str(item.get('id') or '')
+
+
+def _atomic_write(target: Path, text: str) -> None:
+    """先写同目录 .tmp 再 replace：中途被杀不会留下半截文件被 Obsidian 读走。"""
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp = target.with_name(target.name + '.tmp')
+    tmp.write_text(text, encoding='utf-8')
+    tmp.replace(target)
+
+
+def _iso_utc(ts) -> str | None:
+    try:
+        return time.strftime('%Y-%m-%dT%H:%M:%S.000Z', time.gmtime(float(ts or 0)))
+    except (TypeError, ValueError, OSError):
+        return None
+
+
+def knowledge_meta(item: dict) -> dict:
+    """meta.json 以 Beav 开源版的字段名为主（captureKind / sourceUrl / createdAt / stats…），
+    在其上补 Easel 自有字段；两套名字不冲突，Beav 侧和本工作台都能读。
+    """
     extra = item.get('extra') or {}
-    meta = {
-        'id': identifier, 'kind': item.get('kind') or 'document-source', 'title': item.get('title'),
-        'url': item.get('url'), 'platform': item.get('platform'), 'site': site,
-        'tags': item.get('tags'), 'author': item.get('author'), 'cover': item.get('cover_url'),
-        'capturedAt': item.get('captured_at'), 'method': item.get('method'), 'topic': item.get('topic'),
-        'stats': {'likes': extra.get('likes'), 'collects': extra.get('collects'), 'comments': extra.get('comments')},
-        'localImages': extra.get('local_images'), 'storageStatus': 'stored',
+    identifier = str(item.get('id') or '')
+    url = str(item.get('url') or '')
+    return {
+        # —— 与 Beav 同名同义 ——
+        'id': identifier,
+        'captureKind': item.get('kind') or 'document-source',
+        'externalId': str(extra.get('external_id') or identifier),
+        'title': item.get('title') or '',
+        'author': item.get('author') or '',
+        'cover': item.get('cover_url') or None,
+        'createdAt': _iso_utc(item.get('captured_at')),
+        'sourceUrl': url,
+        'sourceLink': url,
+        'sourceDomain': (urlsplit(url).hostname or ''),
+        'sourceAppId': 'easel',
+        'siteName': _knowledge_site(item),
+        'excerpt': str(item.get('content') or '')[:200],
+        'summary': item.get('summary') or None,
+        'tags': list(item.get('tags') or []),
+        'images': list(extra.get('local_images') or []),
+        'stats': {'likes': extra.get('likes'), 'collects': extra.get('collects'),
+                  'comments': extra.get('comments'), 'shares': None, 'views': None},
+        # —— Easel 自有（Beav 无同名字段）——
+        'platform': item.get('platform') or '',
+        'topic': item.get('topic') or '',
+        'method': item.get('method') or '',
+        'capturedAt': item.get('captured_at'),
+        'videoUrl': extra.get('video_url') or None,
+        'ocrIncluded': bool(extra.get('ocr_text')),
+        'storageStatus': 'stored',
     }
-    body = str(item.get('content') or '')
-    if extra.get('comments_text'):
-        body += '\n\n## 评论\n\n' + str(extra['comments_text'])
-    (folder / 'meta.json').write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding='utf-8')
+
+
+def knowledge_markdown(item: dict) -> str:
+    """content.md：YAML frontmatter + H1 + Beav 风格的「来源」分节 + 正文（+ 评论）。"""
     plain_title = re.sub(r'\s+', ' ', str(item.get('title') or '')).strip()[:200]
     date = time.strftime('%Y-%m-%d', time.localtime(item.get('captured_at') or time.time()))
     # YAML 的双引号标量与 JSON 兼容：标题/URL 里有引号或换行时，不转义就能提前结束 front matter 注入键
@@ -905,8 +985,114 @@ def export_folder(identifier: str) -> dict:
              f'\nsource: {json.dumps(str(item.get("url") or ""), ensure_ascii=False)}'
              f'\ntags: [{", ".join(json.dumps(t, ensure_ascii=False) for t in item.get("tags") or [])}]'
              f'\ndate: {date}\n---\n\n')
-    (folder / 'content.md').write_text(front + f'# {plain_title}\n\n{body}\n', encoding='utf-8')
-    return {'id': identifier, 'folder': folder.relative_to(ROOT).as_posix(), 'files': ['meta.json', 'content.md']}
+    lines = []
+    if item.get('author'):
+        lines.append(f'- 作者：{item["author"]}')
+    if item.get('url'):
+        lines.append(f'- 原文：{item["url"]}')
+    if item.get('platform'):
+        lines.append(f'- 平台：{item["platform"]}')
+    body = str(item.get('content') or '')
+    extra = item.get('extra') or {}
+    if extra.get('comments_text'):
+        body += '\n\n## 评论\n\n' + str(extra['comments_text'])
+    source_block = ('## 来源\n' + '\n'.join(lines) + '\n\n') if lines else ''
+    return front + f'# {plain_title}\n\n{source_block}{body}\n'
+
+
+def sync_knowledge(identifier: str, item: dict | None = None, force: bool = False) -> dict | None:
+    """把一条素材同步成 knowledge/<site>/<id>/{meta.json,content.md}。
+
+    落盘是「给人看的视图」，采集/加工主流程不依赖它：任何写盘异常都吞掉并返回 None，
+    绝不因为磁盘只读、路径过长或被杀软占用，就让一条素材采不进来。
+    """
+    if item is None:
+        try:
+            item = get_source(identifier)
+        except CollectionError:
+            return None
+    if int(item.get('deleted_at') or 0) > 0:
+        return None
+    # 采集失败/受限的条目只留在库里做错误记录，不进知识库；显式导出（force）时不拦
+    if not force and str(item.get('state') or '') != 'saved':
+        return None
+    folder = _knowledge_dir(item)
+    try:
+        _atomic_write(folder / 'meta.json', json.dumps(knowledge_meta(item), ensure_ascii=False, indent=2))
+        _atomic_write(folder / 'content.md', knowledge_markdown(item))
+    except (OSError, ValueError):
+        return None
+    return {'id': str(item.get('id') or ''), 'folder': folder.relative_to(ROOT).as_posix()}
+
+
+def sync_knowledge_all(limit: int = 5000) -> dict:
+    """全量回填：把库里已有素材补成文件夹（迁旧数据 / 修复漏写）。已是最新也重写一遍，代价很小。"""
+    with connection() as db:
+        ids = [str(row[0]) for row in db.execute(
+            "SELECT id FROM sources WHERE state='saved' AND deleted_at=0 ORDER BY captured_at DESC LIMIT ?",
+            (limit,)).fetchall()]
+    written = 0
+    for identifier in ids:
+        if sync_knowledge(identifier):
+            written += 1
+    return {'total': len(ids), 'written': written, 'failed': len(ids) - written}
+
+
+def knowledge_path(identifier: str) -> dict:
+    """条目的磁盘落点（相对 ROOT），并如实回报文件夹是否真在（列了路径不等于文件存在）。"""
+    item = get_source(identifier)
+    folder = _knowledge_dir(item)
+    return {'id': identifier, 'folder': folder.relative_to(ROOT).as_posix(),
+            'title': item.get('title') or '', 'exists': (folder / 'content.md').is_file()}
+
+
+def _stash_knowledge(item: dict) -> None:
+    """软删时把文件夹挪进 knowledge/.trash/，而不是直接删：用户点错还能捞回来。"""
+    folder = _knowledge_dir(item)
+    if not folder.is_dir():
+        return
+    target = KNOWLEDGE_TRASH / str(item.get('id') or '')
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if target.exists():
+            shutil.rmtree(target, ignore_errors=True)
+        shutil.move(str(folder), str(target))
+    except OSError:
+        pass
+
+
+def _unstash_knowledge(identifier: str) -> None:
+    """恢复时优先把 .trash 里那份挪回原位；没有就按当前库内容重建。"""
+    try:
+        item = get_source(identifier)
+    except CollectionError:
+        return
+    folder = _knowledge_dir(item)
+    stashed = KNOWLEDGE_TRASH / identifier
+    if stashed.is_dir():
+        try:
+            folder.parent.mkdir(parents=True, exist_ok=True)
+            if folder.exists():
+                shutil.rmtree(folder, ignore_errors=True)
+            shutil.move(str(stashed), str(folder))
+            return
+        except OSError:
+            pass
+    sync_knowledge(identifier, item)
+
+
+def export_folder(identifier: str) -> dict:
+    """照 Beav 目录约定导出：knowledge/<site>/<id>/meta.json+content.md（Obsidian 可直接吃）。
+
+    与自动落盘共用同一实现：导出不是另生成一份副本，而是确保它已经在磁盘上。
+    """
+    item = get_source(identifier)
+    if int(item.get('deleted_at') or 0) > 0:
+        raise CollectionError('这条素材在回收站里，先恢复再导出。', 409)
+    written = sync_knowledge(identifier, item, force=True)
+    if written is None:
+        raise CollectionError('磁盘写入失败，无法导出这条素材。', 500)
+    return {**written, 'files': ['meta.json', 'content.md']}
 
 
 def export_batch(ids: list[str], fmt: str = 'json') -> dict:
@@ -995,7 +1181,9 @@ def update_source(identifier: str, title=None, topic=None, content=None, summary
         index_source(identifier)
     except sqlite3.Error:
         pass
-    return get_source(identifier)
+    updated = get_source(identifier)
+    sync_knowledge(identifier, updated)
+    return updated
 
 
 def _inside(root: Path, candidate: Path) -> bool:
@@ -1042,6 +1230,7 @@ def append_marked_section(identifier: str, marker: str, block: str) -> bool:
         index_source(identifier)
     except sqlite3.Error:
         pass
+    sync_knowledge(identifier, item)
     return True
 
 
@@ -1098,6 +1287,7 @@ def replace_marked_section(identifier: str, marker: str, block: str) -> bool:
         index_source(identifier)
     except sqlite3.Error:
         pass
+    sync_knowledge(identifier, item)
     return True
 
 
@@ -1147,7 +1337,9 @@ def merge_ai_fields(identifier: str, tags: list[str] | None = None,
         index_source(identifier)
     except (sqlite3.Error, CollectionError):
         pass
-    return get_source(identifier)
+    merged = get_source(identifier)
+    sync_knowledge(identifier, merged)
+    return merged
 
 
 def add_tag(identifier: str, tag: str) -> dict:
@@ -1163,19 +1355,37 @@ def remove_tag(identifier: str, tag: str) -> dict:
 
 def delete_sources(ids: list[str]) -> int:
     now = time.time()
-    done = 0
+    targets = [str(x) for x in ids if str(x).strip()][:200]
+    if not targets:
+        return 0
+    done: list[str] = []
     with connection() as db:
-        for identifier in [str(x) for x in ids if str(x).strip()][:200]:
-            done += db.execute('UPDATE sources SET deleted_at=? WHERE id=? AND deleted_at=0', (now, identifier)).rowcount
-    return done
+        for identifier in targets:
+            if db.execute('UPDATE sources SET deleted_at=? WHERE id=? AND deleted_at=0',
+                          (now, identifier)).rowcount:
+                done.append(identifier)
+    # 落盘在事务外做：磁盘挪动慢，不该占着写锁
+    for identifier in done:
+        try:
+            _stash_knowledge(get_source(identifier))
+        except CollectionError:
+            continue
+    return len(done)
 
 
 def restore_sources(ids: list[str]) -> int:
-    done = 0
+    targets = [str(x) for x in ids if str(x).strip()][:200]
+    if not targets:
+        return 0
+    done: list[str] = []
     with connection() as db:
-        for identifier in [str(x) for x in ids if str(x).strip()][:200]:
-            done += db.execute('UPDATE sources SET deleted_at=0 WHERE id=? AND deleted_at>0', (identifier,)).rowcount
-    return done
+        for identifier in targets:
+            if db.execute('UPDATE sources SET deleted_at=0 WHERE id=? AND deleted_at>0',
+                          (identifier,)).rowcount:
+                done.append(identifier)
+    for identifier in done:
+        _unstash_knowledge(identifier)
+    return len(done)
 
 
 def list_trash() -> list[dict]:
@@ -1226,6 +1436,13 @@ def purge_expired(days: float = 30) -> int:
                         resolved.unlink()
                     except OSError:
                         pass
+        # 知识库视图与它在 .trash 里那份一起清：软删已把目录挪走，这里兜住 stash 失败留下的
+        for candidate in [KNOWLEDGE_TRASH / identifier, *KNOWLEDGE.glob(f'*/{identifier}')]:
+            if not _inside(KNOWLEDGE, candidate):
+                continue
+            resolved = candidate.resolve()
+            if resolved.is_dir():
+                shutil.rmtree(resolved, ignore_errors=True)
     return purged
 
 

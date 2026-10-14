@@ -24,3 +24,45 @@
 .research-trash-row{display:flex;align-items:center;justify-content:space-between;gap:14px;border:1px solid var(--border);border-radius:12px;padding:14px 18px;background:white;font-size:13px}
 .research-trash-row small{display:block;color:var(--text-secondary);font-size:11px;margin-top:4px}
 .research-trash-row button{font-size:12px}
+
+/* 顶栏搜索（对齐 Beav：图标折叠→展开，占位「搜索知识库...」，Ctrl K / Ctrl F 聚焦） */
+.research-search{display:flex;align-items:center;gap:9px;flex:1;min-width:260px;max-width:520px;border:1px solid var(--border);border-radius:10px;background:white;padding:0 12px;height:38px;color:var(--text-secondary)}
+.research-search input{border:0;outline:0;flex:1;font:inherit;font-size:13px;background:transparent;color:var(--text);height:100%}
+.research-search kbd{border:1px solid var(--border);border-radius:5px;padding:2px 6px;font-size:10px;color:var(--text-tertiary);font-family:inherit;white-space:nowrap}
+.research-search-clear{border:0;background:transparent;color:var(--text-tertiary);cursor:pointer;font-size:16px;line-height:1;padding:0 2px}
+.research-search-clear:hover{color:var(--text)}
+@media (max-width:900px){.research-search{max-width:none;width:100%}}
+
+/* 标签栏：行内前 8 个 + 「全部标签」抽屉（对齐 Beav 的 tag bar + 全量标签面板） */
+.research-tagbar{display:flex;flex-wrap:wrap;align-items:center;gap:7px;margin:10px 0 4px;font-size:12px}
+.research-tagbar-label{color:var(--text-tertiary);margin-right:2px}
+.research-tag-chip{border:1px solid var(--border);background:transparent;border-radius:999px;padding:3px 10px;font:inherit;font-size:11px;color:#217d8a;cursor:pointer}
+.research-tag-chip b{font-weight:600;color:var(--text-tertiary);margin-left:2px}
+.research-tag-chip:hover{border-color:#bddbdc;background:#eff9f8}
+.research-tag-chip.active{background:#edf6f7;border-color:#bddbdc;color:#14727d;font-weight:600}
+.research-tag-chip.active b{color:#14727d}
+.research-tag-all{border:0;background:transparent;color:var(--text-secondary);font:inherit;font-size:11px;cursor:pointer;text-decoration:underline;padding:3px 4px}
+.research-tag-all:hover{color:var(--text)}
+.research-tag-clear{border:1px dashed var(--border);background:transparent;color:var(--text-secondary);border-radius:999px;padding:3px 10px;font:inherit;font-size:11px;cursor:pointer}
+.research-tag-clear:hover{border-color:var(--border-strong);color:var(--text)}
+.research-tag-drawer{border:1px solid var(--border);border-radius:14px;background:#fbfefe;padding:16px 18px;margin:10px 0 14px;display:flex;flex-direction:column;gap:13px}
+.research-tag-drawer-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;flex-wrap:wrap}
+.research-tag-drawer-title{font-size:14px;font-weight:600;color:var(--text)}
+.research-tag-drawer-sub{font-size:12px;color:var(--text-secondary);margin-top:3px}
+.research-tag-drawer-sec>span{display:block;font-size:12px;color:var(--text-tertiary);margin-bottom:8px}
+.research-tag-drawer-cloud{display:flex;flex-wrap:wrap;gap:7px}
+.research-tag-drawer-cloud button{border:1px solid var(--border);background:white;border-radius:999px;padding:4px 11px;font:inherit;font-size:11.5px;color:#217d8a;cursor:pointer}
+.research-tag-drawer-cloud button b{font-weight:600;color:var(--text-tertiary);margin-left:2px}
+.research-tag-drawer-cloud button:hover{border-color:#bddbdc;background:#eff9f8}
+.research-tag-drawer-cloud button.active{background:#edf6f7;border-color:#bddbdc;color:#14727d;font-weight:600}
+.research-tag-drawer-cloud button.active b{color:#14727d}
+
+/* ---- 批量删除 / 批量复原（与「选入二创」的勾选互不影响） ---- */
+.research-bulkbar{display:flex;flex-wrap:wrap;align-items:center;gap:9px;padding:10px 12px;margin:10px 0;border:1px dashed var(--red);border-radius:10px;background:#fff5f5}
+.research-bulkbar span{font-size:12px;color:var(--text-secondary)}
+.research-bulkbar .btn{font-size:12px}
+.research-bulk-pick{display:inline-flex;align-items:center;cursor:pointer;flex-shrink:0}
+.research-bulk-pick input{cursor:pointer;margin:0;accent-color:var(--red)}
+.research-sources article.is-bulk-picked{border-color:var(--red);background:#fff5f5}
+.research-trash-row>span{flex:1;min-width:0}
+.research-trash-row.is-bulk-picked{border-color:var(--red);background:#fff5f5}

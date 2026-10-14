@@ -37,10 +37,20 @@ function ActionBar({ actions }: { actions: BubbleActions }) {
   );
 }
 
+function visibleAssistant(text: string): string {
+  const cleaned = text
+    .replace(/\n*Error:[\s\S]*$/m, '')
+    .replace(/\n*❌ 执行失败（退出码[\s\S]*$/m, '')
+    .replace(/\n*---\n⚠️[\s\S]*$/m, '')
+    .trim();
+  if (cleaned === text.trim()) return text;
+  return cleaned ? `${cleaned}\n\n没写完。` : '没写完。';
+}
+
 export default function MessageBubble({ message, isStreaming, thinking, activity, stillWorking, actions }: MessageBubbleProps) {
   const html = useMemo(() => {
     if (message.role === 'user') return '';
-    return renderMarkdown(message.content);
+    return renderMarkdown(visibleAssistant(message.content));
   }, [message.content, message.role]);
 
   // ---- 用户消息 ----
@@ -77,13 +87,13 @@ export default function MessageBubble({ message, isStreaming, thinking, activity
       ) : null}
       {doneSteps && (
         <details className="thinking-block">
-          <summary>🧠 执行过程（{doneSteps.split('\n').length} 步）</summary>
+          <summary>过程</summary>
           <div className="thinking-text">{doneSteps}</div>
         </details>
       )}
       {effThinking && (
         <details className="thinking-block" open={isStreaming && !message.content}>
-          <summary>💭 思考过程</summary>
+          <summary>思考</summary>
           <div className="thinking-text">{effThinking}</div>
         </details>
       )}

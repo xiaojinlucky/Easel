@@ -1,0 +1,36 @@
+/* 灵感漫步（Beav nav.wander 页内模式） */
+.wander-panel{border:1px solid var(--border);border-radius:16px;padding:20px 22px;margin-bottom:22px;background:white}
+.wander-modes{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+.wander-mode{border:1px solid var(--border);background:transparent;border-radius:999px;padding:7px 15px;font:inherit;font-size:13px;color:var(--text-secondary);cursor:pointer}
+.wander-mode:hover{border-color:var(--border-strong);color:var(--text)}
+.wander-mode.active{background:#edf6f7;color:#14727d;border-color:#bddbdc;font-weight:600}
+.wander-mode-hint{font-size:12px;color:var(--text-tertiary);margin-left:4px}
+.wander-input{width:100%;box-sizing:border-box;border:1px solid var(--border);border-radius:9px;padding:11px 13px;font:inherit;font-size:13px;background:white;color:var(--text);margin-bottom:13px}
+.wander-actions{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.wander-go{display:inline-flex;align-items:center;gap:7px}
+.wander-tip{font-size:12px;color:var(--text-secondary)}
+.wander-loading{display:flex;flex-direction:column;align-items:center;gap:10px;padding:38px 0;color:var(--text-secondary);font-size:13px}
+.wander-dice{font-size:36px;animation:wander-spin 1.6s ease-in-out infinite}
+@keyframes wander-spin{0%,100%{transform:rotate(0deg) scale(1)}50%{transform:rotate(180deg) scale(1.16)}}
+.wander-result{border:1px solid #bddbdc;border-radius:16px;padding:20px 22px;background:#fbfefe;margin-bottom:24px}
+.wander-result-head{display:flex;align-items:baseline;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:14px}
+.wander-result-head h3{font-size:16px;color:#14727d}
+.wander-card{border:1px solid var(--border);border-radius:12px;padding:16px 18px;background:white;margin-bottom:12px}
+.wander-card-top{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.wander-card-top h4{margin:0;font-size:15px;line-height:1.5;color:var(--text)}
+.wander-direction{margin:10px 0 0;font-size:13px;line-height:1.85;color:var(--text-secondary)}
+.wander-connections{margin:10px 0 0;padding-left:18px;font-size:12px;line-height:1.9;color:var(--text-secondary)}
+.wander-connections li{margin-bottom:2px}
+.wander-audience{margin:9px 0 0;font-size:12px;color:#217d8a}
+.wander-sources{display:flex;flex-wrap:wrap;gap:9px;align-items:center;font-size:12px;color:var(--text-secondary);border-top:1px dashed var(--border);padding-top:13px;margin-top:6px}
+.wander-source{color:#217d8a;text-decoration:none;border:1px solid var(--border);border-radius:999px;padding:3px 11px;font-size:11px}
+.wander-source:hover{border-color:#bddbdc;background:#eff9f8}
+.wander-history h3{font-size:15px;margin-bottom:12px}
+.wander-history-row{display:flex;align-items:center;gap:10px;border:1px solid var(--border);border-radius:11px;padding:12px 16px;background:white;margin-bottom:9px}
+.wander-history-main{flex:1;border:0;background:transparent;padding:0;text-align:left;cursor:pointer;font:inherit;color:inherit;display:flex;flex-direction:column;gap:4px}
+.wander-history-main b{font-size:13px;font-weight:600}
+.wander-history-main small{font-size:11px;color:var(--text-secondary)}
+
+/* ---- 后台 job 态：切走板块或刷新页面都不丢进度 ---- */
+.wander-resume{border:1px solid #bddbdc;border-radius:10px;background:#eff9f8;color:#14727d;font-size:12px;padding:9px 13px;margin:0 0 14px}
+.wander-result-head .btn{font-size:12px;align-self:center}

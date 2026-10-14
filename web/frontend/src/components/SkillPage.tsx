@@ -22,7 +22,7 @@ const LAYERS: LayerMeta[] = [
   { key: 'plan', label: '策划', Icon: IconCompass, color: 'var(--layer-plan)' },
   { key: 'produce', label: '制作', Icon: IconSkills, color: 'var(--layer-produce)' },
   { key: 'publish', label: '发布', Icon: IconSend, color: 'var(--layer-publish)' },
-  { key: 'attribute', label: '归因', Icon: IconChart, color: 'var(--layer-attribute)' },
+  { key: 'attribute', label: '复盘', Icon: IconChart, color: 'var(--layer-attribute)' },
   { key: 'general', label: '通用', Icon: IconLayers, color: 'var(--layer-general)' },
 ];
 const LAYER_META: Record<string, LayerMeta> = Object.fromEntries(LAYERS.map((l) => [l.key, l]));
@@ -50,8 +50,8 @@ function iconFor(name: string, LayerIcon: IconC): IconC {
 }
 
 const LAYER_DESC: Record<string, string> = {
-  discover: '发现层技能', plan: '策划层技能', produce: '制作层技能',
-  publish: '发布层技能', attribute: '归因层技能', general: '通用技能', other: '技能',
+  discover: '用来找题目和素材', plan: '把题目收成能写的结构', produce: '写成可以发出去的内容',
+  publish: '检查能不能发，并改成各平台的样子', attribute: '看发出去之后的数据和评论', general: '常用能力', other: '其他能力',
 };
 
 export default function SkillPage({ persona, onDraftToChat }: SkillPageProps) {
@@ -61,7 +61,7 @@ export default function SkillPage({ persona, onDraftToChat }: SkillPageProps) {
   const [selected, setSelected] = useState<string | null>(null);
 
   const load = () => {
-    fetchSkills().then(setSkills).catch(() => setError('加载 SKILL 列表失败'));
+    fetchSkills().then(setSkills).catch(() => setError('技能列表没加载出来。刷新页面再试一次。'));
   };
   useEffect(load, []);
 
@@ -110,15 +110,14 @@ export default function SkillPage({ persona, onDraftToChat }: SkillPageProps) {
         style={{ ['--layer-color' as string]: meta.color }}
         onClick={() => setSelected(s.name)}
       >
-        {alert && <div className="skill-card-alert" title="需要配置 API key">!</div>}
+        {alert && <div className="skill-card-alert" title="需要先填密钥">!</div>}
         <div className="skill-card-icon" style={{ color: meta.color }}><Icon size={19} /></div>
         <div className="skill-card-name">{skillSummary(s)}</div>
-        <div className="skill-card-slug">{s.name}</div>
         <div className="skill-card-desc">{s.description?.trim() || LAYER_DESC[meta.key] || '技能'}</div>
         <div className="skill-card-foot">
           {s.needsApi && (s.apiConfigured
             ? <span className="badge badge-ok">已配置</span>
-            : <span className="badge badge-warn">需 API</span>)}
+            : <span className="badge badge-warn">需密钥</span>)}
           <button
             type="button"
             className={`btn btn-sm skill-card-toggle${archived ? '' : ' is-on'}`}
@@ -136,9 +135,9 @@ export default function SkillPage({ persona, onDraftToChat }: SkillPageProps) {
       <div className="skills-page-head">
         <h1 className="page-title">技能库</h1>
         <p className="page-subtitle">
-          已启用 {enabledCount} · 备选归档 {archivedCount}。未启用的技能对话和工作流不会用到。
-          点卡片查看说明；右侧按钮切换启用。
-          {needApiCount > 0 && <> 标 <span className="badge badge-warn" style={{ padding: '1px 7px' }}>需 API</span> 的需先配置密钥（当前 {needApiCount} 个）。</>}
+          正在用 {enabledCount} 个，收起来 {archivedCount} 个。收起来的不会出现在对话和工作流里。
+          点开一张卡片看它能做什么，右边可以启用或收起。
+          {needApiCount > 0 && <> 标了「需密钥」的，要先填好才能用，现在有 {needApiCount} 个。</>}
         </p>
         <div className="skill-search">
           <span className="skill-search-ic"><IconSearch size={16} /></span>

@@ -86,5 +86,9 @@ skills/openclaw/skill-wechat-publisher/wechat-publisher.yaml
 # 素材库导出的知识库目录（Beav 式布局，本机产物）
 knowledge/
 
+# 素材库 / 选题中心的运行态数据目录（含 .trash 回收站与 jobs.json 任务状态，本机产物）
+asset-library/
+topic-center/
+
 # 本机 Python 虚拟环境（现役树装在 .venv/，2 万多个文件，绝不能进 git status）
 .venv/

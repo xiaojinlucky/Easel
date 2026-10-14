@@ -10,14 +10,19 @@ import ProfilePage from './components/ProfilePage';
 import DashboardPage from './components/DashboardPage';
 import ModelSettingsPage from './components/ModelSettingsPage';
 import ResearchPage from './components/ResearchPage';
+import AssetsPage from './components/AssetsPage';
+import TopicsPage from './components/TopicsPage';
 import './styles/model-settings.css';
 import './styles/research.css';
+import './styles/assets.css';
+import './styles/wander.css';
 import './styles/account-profile.css';
 import TrendsPage from './components/TrendsPage';
 import CalendarPage from './components/CalendarPage';
 import IdeasPage from './components/IdeasPage';
 import PublishPage from './components/PublishPage';
 import BreakdownPage from './components/BreakdownPage';
+import WatchPage from './components/WatchPage';
 import SubNav from './components/SubNav';
 import OnboardingWizard from './components/OnboardingWizard';
 import { fetchStatus, fetchPersonas, streamChat, fetchLastTurn, stopChat, runWorkflow } from './lib/api';
@@ -281,7 +286,7 @@ export default function App() {
         };
         waitAndFinalize();
       },
-      (err) => {
+      () => {
         const waitAndFinalize = () => {
           if (typingBuf.current[sessionId]) {
             setTimeout(waitAndFinalize, 60);
@@ -290,7 +295,7 @@ export default function App() {
           const a = streamAcc.current[sessionId];
           appendAssistant(sessionId, {
             role: 'assistant',
-            content: (a?.content ? a.content + '\n\n' : '') + `Error: ${err.message}`,
+            content: (a?.content ? a.content + '\n\n' : '') + '没写完。',
             thinking: a?.thinking || undefined, activity: a?.steps.join('\n') || undefined,
           });
           clearStream(sessionId);
@@ -387,14 +392,14 @@ export default function App() {
         };
         waitAndFinalize();
       },
-      (err) => {
+      () => {
         const waitAndFinalize = () => {
           if (typingBuf.current[sessionId]) {
             setTimeout(waitAndFinalize, 60);
             return;
           }
           const a = streamAcc.current[sessionId];
-          appendAssistant(sessionId, { role: 'assistant', content: (a?.content || '') + `\n\nError: ${err.message}` });
+          appendAssistant(sessionId, { role: 'assistant', content: (a?.content || '') + '\n\n没写完。' });
           clearStream(sessionId);
         };
         waitAndFinalize();
@@ -545,7 +550,7 @@ export default function App() {
         for (const step of r.steps) {
           if (!step.skill) continue;
           lines.push(`\n### ${step.title || step.skill}\n`);
-          lines.push(step.ok ? (step.output || '（无输出）') : `❌ ${step.error}`);
+          lines.push(step.ok ? (step.output || '') : '这一步没完成。');
         }
         appendAssistant(sessionId, {
           role: 'assistant',
@@ -558,7 +563,7 @@ export default function App() {
           appendAssistant(sessionId, { role: 'assistant', content: '_（工作流已停止）_' });
           return;
         }
-        appendAssistant(sessionId, { role: 'assistant', content: `Error: ${err.message}` });
+        appendAssistant(sessionId, { role: 'assistant', content: '没写完。' });
       })
       .finally(() => {
         delete wfCtl.current[sessionId];
@@ -830,43 +835,60 @@ export default function App() {
         return <BreakdownPage persona={selectedPersona} />;
       case 'research':
         return <ResearchPage persona={selectedPersona} onCreate={(prompt, stage) => handleDraftToChat(prompt, stage || 'produce')} onProfileActivated={() => { fetchPersonas().then(setPersonas).catch(() => {}); }} />;
+      case 'assets':
+        return <AssetsPage />;
+      case 'topics':
+        return <TopicsPage onDraftToChat={handleDraftToChat} />;
       case 'skills':
         return <SkillPage persona={selectedPersona} onDraftToChat={handleDraftToChat} />;
       case 'workflows':
         return <WorkflowsPage persona={selectedPersona} onDraftToChat={handleDraftToChat} />;
       case 'outputs':
-        return <OutputsPage onDraftToChat={handleDraftToChat} />;
+        return <OutputsPage />;
       case 'accounts':
-        return <AccountsPage onDraftToChat={handleDraftToChat} />;
+        return <AccountsPage />;
       case 'profile':
         return <ProfilePage persona={selectedPersona} onNewProfile={() => setShowWizard(true)} onDeleted={handleProfileDeleted} />;
       case 'model-settings':
         return <ModelSettingsPage />;
+      case 'watch':
+        return (
+          <WatchPage
+            persona={selectedPersona}
+            personas={personas}
+            onPickPersona={keepPersona}
+            onOpenPublish={() => setCurrentPage('publish')}
+          />
+        );
       default:
         return null;
     }
   };
 
-  const handlePersonaChange = useCallback((persona: string) => {
+  const keepPersona = useCallback((persona: string) => {
     setSelectedPersona(persona);
+    const cur = sessionsRef.current.find((s) => s.id === activeSessionId);
+    if (!cur) return;
+    setSessions((prev) => {
+      const updated = prev.map((s) =>
+        s.id === activeSessionId ? { ...s, persona: persona || undefined } : s);
+      saveSessions(updated);
+      return updated;
+    });
+  }, [activeSessionId]);
+
+  const handlePersonaChange = useCallback((persona: string) => {
+    keepPersona(persona);
     setCurrentPage('chat');
     // 修复：选/切画像不再新建空会话丢上下文。就地把当前会话的画像设为新选的、
     // 保留会话 id 与历史（画像只是每轮的系统前缀，中途换安全）。想开新线程用「New Chat」。
     const cur = sessionsRef.current.find((s) => s.id === activeSessionId);
-    if (cur) {
-      setSessions((prev) => {
-        const updated = prev.map((s) =>
-          s.id === activeSessionId ? { ...s, persona: persona || undefined } : s);
-        saveSessions(updated);
-        return updated;
-      });
-    } else {
-      // 无活跃会话（极少）才新建
+    if (!cur) {
       const ns = createSession(persona || undefined);
       setSessions((prev) => { const u = [ns, ...prev]; saveSessions(u); return u; });
       setActiveSessionId(ns.id);
     }
-  }, [activeSessionId]);
+  }, [activeSessionId, keepPersona]);
 
   return (
     <div className="app-layout">

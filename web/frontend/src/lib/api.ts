@@ -728,6 +728,71 @@ export function stopChat(sessionId: string): Promise<{ stopped: boolean }> {
   });
 }
 
+export interface WatchPost {
+  id: string;
+  title: string;
+  url: string;
+  text: string;
+  media?: string;
+}
+
+export interface WatchTarget {
+  id: string;
+  platform: string;
+  name: string;
+  url: string;
+  message: string;
+  posts: WatchPost[];
+}
+
+export function fetchWatch(): Promise<{ targets: WatchTarget[] }> {
+  return request('/api/watch');
+}
+
+export function addWatchTarget(platform: string, name: string, url: string): Promise<WatchTarget> {
+  return request('/api/watch/targets', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ platform, name, url }),
+  });
+}
+
+export function removeWatchTarget(id: string): Promise<{ ok: boolean }> {
+  return request(`/api/watch/targets/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
+export function refreshWatchTarget(id: string): Promise<WatchTarget> {
+  return request(`/api/watch/targets/${encodeURIComponent(id)}/refresh`, { method: 'POST' });
+}
+
+export function addWatchPost(id: string, title: string, url: string, text: string): Promise<WatchPost> {
+  return request(`/api/watch/targets/${encodeURIComponent(id)}/posts`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title, url, text }),
+  });
+}
+
+export function removeWatchPost(id: string): Promise<{ ok: boolean }> {
+  return request(`/api/watch/posts/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
+export function watchPrompt(postId: string, persona: string): Promise<{ prompt: string }> {
+  return request('/api/watch/prompt', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ post_id: postId, persona }),
+  });
+}
+
+export function watchParse(text: string): Promise<{ title: string; body: string; platforms: string[] }> {
+  return request('/api/watch/parse', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text }),
+  });
+}
+
 export function streamChat(
   message: string,
   persona: string | undefined,

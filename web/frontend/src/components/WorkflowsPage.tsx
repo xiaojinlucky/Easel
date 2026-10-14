@@ -20,7 +20,7 @@ const LAYERS: { id: string; label: string }[] = [
   { id: 'plan', label: '策划' },
   { id: 'produce', label: '制作' },
   { id: 'publish', label: '发布' },
-  { id: 'attribute', label: '归因' },
+  { id: 'attribute', label: '复盘' },
   { id: 'general', label: '基础' },
 ];
 
@@ -473,9 +473,9 @@ export default function WorkflowsPage({
             <IconPlus size={15} /> 新建
           </button>
         </div>
-        <p className="wf-hint">按发现 → 策划 → 制作 → 发布 → 归因选技能，或右侧跟 AI 说目的，保存后到对话里确认再跑。</p>
+        <p className="wf-hint">按顺序加上你要的步骤，或在右边说出想做成什么。保存后到对话里看过，再发送。</p>
         <div className="wf-list">
-          {list.length === 0 && <div className="wf-empty">还没有配方，点新建，或先跟右侧说你想做什么。</div>}
+          {list.length === 0 && <div className="wf-empty">还没有流程。点新建，或先在右边说你想做什么。</div>}
           {list.map((item) => (
             <button
               key={item.id}
@@ -496,7 +496,7 @@ export default function WorkflowsPage({
 
       <section className="wf-main">
         {!currentId && steps.length === 0 ? (
-          <div className="wf-blank">从左侧新建一份配方，或先在右侧说明你想达成什么。</div>
+          <div className="wf-blank">从左边新建一个流程，或先在右边说你想做成什么。</div>
         ) : (
           <>
             <div className="wf-toolbar">
@@ -504,7 +504,7 @@ export default function WorkflowsPage({
                 className="wf-name"
                 value={name}
                 onChange={(e) => { setName(e.target.value); setDirty(true); }}
-                aria-label="配方名称"
+                aria-label="流程名称"
               />
               <button type="button" className="btn btn-primary" onClick={onSave} disabled={!!busy || (!dirty && !!currentId)}>
                 {dirty || !currentId ? '保存' : '已保存'}
@@ -607,7 +607,7 @@ export default function WorkflowsPage({
                             rows={2}
                             value={step.prompt}
                             onChange={(e) => patchStep(step.id, { prompt: e.target.value })}
-                            placeholder="会拼在主题和上一步结果前面"
+                            placeholder="这一步想特别强调什么，比如语气、平台，或不要写的内容"
                           />
                         </label>
                       </div>
@@ -628,7 +628,7 @@ export default function WorkflowsPage({
                   </label>
                 )}
                 <label>
-                  主题 / 起点（填入对话或试跑都会带上）
+                  这次想做成什么
                   <textarea
                     rows={3}
                     value={runInput}
@@ -641,7 +641,7 @@ export default function WorkflowsPage({
                     填入对话
                   </button>
                   <button type="button" className="chip" onClick={() => void onRun()} disabled={!!busy}>
-                    在本页试跑
+                    先看一遍结果
                   </button>
                 </div>
                 <p className="wf-hint">填入对话后不会自动发送，你看过再按发送才会整条跑。</p>

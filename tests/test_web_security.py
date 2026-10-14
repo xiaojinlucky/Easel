@@ -77,6 +77,10 @@ def test_env_newline_injection_rejected(client, row):
 @pytest.mark.parametrize("updates", [
     {"OPENAI_API_KEY": "sk-x\nPATH=/tmp/evil"},   # 值里换行
     {"OPENAI_API_KEY": "sk-x\x00"},               # 值里 NUL
+    {"OPENAI_API_KEY": "sk-$(id)"},                # 命令替换
+    {"OPENAI_API_KEY": "sk-`id`"},                 # 反引号
+    {"OPENAI_BASE_URL": "https://a.com/v1;rm"},    # 分号另起命令
+    {"OPENAI_BASE_URL": "http://user:pass@evil.example/v1"},  # 地址里夹用户名密码
     {"A=B\nC": "1"},                              # 键名里换行
     {"FOO BAR": "1"},                             # 键名含空格
     {"9LIVES": "1"},                              # 键名数字开头
@@ -225,7 +229,9 @@ def test_model_only_change_not_blocked(client):
 # ---- #48 传输层：默认必须是久经考验的 CLI 路径 ----
 
 def test_chat_transport_defaults_to_cli(monkeypatch):
+    """本机旧对话不在上游用来认会话的 jsonl 里，默认仍走 CLI。http 要显式打开。"""
     assert web.CHAT_TRANSPORT == "cli"
+    assert "_resolve_transport" in open(web.__file__, encoding="utf-8").read()
 
 
 def test_http_path_falls_back_without_httpx():

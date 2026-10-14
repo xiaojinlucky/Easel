@@ -173,11 +173,11 @@ def _postiz_probe() -> dict:
         host, port, url = _postiz_target()
     except Exception as exc:
         return {'loggedIn': False, 'channels': [], 'channelCount': 0, 'online': False,
-                'note': '发布栈地址读取失败：' + str(exc)[:60]}
+                'note': '排期服务暂时读不出来。'}
 
     if not _port_open(host, port):
         return {'loggedIn': False, 'channels': [], 'channelCount': 0, 'online': False,
-                'note': f'服务未启动：端口 {port} 未监听，先启动本机发布栈'}
+                'note': '排期还没开。要发到各个平台，需要先把本机的排期服务打开。'}
 
     from requests.exceptions import Timeout
 
@@ -192,13 +192,13 @@ def _postiz_probe() -> dict:
         # 端口开着但服务不答（Docker 端口映射会先接住连接）——这跟「服务没启动」
         # 是两种处境：一个等一会就好，一个得去启动。文案必须分开，别混为一谈。
         return {'loggedIn': False, 'channels': [], 'channelCount': 0, 'online': False,
-                'note': f'{port} 端口已监听但 {_POSTIZ_TIMEOUT:.0f}s 内无响应，可能正在启动：' + str(exc)[:50]}
+                'note': '排期服务正在启动，请稍等再看。'}
     except RuntimeError as exc:
         return {'loggedIn': False, 'channels': [], 'channelCount': 0, 'online': False,
-                'note': 'Postiz 本机账号尚未初始化：' + str(exc)[:60]}
+                'note': '排期服务还没完成第一次设置。'}
     except Exception as exc:
         return {'loggedIn': False, 'channels': [], 'channelCount': 0, 'online': False,
-                'note': '服务未就绪，先启动本机发布栈：' + str(exc)[:60]}
+                'note': '排期服务暂时连不上。'}
 
     channels = [{
         'id': str(item.get('id') or item.get('_id') or ''),
@@ -209,9 +209,9 @@ def _postiz_probe() -> dict:
 
     if channels:
         return {'loggedIn': True, 'channels': channels, 'channelCount': len(channels), 'online': True,
-                'note': f'已授权 {len(channels)} 个频道，可在 Postiz 排期'}
+                'note': f'已接上 {len(channels)} 个可以排期的账号。'}
     return {'loggedIn': False, 'channels': [], 'channelCount': 0, 'online': True,
-            'note': '服务已连接，还没有频道'}
+            'note': '排期服务已开，还没有绑定要发的账号。'}
 
 
 def _wechat_status() -> dict:
@@ -232,12 +232,12 @@ def _wechat_status() -> dict:
                     'note': '已配置：' + '、'.join(names)}
         if accounts:
             return {'loggedIn': False, 'configured': 0, 'total': len(accounts),
-                    'note': '账号存在但未填全 AppID / AppSecret'}
+                    'note': '公众号资料还没填完。补上 AppID 和密钥后再试。'}
         return {'loggedIn': False, 'configured': 0, 'total': 0,
-                'note': '尚未配置：需 AppID 与 AppSecret'}
+                'note': '还没填公众号的 AppID 和密钥。'}
     except Exception as exc:                       # 配置损坏 / 返回值异常都不应让整页 500
         return {'loggedIn': False, 'configured': 0, 'total': 0,
-                'note': '公众号配置读取失败：' + str(exc)[:80]}
+                'note': '公众号资料暂时读不出来。'}
 
 
 def _caps(pid: str) -> dict:

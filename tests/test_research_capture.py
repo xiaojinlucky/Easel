@@ -16,8 +16,13 @@ def test_research_page_offers_rewrite_actions():
     assert '改成可发文案' in text
     assert '刚保存' in text
     assert 'MAX_PICK = 12' in text
-    assert 'UNTRUSTED_REFERENCE' in text
     assert "stage: 'produce'" in text
+    assert "stage: 'plan'" in text
+    assert "requestMaterialDraft({ ids, all: false }, workflow.task, workflow.stage)" in text
+    assert "requestMaterialDraft({ all: true }, '', 'produce')" in text
+    assert "stage || draft.stage || 'produce'" in text
+    builder = (ROOT / 'easel' / 'material_draft.py').read_text(encoding='utf-8')
+    assert 'UNTRUSTED_REFERENCE' in builder
 
 
 @pytest.fixture

@@ -56,13 +56,41 @@ def find_sdk(args) -> Path:
     sys.exit(1)
 
 
+def _workspace_root() -> Path:
+    """agent 实际读写的 workspace。
+
+    不能写死：OpenClaw 的默认布局变过（2026.6.x 是 ~/.openclaw/workspace-easel，2026.9.x 起是
+    ~/.openclaw-easel/workspace）。写死其一，在另一个版本上产物就落进 agent 不读的目录，而
+    mkdir 照样成功、这里照样报路径 —— 用户只会发现「内容库里没有」（issue #19 的技能层版本）。
+    优先走 Easel 的统一解析器；本文件也会被同步进 workspace 单独跑，那时 import 不到，
+    再挑一个已经有 skills 的目录。本工作台的 profile 是 easel-studio，实际目录仍是
+    ~/.openclaw/workspace-easel，不能落到 ~/.openclaw-easel/workspace。
+    """
+    override = os.environ.get("EASEL_OPENCLAW_WORKSPACE")
+    if override:
+        return Path(override)
+    for root in (Path(__file__).resolve().parents[4], Path.cwd()):
+        if (root / "easel" / "openclaw_workspace.py").is_file():
+            try:
+                sys.path.insert(0, str(root))
+                from easel.openclaw_workspace import workspace_dir
+                return workspace_dir()
+            except Exception:  # noqa: BLE001 — 解析器不可用就退化，别把产线拖死
+                break
+    legacy = Path.home() / ".openclaw" / "workspace-easel"
+    other = Path.home() / ".openclaw-easel" / "workspace"
+    for cand in (legacy, other):
+        skills = cand / "skills"
+        try:
+            if skills.is_dir() and any(skills.iterdir()):
+                return cand
+        except OSError:
+            continue
+    return legacy
+
+
 def find_base(args) -> Path:
-    if args.base:
-        base = Path(args.base)
-    elif os.environ.get("EASEL_OPENCLAW_WORKSPACE"):
-        base = Path(os.environ["EASEL_OPENCLAW_WORKSPACE"]) / "outputs" / "视频产线"
-    else:
-        base = Path.home() / ".openclaw" / "workspace-easel" / "outputs" / "视频产线"
+    base = Path(args.base) if args.base else _workspace_root() / "outputs" / "视频产线"
     base.mkdir(parents=True, exist_ok=True)
     return base
 

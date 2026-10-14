@@ -1,7 +1,7 @@
 import asyncio
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
-from easel import research
+from easel import material_draft, research
 
 router = APIRouter(prefix='/api/research')
 
@@ -69,6 +69,20 @@ async def batch_delete(request: BatchIds):
     return {'deleted': await asyncio.to_thread(research.delete_sources, request.ids)}
 
 
+class MaterialDraftBody(BaseModel):
+    persona: str = ''
+    ids: list[str] | None = None
+    all: bool = False
+
+
+@router.post('/sources/draft')
+async def draft_from_materials(body: MaterialDraftBody):
+    result = await asyncio.to_thread(material_draft.build, body.persona, body.ids, body.all)
+    if not result.get('ok'):
+        raise HTTPException(400, result.get('error') or '这次没写完。')
+    return result
+
+
 @router.post('/sources/{identifier}/tags')
 async def add_source_tag(identifier: str, request: TagRequest):
     try:
@@ -103,6 +117,12 @@ async def trash_purge():
 @router.post('/reindex')
 async def reindex():
     return await asyncio.to_thread(research.reindex_all)
+
+
+@router.get('/tags')
+async def research_tags(limit: int = 300):
+    """知识库「全部标签」抽屉：标签云 + 来源计数。"""
+    return await asyncio.to_thread(research.tag_cloud, max(1, min(limit, 1000)))
 
 
 @router.get('/index-status')
@@ -155,6 +175,21 @@ async def refresh_ocr(request: OcrRequest):
 async def export_source_folder(identifier: str):
     try:
         return await asyncio.to_thread(research.export_folder, identifier)
+    except research.CollectionError as exc:
+        raise HTTPException(exc.status, str(exc)) from exc
+
+
+@router.post('/knowledge/sync')
+async def knowledge_sync():
+    """把库里已有素材回填成 knowledge/<站点>/<id>/ 文件夹（迁旧数据、修复漏写）。"""
+    return await asyncio.to_thread(research.sync_knowledge_all)
+
+
+@router.get('/knowledge/folder/{identifier}')
+async def knowledge_folder(identifier: str):
+    """这条素材在磁盘上的落点，供界面显示「用 Obsidian 打开」的位置。"""
+    try:
+        return await asyncio.to_thread(research.knowledge_path, identifier)
     except research.CollectionError as exc:
         raise HTTPException(exc.status, str(exc)) from exc
 

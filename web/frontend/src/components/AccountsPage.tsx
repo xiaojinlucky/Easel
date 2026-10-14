@@ -6,7 +6,7 @@ import {
 } from '../lib/api';
 import type { AccountItem, AccountWhoami, LoginStatus } from '../lib/api';
 import { getWhoamiCache, setWhoamiCache, verifyStale } from '../lib/whoami';
-import WorkflowDraftBar from './WorkflowDraftBar';
+
 
 type QRState = {
   platform: string;
@@ -24,10 +24,10 @@ const STATE_LABEL: Record<string, string> = {
   scanned: '扫码成功',
   sms_required: '需短信验证',
   verifying: '验证中…',
-  success: '登录成功 ✅',
-  expired: '二维码已过期',
-  error: '登录出错',
-  unknown: '等待中…',
+  success: '已登录',
+  expired: '二维码过期了',
+  error: '没有登上',
+  unknown: '请稍候',
 };
 
 /** 头像：有 URL 就显示图（加载失败退回首字），否则显示昵称/平台名首字。 */
@@ -41,16 +41,12 @@ function Avatar({ url, name }: { url?: string; name: string }) {
   return <div className="account-avatar account-avatar-fallback">{initial}</div>;
 }
 
-export default function AccountsPage({
-  onDraftToChat,
-}: {
-  onDraftToChat?: (text: string, stage?: string, skill?: string, workflowId?: string) => void;
-}) {
+export default function AccountsPage() {
   const [accounts, setAccounts] = useState<AccountItem[]>([]);
   const [err, setErr] = useState('');
   const [qr, setQr] = useState<QRState | null>(null);
   const [qrNonce, setQrNonce] = useState(0);   // 每次登录 +1，稳定缓存 key，避免每次轮询 img 闪烁
-  const [terminalMsg, setTerminalMsg] = useState('');
+
   const [busy, setBusy] = useState('');
   const [logoutBusy, setLogoutBusy] = useState('');
   const [smsCode, setSmsCode] = useState('');
@@ -99,7 +95,7 @@ export default function AccountsPage({
           onUpdate: (platform, r) => setWhoami((w) => ({ ...w, [platform]: r })),
         });
       })
-      .catch(() => setErr('加载账号状态失败'));
+      .catch(() => setErr('账号没加载出来'));
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -131,16 +127,16 @@ export default function AccountsPage({
 
   const submitSms = useCallback(async () => {
     const code = smsCode.replace(/\D/g, '');
-    if (code.length < 4) { setSmsErr('请输入手机收到的验证码'); return; }
+    if (code.length < 4) { setSmsErr('输入验证码'); return; }
     setSmsBusy(true); setSmsErr('');
     try {
       await submitLoginSms(qrPlatformRef.current, code);
       setSmsCode('');
       // 乐观切到「验证中」转圈：后端读走码→verifying；成功→success，失败→退回 sms_required 带错误
-      setQr((prev) => prev && ({ ...prev, state: 'verifying', message: '正在验证验证码…' }));
+      setQr((prev) => prev && ({ ...prev, state: 'verifying', message: '' }));
       // 不停轮询：runner 读走验证码填码提交后，state 会转 success / 或退回 sms_required 重试
-    } catch (e) {
-      setSmsErr(e instanceof Error ? e.message : '提交验证码失败');
+    } catch {
+      setSmsErr('验证码不对');
     } finally {
       setSmsBusy(false);
     }
@@ -152,7 +148,7 @@ export default function AccountsPage({
     setCredForm({ appId: '', appSecret: '', author: '' });
     setCredMsg(''); setCredErr('');
     getCredentials(a.platform)
-      .then((c) => { if (aliveRef.current && c.configured) setCredMsg(`已配置：AppID ${c.appIdMasked}`); })
+      .then((c) => { if (aliveRef.current && c.configured) setCredMsg('已填写'); })
       .catch(() => { /* 未配置，忽略 */ });
   }, []);
 
@@ -162,7 +158,7 @@ export default function AccountsPage({
     if (!cred) return;
     const appId = credForm.appId.trim();
     const appSecret = credForm.appSecret.trim();
-    if (!appId || !appSecret) { setCredErr('AppID 和 AppSecret 都要填'); return; }
+    if (!appId || !appSecret) { setCredErr('两项都要填'); return; }
     setCredBusy(true); setCredErr(''); setCredMsg('');
     try {
       const r = await saveCredentials(cred.platform, { appId, appSecret, name: cred.name, author: credForm.author.trim() });
@@ -170,10 +166,10 @@ export default function AccountsPage({
         runWhoami(cred.platform);
         closeCred();
       } else {
-        setCredErr(r.message || '验证未通过');
+        setCredErr('没通过');
       }
-    } catch (e) {
-      setCredErr(e instanceof Error ? e.message : '保存失败');
+    } catch {
+      setCredErr('没保存上');
     } finally {
       setCredBusy(false);
     }
@@ -182,7 +178,6 @@ export default function AccountsPage({
   const handleLogin = useCallback(async (a: AccountItem) => {
     if (!a.supported) return;
     if (a.backend === 'wechat-oa') { openCred(a); return; }   // 公众号走凭证表单，不扫码
-    setTerminalMsg('');
     setBusy(a.platform);
     setSmsCode(''); setSmsErr('');
     qrPlatformRef.current = a.platform;
@@ -190,25 +185,25 @@ export default function AccountsPage({
     try {
       const res = await startLogin(a.platform);
       if (res.mode === 'terminal') {
-        setTerminalMsg(res.message || '请在终端登录');
+        setErr('请在电脑上完成登录');
         return;
       }
       if (res.mode === 'credentials') { openCred(a); return; }
       setQr({ platform: a.platform, name: a.name, state: res.state || 'starting',
-              message: res.message || '', qr: res.qr || '' });   // qrTs 由随后的轮询填入
+              message: '', qr: res.qr || '' });
       stopPoll();
       pollRef.current = setInterval(async () => {
         try {
           const s = await loginStatus(a.platform);
-          setQr((prev) => prev && ({ ...prev, state: s.state, message: s.message, qr: s.qr, qrTs: s.qrTs }));
+          setQr((prev) => prev && ({ ...prev, state: s.state, message: '', qr: s.qr, qrTs: s.qrTs }));
           if (['success', 'expired', 'error'].includes(s.state)) {
             stopPoll();
             if (s.state === 'success') runWhoami(a.platform);   // 登录成功即拉账号信息
           }
         } catch { /* 忽略单次轮询失败 */ }
       }, 2000);
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : '启动登录失败');
+    } catch {
+      setErr('登录没开始');
     } finally {
       setBusy('');
     }
@@ -229,11 +224,11 @@ export default function AccountsPage({
     setQrNonce((n) => n + 1);
     try {
       const res = await startMpLogin(a.platform);
-      setQr({ platform: a.platform, name: a.name + ' · 后台取数', state: res.state || 'starting',
-              message: res.message || '', qr: res.qr || '', qrTs: res.qrTs });
+      setQr({ platform: a.platform, name: a.name, state: res.state || 'starting',
+              message: '', qr: res.qr || '', qrTs: res.qrTs });
       stopPoll();
       const applyStatus = (s: LoginStatus): boolean => {
-        setQr((prev) => prev && ({ ...prev, state: s.state, message: s.message, qr: s.qr, qrTs: s.qrTs }));
+        setQr((prev) => prev && ({ ...prev, state: s.state, message: '', qr: s.qr, qrTs: s.qrTs }));
         if (!['success', 'expired', 'error'].includes(s.state)) return false;
         stopPoll();
         if (s.state === 'success') markWechatLoggedIn(a.platform);
@@ -248,15 +243,15 @@ export default function AccountsPage({
       };
       void tick();
       pollRef.current = setInterval(() => { void tick(); }, 500);
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : '启动后台登录失败');
+    } catch {
+      setErr('登录没开始');
     } finally {
       setBusy('');
     }
   }, [stopPoll, markWechatLoggedIn]);
 
   const handleLogout = useCallback(async (a: AccountItem) => {
-    if (!window.confirm(`确定退出「${a.name}」的登录？登录态将被清除，下次发布需重新扫码。`)) return;
+    if (!window.confirm(`退出「${a.name}」？`)) return;
     setLogoutBusy(a.platform);
     try {
       await logoutAccount(a.platform);
@@ -265,8 +260,8 @@ export default function AccountsPage({
       setWhoami((w) => { const n = { ...w }; delete n[a.platform]; return n; });
       setWhoamiCache(a.platform, null);
       load();
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : '退出登录失败');
+    } catch {
+      setErr('没退出');
     } finally {
       setLogoutBusy('');
     }
@@ -282,38 +277,19 @@ export default function AccountsPage({
   };
 
   const badge = (a: AccountItem) => {
-    if (!a.supported) return <span className="badge">待重写</span>;
-    if (a.backend === 'wechat-oa' && a.loggedIn) {
-      return <span className="badge badge-ok">✓ 已登录</span>;
-    }
-    if (whoami[a.platform] === 'loading') return <span className="badge">校验中…</span>;
-    if (effLoggedIn(a)) return <span className="badge badge-ok">✓ 已登录</span>;
+    if (!a.supported) return <span className="badge">暂不可用</span>;
+    if (effLoggedIn(a)) return <span className="badge badge-ok">已登录</span>;
     return <span className="badge">未登录</span>;
   };
 
   return (
     <div className="accounts-page">
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
-        <div>
-          <h1 className="page-title">账号登录 Accounts</h1>
-          <p className="page-subtitle">
-            用手机 App 扫码登录，登录态本地持久化，之后发布免登。<br />
-            ⚠️ 平台可能对机房/代理 IP 判风险导致二维码弹不出，需干净/家宽 IP，或在正常网络登录后拷贝登录态目录。
-          </p>
-        </div>
-        <div className="gallery-head-actions">
-          <WorkflowDraftBar
-            context="针对我已登录的账号，按这条配方执行；先核对登录态，再做发布或数据相关步骤。"
-            onDraftToChat={onDraftToChat}
-          />
-          <button className="btn btn-sm" onClick={load}>⟳ 刷新</button>
-        </div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+        <h1 className="page-title">账号</h1>
+        <button className="btn btn-sm" onClick={load}>刷新</button>
       </div>
 
       {err && <div style={{ color: 'var(--red)', fontSize: 14, marginTop: 12 }}>{err}</div>}
-      {terminalMsg && (
-        <div className="card" style={{ padding: 13, fontSize: 14, marginTop: 14 }}>{terminalMsg}</div>
-      )}
 
       <div className="accounts-grid">
         {accounts.map((a) => {
@@ -333,24 +309,13 @@ export default function AccountsPage({
                   <span className="account-nick">{info.name || '（已登录）'}</span>
                 </div>
               )}
-              {!logged && (
-                <div className="account-card-note">{a.note ? a.note : `后端：${a.name}`}</div>
-              )}
-
               <div style={{ display: 'flex', gap: 8, marginTop: 'auto' }}>
                 {logged ? (
-                  <>
-                    <button className="btn btn-sm" style={{ flex: 1 }}
-                      disabled={busy === a.platform || busy === a.platform + ':mp' || w === 'loading'}
-                      onClick={() => runWhoami(a.platform)}>
-                      {w === 'loading' ? '校验中…' : '校验账号'}
-                    </button>
-                    <button className="btn btn-sm btn-ghost" style={{ flex: 1 }}
-                      disabled={logoutBusy === a.platform}
-                      onClick={() => handleLogout(a)}>
-                      {logoutBusy === a.platform ? '退出中…' : '退出登录'}
-                    </button>
-                  </>
+                  <button className="btn btn-sm btn-ghost btn-block"
+                    disabled={logoutBusy === a.platform}
+                    onClick={() => handleLogout(a)}>
+                    {logoutBusy === a.platform ? '退出中…' : '退出'}
+                  </button>
                 ) : (
                   // 公众号与其它平台统一：都走扫码登录（公众号扫的是后台会话，用于发布+数据）
                   <button
@@ -370,19 +335,14 @@ export default function AccountsPage({
         <div className="overlay" onClick={closeQr}>
           <div className="modal" style={{ width: 360, maxWidth: '100%', textAlign: 'center' }}
             onClick={(e) => e.stopPropagation()}>
-            <h3 style={{ margin: '0 0 4px' }}>登录 {qr.name}</h3>
+            <h3 style={{ margin: '0 0 4px' }}>{qr.name}</h3>
             <div style={{ fontSize: 14, marginBottom: 14,
               color: qr.state === 'success' ? 'var(--green)'
                 : ['error', 'expired'].includes(qr.state) ? 'var(--red)' : 'var(--text-secondary)' }}>
-              {STATE_LABEL[qr.state] || qr.state}{qr.message ? ` — ${qr.message}` : ''}
+              {STATE_LABEL[qr.state] || '请稍候'}
             </div>
             {qr.state === 'sms_required' ? (
               <div style={{ padding: '6px 4px 2px' }}>
-                <div style={{ fontSize: 14, marginBottom: 10,
-                  color: /错误|过期|失败|重新|未找到|未完成|不正确|失效/.test(qr.message || '')
-                    ? 'var(--red)' : 'var(--text-secondary)' }}>
-                  {qr.message || '平台风控要求短信验证，验证码已发到你手机，请输入：'}
-                </div>
                 <input
                   value={smsCode}
                   onChange={(e) => setSmsCode(e.target.value.replace(/\D/g, '').slice(0, 8))}
@@ -399,7 +359,7 @@ export default function AccountsPage({
               </div>
             ) : qr.state === 'window_login' ? (
               <div style={{ fontSize: 14, color: 'var(--text-secondary)', padding: '20px 8px', lineHeight: 1.6 }}>
-                {qr.message || '已弹出 CloakBrowser 窗口。请在那个窗口里扫码，不要关掉那个窗口。'}
+                在弹出的窗口里扫码
                 {qr.qr ? (
                   <img className="qr-img" style={{ marginTop: 12 }}
                     src={`${mediaUrl(qr.qr)}?v=${qr.qrTs || qrNonce}`} alt="登录二维码" />
@@ -408,17 +368,15 @@ export default function AccountsPage({
             ) : qr.state === 'qr_ready' && qr.qr ? (
               <img className="qr-img" src={`${mediaUrl(qr.qr)}?v=${qr.qrTs || qrNonce}`} alt="登录二维码" />
             ) : qr.state === 'scanned' ? (
-              <div className="loading" style={{ padding: 40 }}><div className="spinner" />扫码成功，正在跳转验证…（首次可能等十几秒）</div>
+              <div className="loading" style={{ padding: 40 }}><div className="spinner" />正在登录</div>
             ) : qr.state === 'verifying' ? (
-              <div className="loading" style={{ padding: 40 }}><div className="spinner" />正在验证验证码，登录中…</div>
+              <div className="loading" style={{ padding: 40 }}><div className="spinner" />正在登录</div>
             ) : qr.state === 'success' ? (
-              <div style={{ fontSize: 48, padding: 40 }}>✅</div>
+              null
             ) : ['error', 'expired'].includes(qr.state) ? (
-              <div style={{ fontSize: 14, color: 'var(--red)', padding: 30 }}>
-                {qr.message || '登录失败'}<br />可关闭后重试（或换干净 IP）。
-              </div>
+              null
             ) : (
-              <div className="loading" style={{ padding: 40 }}><div className="spinner" />准备二维码…</div>
+              <div className="loading" style={{ padding: 40 }}><div className="spinner" /></div>
             )}
             <div style={{ marginTop: 16 }}>
               <button className="btn" onClick={closeQr}>{qr.state === 'success' ? '完成' : '关闭'}</button>
@@ -430,11 +388,7 @@ export default function AccountsPage({
       {cred && (
         <div className="overlay" onClick={closeCred}>
           <div className="modal" style={{ width: 420, maxWidth: '100%' }} onClick={(e) => e.stopPropagation()}>
-            <h3 style={{ margin: '0 0 4px' }}>配置 {cred.name}</h3>
-            <div style={{ fontSize: 14, color: 'var(--text-secondary)', marginBottom: 14, lineHeight: 1.6 }}>
-              公众号用官方接口发布，需填开发者凭证（公众平台 → 设置与开发 → 开发接口管理）。<br />
-              ⚠️ 需把本服务器出口 IP 加入公众号「IP 白名单」，否则报 40164。文章发到<b>草稿箱</b>，群发请到 mp 后台确认。
-            </div>
+            <h3 style={{ margin: '0 0 16px' }}>{cred.name}</h3>
             {credMsg && <div style={{ fontSize: 14, color: 'var(--green)', marginBottom: 10 }}>{credMsg}</div>}
             <label style={{ fontSize: 14, color: 'var(--text-secondary)' }}>AppID</label>
             <input value={credForm.appId} autoFocus
@@ -444,9 +398,9 @@ export default function AccountsPage({
             <label style={{ fontSize: 14, color: 'var(--text-secondary)' }}>AppSecret</label>
             <input value={credForm.appSecret} type="password"
               onChange={(e) => setCredForm((f) => ({ ...f, appSecret: e.target.value.trim() }))}
-              placeholder="开发者密钥（不会回显）" style={{ width: '100%', boxSizing: 'border-box', padding: '9px 12px',
+              placeholder="密钥" style={{ width: '100%', boxSizing: 'border-box', padding: '9px 12px',
                 margin: '4px 0 12px', border: '1px solid var(--border)', borderRadius: 8, fontSize: 14 }} />
-            <label style={{ fontSize: 14, color: 'var(--text-secondary)' }}>默认作者（可选）</label>
+            <label style={{ fontSize: 14, color: 'var(--text-secondary)' }}>作者</label>
             <input value={credForm.author}
               onChange={(e) => setCredForm((f) => ({ ...f, author: e.target.value }))}
               placeholder="文章署名" style={{ width: '100%', boxSizing: 'border-box', padding: '9px 12px',
@@ -454,7 +408,7 @@ export default function AccountsPage({
             {credErr && <div style={{ color: 'var(--red)', fontSize: 14, marginTop: 8 }}>{credErr}</div>}
             <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
               <button className="btn btn-primary" style={{ flex: 1 }} disabled={credBusy} onClick={submitCred}>
-                {credBusy ? '验证中…' : '保存并验证'}
+                {credBusy ? '保存中…' : '保存'}
               </button>
               <button className="btn" onClick={closeCred}>关闭</button>
             </div>

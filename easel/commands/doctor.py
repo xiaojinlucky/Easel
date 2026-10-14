@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -38,7 +39,8 @@ def _node_version_ok(strict: bool) -> bool:
     """检查 Node.js 版本。
 
     strict=True 对齐 openclaw@latest（2026.9.x）的引擎：>=24.16.0 <25 || >=26.1.0（25.x/26.0 被排除）。
-    strict=False 用于已装较旧 OpenClaw（<=2026.6.x，引擎 ^20.10 || ^22.11 || >=24）的宽松下限 >=20.10。
+    strict=False 用于已装较旧 OpenClaw（下限 2026.6.11）。下限是 22.19，不是 20.10：
+    openclaw@2026.6.11 的 engines 是 >=22.19.0，低于这个版本 doctor 会报绿但命令起不来。
     """
     try:
         result = subprocess.run(
@@ -54,7 +56,7 @@ def _node_version_ok(strict: bool) -> bool:
         major, minor = int(m.group(1)), int(m.group(2))
         if strict:
             return (major == 24 and minor >= 16) or (major == 26 and minor >= 1) or major >= 27
-        return (major, minor) >= (20, 10)
+        return (major, minor) >= (22, 19)
     except (subprocess.TimeoutExpired, FileNotFoundError):
         return False
 
@@ -121,12 +123,64 @@ def _gateway_healthy() -> bool:
         return False
 
 
-def _skills_synced() -> bool:
-    """Check ~/.openclaw/workspace-easel/skills/ has content."""
-    skills_dir = Path.home() / ".openclaw" / "workspace-easel" / "skills"
-    if not skills_dir.is_dir():
-        return False
-    return any(skills_dir.iterdir())
+def _skills_synced() -> tuple[bool, str]:
+    """检查 agent 真正读取的那个 workspace 里有没有 skills。
+
+    目录不写死。OpenClaw 的默认布局变过，写死之后 sync 和 doctor 会各看各的。
+    """
+    from easel.openclaw_workspace import workspace_dir
+
+    ws = workspace_dir()
+    skills_dir = ws / "skills"
+    try:
+        ok = skills_dir.is_dir() and any(skills_dir.iterdir())
+    except OSError:
+        ok = False
+    return ok, f"agent 实际读取的 workspace 是 {ws}，其中 skills/ 为空或不存在"
+
+
+def _openclaw_config_path() -> Path:
+    """本工作台的 openclaw.json。测试可用 EASEL_OPENCLAW_STATE_DIR 指到临时目录。"""
+    state = os.environ.get("EASEL_OPENCLAW_STATE_DIR")
+    if state:
+        return Path(state) / "openclaw.json"
+    from easel.runtime import CONFIG_FILE
+    return CONFIG_FILE
+
+
+def _primary_model_routable() -> tuple[bool, str]:
+    """检查主模型指向的 provider 在 openclaw.json 里真的配了认证。
+
+    只看 .env 会漏掉「文件里有占位 key、配置里却没写 provider」：doctor 全绿，对话报没有认证。
+    拿不准就放行，不制造假告警。
+    """
+    cfg_path = _openclaw_config_path()
+    if not cfg_path.is_file():
+        return False, f"{cfg_path} 不存在 — 先跑 bash setup.sh（Windows: setup.ps1）"
+    try:
+        cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return False, f"{cfg_path} 读不出来（{exc}）"
+
+    primary = (((cfg.get("agents") or {}).get("defaults") or {})
+               .get("model") or {}).get("primary") or ""
+    if not primary:
+        return False, "未设置 agents.defaults.model.primary — 重新跑 setup 脚本"
+    if "/" not in primary:
+        return True, ""
+
+    provider = primary.split("/", 1)[0]
+    providers = (cfg.get("models") or {}).get("providers") or {}
+    entry = providers.get(provider)
+    if not isinstance(entry, dict):
+        return False, (f"primary 是 {primary}，但 models.providers.{provider} 不存在 —— "
+                       "在 .env 填好真实 key 后重新跑 setup 脚本")
+    has_auth = bool(str(entry.get("apiKey") or "").strip()) or bool(entry.get("localService")) \
+        or any(k for k, v in entry.items() if "oauth" in k.lower() and v)
+    if not has_auth:
+        return False, (f"models.providers.{provider} 没有 apiKey —— "
+                       "在 .env 填好真实 key 后重新跑 setup 脚本")
+    return True, ""
 
 
 def _env_key_valid() -> bool:
@@ -189,11 +243,11 @@ def cmd_doctor(_args) -> int:
                       "请安装 Python 3.10 或更高版本")
     all_ok &= _check("Python venv module", _venv_available(),
                       "Debian/Ubuntu 请安装 python3-venv")
-    # openclaw 版本决定 Node 引擎要求：2026.9.x 需要 Node 24.16+，较旧版本沿用 >=20.10 的宽松下限。
+    # openclaw 版本决定 Node 引擎要求：2026.9.x 需要 Node 24.16+，2026.6.x 需要 22.19+。
     # 未装 openclaw 时按 setup 的默认安装目标（openclaw@latest）从严要求 24.16+。
     oc_ver = _openclaw_version()
     node_strict = oc_ver is None or oc_ver >= (2026, 9, 0)
-    node_floor = "24.16" if node_strict else "20.10"
+    node_floor = "24.16" if node_strict else "22.19"
     has_node = shutil.which("node") is not None
     node_ok = _node_version_ok(node_strict)
     node_detail = (f"请安装 Node.js >= {node_floor}: https://nodejs.org/" if not has_node
@@ -236,15 +290,18 @@ def cmd_doctor(_args) -> int:
     except Exception as exc:
         all_ok &= _check('ChatGPT subscription', False, str(exc))
 
+    route_ok, route_detail = _primary_model_routable()
+    all_ok &= _check("OpenClaw model routing", route_ok, route_detail)
+
     # 4. OpenClaw gateway running
     gw_ok = _gateway_healthy()
     all_ok &= _check("OpenClaw gateway (localhost:18789)", gw_ok,
                       "运行 python -m easel gateway start")
 
     # 5. Skills synced
-    synced = _skills_synced()
+    synced, synced_detail = _skills_synced()
     all_ok &= _check("Skills synced", synced,
-                      "重新运行 setup.ps1（Windows）或 bash openclaw/sync.sh（Linux/macOS）")
+                      f"{synced_detail}；重新运行 setup.ps1（Windows）或 bash openclaw/sync.sh（Linux/macOS）")
 
     # 6. Key project files
     gateway_label = "scripts/gateway.ps1" if os.name == "nt" else "scripts/gateway.sh"

@@ -59,7 +59,6 @@ export default function SkillPicker({
         {selected ? (
           <span className="skill-picker-current">
             <strong>{skillSummary(selected)}</strong>
-            <em>{selected.name}</em>
           </span>
         ) : (
           <span className="skill-picker-placeholder">搜索并选择技能…</span>
@@ -71,7 +70,7 @@ export default function SkillPicker({
             ref={searchRef}
             className="skill-picker-search"
             value={q}
-            placeholder="搜中文说明或英文名"
+            placeholder="搜索技能"
             onChange={(e) => setQ(e.target.value)}
           />
           <div className="skill-picker-list">
@@ -95,7 +94,6 @@ export default function SkillPicker({
               >
                 <span className="skill-picker-opt-main">
                   <strong>{skillSummary(s)}</strong>
-                  <em>{s.name}</em>
                 </span>
                 <span className="skill-picker-layer">{layerLabel(s.layer) || '基础'}</span>
               </button>
