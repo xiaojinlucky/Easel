@@ -510,13 +510,9 @@ async def local_write_guard(request: Request, call_next):
     ① 带 Origin（浏览器跨站发起）：Origin 必须在 _LOCAL_ORIGINS 里，否则 403。
     ② 不带 Origin（curl / 本机脚本 / 测试客户端）：要求对端来自回环地址。
 
-    局限（重要）：这套防护假定 Origin/Host 头不可伪造——对浏览器成立，对裸
-    HTTP 客户端不成立。本进程仍监听 0.0.0.0（见文件底部 uvicorn.run，未随
-    此中间件收紧，兼容 Docker/远程容器端口转发场景），因此局域网内能直连到
-    这个端口的攻击者，只要手写 curl 一起伪造 `Origin`/`Host` 头就能绕过本
-    中间件与下面的 TrustedHostMiddleware。这里防的是「浏览器打开恶意网页」
-    这一类跨站攻击，不是「网络可达即视为可信」的边界——不要把本服务暴露在
-    不受信任的网络（公共 WiFi、无防火墙的公网主机）上。
+    此处负责本机浏览器的跨站写保护。外层手机领取中间件按真实连接地址
+    隔离局域网：非回环连接只能访问限时领取路由，不能靠伪造 Host/Origin
+    访问工作台。由本机反向代理转发的连接仍按本机请求处理。
     """
     origin = request.headers.get('origin')
     if request.url.path == '/api/clipper' and origin and re.fullmatch(r'chrome-extension://[a-p]{32}', origin):
@@ -536,6 +532,12 @@ async def local_write_guard(request: Request, call_next):
         if not allowed:
             return JSONResponse({'detail': '仅允许从本机工作台操作。'}, status_code=403)
     return await call_next(request)
+
+
+from web.phone_share import install_phone_sharing
+
+# 最后注册，作为最外层中间件；手机取件无需放宽整个工作台的 Host 白名单。
+install_phone_sharing(app, OUTPUTS_DIR)
 
 
 def list_personas() -> list[dict]:
@@ -563,7 +565,35 @@ def find_skill(name: str) -> str | None:
     for cand in cands:
         if (SKILLS_DIR / 'builtin' / cand / 'SKILL.md').is_file():
             return cand
+    for cand in cands:   # META-PATCH: 用户自建技能（放在 Easel 外，升级不丢）
+        if _meta_user_skill_ok(cand) and (META_USER_SKILLS / cand / 'SKILL.md').is_file():
+            return cand
     return None
+
+
+# ===== META-PATCH: 技能库自助管理（用户技能目录在 Easel 外） =====
+META_USER_SKILLS = Path(os.environ.get("META_USER_SKILLS", r"F:\科研大师兄\自媒体工作台\meta-skills"))
+META_SKILL_OFF = META_USER_SKILLS / "_停用"
+META_SKILL_NAMES = META_USER_SKILLS / "_names.json"
+_META_SKILL_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$')
+
+
+def _meta_user_skill_ok(name: str) -> bool:
+    return bool(_META_SKILL_RE.match(name or ''))
+
+
+def _meta_skill_dir(full: str) -> Path:
+    b = SKILLS_DIR / 'builtin' / full
+    if (b / 'SKILL.md').is_file():
+        return b
+    return META_USER_SKILLS / full
+
+
+def _meta_names() -> dict:
+    try:
+        return json.loads(META_SKILL_NAMES.read_text(encoding='utf-8-sig'))
+    except Exception:
+        return {}
 
 
 def _parse_skill_md(path: Path) -> tuple[str, str, str]:
@@ -630,6 +660,25 @@ def get_skills() -> list[dict]:
                     'needsApi': needs_api,
                     'apiConfigured': _skill_api_configured(d.name, env) if needs_api else True,
                 })
+    names = _meta_names()
+    builtin = {x['name'] for x in result}
+    for x in result:
+        x['source'] = 'builtin'
+        if names.get(x['name']):
+            x['displayName'] = names[x['name']]
+    for root, off in ((META_USER_SKILLS, False), (META_SKILL_OFF, True)):
+        if not root.is_dir():
+            continue
+        for d in sorted(root.iterdir()):
+            if not d.is_dir() or not _meta_user_skill_ok(d.name) or d.name in builtin or not (d / 'SKILL.md').is_file():
+                continue
+            try:
+                desc, layer, _ = _parse_skill_md(d / 'SKILL.md')
+            except Exception:
+                desc, layer = '', ''
+            result.append({'name': d.name, 'description': desc, 'layer': layer or 'general',
+                           'needsApi': False, 'apiConfigured': True, 'source': 'user',
+                           'disabled': off, 'displayName': names.get(d.name) or ''})
     return result
 
 
@@ -1109,6 +1158,9 @@ def _read_project_meta(proj: Path) -> dict:
     return meta
 
 
+_META_RUN_DIR_RE = re.compile(r'^(plan|review)_', re.I)
+
+
 def get_output_tree() -> list[dict]:
     if not OUTPUTS_DIR.is_dir():
         return []
@@ -1119,6 +1171,8 @@ def get_output_tree() -> list[dict]:
         if e.name.startswith('.') or e.name.startswith('_'):
             continue
         if not e.is_dir() or e.name in SYSTEM_TOPLEVEL_DIRS:
+            continue
+        if _META_RUN_DIR_RE.match(e.name):   # META-PATCH: 隐藏 plan_*/review_* 运行目录
             continue
         node = _build_output_node(e, e.name)
         meta = _read_project_meta(e)
@@ -1347,12 +1401,23 @@ async def api_persona_file_save(name: str, req: PersonaFileRequest):
     tmp = fp.with_suffix(".md.tmp")
     tmp.write_text(req.content, encoding="utf-8")
     tmp.replace(fp)
+    try:  # META-PATCH：同步写回画像正本，旧版本留在 history
+        canon = PROJECT_ROOT.parent / "meta-profile" / "画像" / Path(req.filename).name
+        if name == "做科研的Meta师兄" and canon.parent.is_dir() and canon.suffix == ".md":
+            if canon.is_file() and canon.read_text(encoding="utf-8") != req.content:
+                hd = PROJECT_ROOT.parent / "meta-profile" / "history" / time.strftime("%Y%m%d-%H%M%S")
+                hd.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(canon, hd / canon.name)
+            canon.write_text(req.content, encoding="utf-8")
+    except Exception:  # noqa: BLE001
+        pass
     return {"ok": True, "filename": req.filename}
 
 
 @app.delete("/api/persona/{name}")
 async def api_persona_delete(name: str):
     """删除整个画像目录。"""
+    raise HTTPException(403, "画像只有一份，不能删除")  # META-PATCH
     if not _valid_persona_name(name):
         raise HTTPException(400, "画像名非法")
     pd = (PROFILES_DIR / name).resolve()
@@ -1361,6 +1426,244 @@ async def api_persona_delete(name: str):
     import shutil
     shutil.rmtree(pd)
     return {"ok": True, "deleted": name}
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Meta 工作台 · 素材库（只读飞书收藏快照 outputs/_sources/feishu-收藏资产库-*.ndjson）
+# ═══════════════════════════════════════════════════════════════════════
+MATERIALS_DIR = OUTPUTS_DIR / "_sources"
+_MAT_CACHE: dict = {"path": None, "mtime": 0.0, "items": [], "full": {}}
+_MAT_REFRESH: dict = {"running": False, "msg": ""}
+COVERS_DIR = Path(os.environ.get("META_COVERS_DIR", r"G:\MetaWorkbench-deps\covers"))
+
+
+def _mat_covers() -> dict:
+    f = COVERS_DIR / "index.json"
+    try:
+        return json.loads(f.read_text(encoding="utf-8")) if f.exists() else {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _mat_str(v) -> str:
+    if v is None:
+        return ""
+    if isinstance(v, list):
+        return "、".join(_mat_str(x) for x in v if x is not None and not isinstance(x, dict))
+    return str(v).strip()
+
+
+def _mat_num(v):
+    try:
+        if v is None or v == "":
+            return None
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _mat_date(v) -> str:
+    """飞书日期：ISO 字符串 / 毫秒或秒时间戳 / 「2025-03-12」等，统一成 YYYY-MM-DD（北京时间）。"""
+    if v is None or v == "":
+        return ""
+    if isinstance(v, list):
+        v = v[0] if v else ""
+    if isinstance(v, (int, float)) or (isinstance(v, str) and v.strip().isdigit()):
+        n = float(v)
+        if n > 1e11:
+            n /= 1000
+        return time.strftime("%Y-%m-%d", time.gmtime(n + 8 * 3600)) if n > 0 else ""
+    m = re.search(r"(\d{4})[-/.年](\d{1,2})[-/.月](\d{1,2})", str(v))
+    return f"{m.group(1)}-{int(m.group(2)):02d}-{int(m.group(3)):02d}" if m else ""
+
+
+def _mat_link(v) -> str:
+    s = _mat_str(v)
+    m = re.search(r"https?://[^\s\)\]]+", s)
+    return m.group(0) if m else ""
+
+
+def _mat_latest() -> Path | None:
+    files = sorted(MATERIALS_DIR.glob("feishu-收藏资产库-*.ndjson"))
+    files = [f for f in files if f.stat().st_size > 0]
+    return files[-1] if files else None
+
+
+def _mat_load() -> dict:
+    p = _mat_latest()
+    if not p:
+        return {"date": "", "items": [], "full": {}}
+    ci = COVERS_DIR / "index.json"
+    mt = p.stat().st_mtime + (ci.stat().st_mtime if ci.exists() else 0)
+    if _MAT_CACHE["path"] == p and _MAT_CACHE["mtime"] == mt:
+        return _MAT_CACHE
+    items, full = [], {}
+    covers = _mat_covers()
+    with p.open(encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                r = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            rid = _mat_str(r.get("record_id")) or hashlib.sha256(json.dumps(r, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()[:20]
+            title = _mat_str(r.get("标题")) or _mat_str(r.get("一句话摘要"))[:40] or "（无标题）"
+            item = {
+                "id": rid,
+                "title": title,
+                "platform": _mat_str(r.get("来源平台")) or "其他",
+                "author": _mat_str(r.get("作者")),
+                "collectedAt": _mat_date(r.get("收藏时间")) or _mat_date(r.get("抓取时间")),
+                "publishedAt": _mat_date(r.get("发布时间")) or (re.search(r"发布 ?(\d{4}-\d{2}-\d{2})", _mat_str(r.get("出处"))) or [None, ""])[1],
+                "likes": _mat_num(r.get("点赞")),
+                "collects": _mat_num(r.get("收藏数")),
+                "comments": _mat_num(r.get("评论数")),
+                "plays": _mat_num(r.get("播放")),
+                "heat": _mat_num(r.get("热度分")),
+                "summary": _mat_str(r.get("一句话摘要")),
+                "topic": _mat_str(r.get("专题")) or _mat_str(r.get("主题分类")),
+                "potential": _mat_str(r.get("选题潜力")),
+                "form": _mat_str(r.get("内容形式")),
+                "cover": _mat_str(r.get("封面链接")),
+                "link": _mat_link(r.get("链接")) or _mat_link(r.get("出处")),
+            }
+            imgs = ["/api/materials/img/" + urllib.parse.quote(n) for n in (covers.get(rid) or [])]
+            remote = item["cover"]
+            if not imgs and remote and "xhscdn" not in remote:
+                imgs = [remote]
+            item["images"] = imgs
+            item["cover"] = imgs[0] if imgs else ""
+            items.append(item)
+            full[rid] = {
+                **item,
+                "keyPoints": _mat_str(r.get("关键要点")),
+                "body": _mat_str(r.get("正文")),
+                "transcript": _mat_str(r.get("视频转写")),
+                "ocr": _mat_str(r.get("图片文字")),
+                "imageDesc": _mat_str(r.get("图片描述")),
+                "whyHot": _mat_str(r.get("为什么火")),
+                "useForMe": _mat_str(r.get("对你有什么用")),
+                "commentsSay": _mat_str(r.get("评论区在说什么")),
+                "hotComments": _mat_str(r.get("热门评论")),
+                "nextAction": _mat_str(r.get("下一步行动")),
+                "source": _mat_str(r.get("出处")),
+            }
+    m = re.search(r"(\d{8})", p.name)
+    d = m.group(1) if m else ""
+    _MAT_CACHE.update({"path": p, "mtime": mt, "items": items, "full": full,
+                       "date": f"{d[:4]}-{d[4:6]}-{d[6:]}" if d else ""})
+    return _MAT_CACHE
+
+
+_MAT_REC_MOD = None
+
+
+def _mat_rec(c: dict) -> dict:
+    """META-PATCH：素材库「最推荐」分数（meta_recommend.py，离线计算并缓存到 G 盘）。"""
+    global _MAT_REC_MOD
+    try:
+        if _MAT_REC_MOD is None:
+            import importlib.util
+            spec = importlib.util.spec_from_file_location("meta_recommend", Path(__file__).resolve().parent / "meta_recommend.py")
+            _MAT_REC_MOD = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(_MAT_REC_MOD)
+        return _MAT_REC_MOD.compute(c["items"], c["full"], f"{c.get('path')}|{c.get('mtime')}")
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+@app.get("/api/materials")
+async def api_materials(q: str = ""):
+    """素材库列表（只读）。"""
+    c = await asyncio.to_thread(_mat_load)
+    rec = await asyncio.to_thread(_mat_rec, c)
+    from web.creation_workspace import search_materials
+    matches = await asyncio.to_thread(search_materials, c, q)
+    return {"date": c.get("date", ""), "count": len(c["items"]), "matched": len(matches),
+            "items": [{**it, "rec": rec.get(it["id"])} for it in matches],
+            "canRefresh": bool(shutil.which("lark-cli")),
+            "refreshing": _MAT_REFRESH["running"], "refreshMsg": _MAT_REFRESH["msg"]}
+
+
+@app.get("/api/materials/img/{name}")
+async def api_material_img(name: str):
+    if not re.fullmatch(r"[\w.-]+", name):
+        raise HTTPException(400, "bad name")
+    f = COVERS_DIR / name
+    if not f.is_file():
+        raise HTTPException(404, "no image")
+    return FileResponse(f, headers={"Cache-Control": "public, max-age=86400"})
+
+
+@app.get("/api/materials/item/{rid}")
+async def api_material_item(rid: str):
+    c = await asyncio.to_thread(_mat_load)
+    it = c["full"].get(rid)
+    if not it:
+        raise HTTPException(404, "没找到这条素材")
+    return {**it, "rec": (await asyncio.to_thread(_mat_rec, c)).get(rid)}
+
+
+@app.post("/api/materials/refresh")
+async def api_materials_refresh():
+    """重新只读导出今天的飞书收藏快照（lark-cli record-list，不写飞书）。"""
+    exe = shutil.which("lark-cli")
+    if not exe:
+        raise HTTPException(400, "这台电脑没装飞书导出工具")
+    if _MAT_REFRESH["running"]:
+        return {"state": "running"}
+    local_env = _read_env()
+    base_token = os.environ.get("META_FEISHU_BASE_TOKEN", "").strip() or local_env.get("META_FEISHU_BASE_TOKEN", "").strip()
+    table_id = os.environ.get("META_FEISHU_TABLE_ID", "").strip() or local_env.get("META_FEISHU_TABLE_ID", "").strip()
+    if not _is_set(base_token) or not _is_set(table_id):
+        raise HTTPException(400, "尚未配置飞书收藏库，请先完成本机配置")
+
+    def _run() -> None:
+        _MAT_REFRESH.update({"running": True, "msg": "正在更新…"})
+        target = MATERIALS_DIR / f"feishu-收藏资产库-{time.strftime('%Y%m%d')}.ndjson"
+        tmp = target.with_suffix(".ndjson.part")
+        env = {k: v for k, v in os.environ.items() if k != "HERMES_HOME"}
+        try:
+            MATERIALS_DIR.mkdir(parents=True, exist_ok=True)
+            tmp.unlink(missing_ok=True)
+            cmd = [exe, "base", "+record-list", "--as", "user",
+                   "--base-token", base_token, "--table-id", table_id,
+                   "--format", "ndjson", "--output", str(tmp)]
+            if exe.lower().endswith((".cmd", ".bat")):
+                cmd = [os.environ.get("COMSPEC", "cmd.exe"), "/c", *cmd]
+            p = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
+                               errors="replace", timeout=600, env=env)
+            if tmp.exists() and tmp.stat().st_size > 0:
+                os.replace(tmp, target)
+                _MAT_REFRESH["msg"] = "已更新"
+                try:  # META-PATCH：顺手缓存封面
+                    _MAT_REFRESH["msg"] = "已更新，正在补图片…"
+                    subprocess.run([r"G:\MetaWorkbench-deps\venv\Scripts\python.exe", r"G:\MetaWorkbench-deps\sync_covers.py"],
+                                   capture_output=True, timeout=900, env=env)
+                    _MAT_REFRESH["msg"] = "已更新"
+                except Exception:  # noqa: BLE001
+                    _MAT_REFRESH["msg"] = "已更新（部分图片没补上）"
+            else:
+                _MAT_REFRESH["msg"] = "更新失败，先用之前那份"
+                (MATERIALS_DIR / "_last-export.log").write_text((p.stdout or "") + (p.stderr or ""), encoding="utf-8")
+        except Exception as e:  # noqa: BLE001
+            _MAT_REFRESH["msg"] = f"更新失败：{type(e).__name__}"
+        finally:
+            _MAT_REFRESH["running"] = False
+
+    threading.Thread(target=_run, daemon=True).start()
+    return {"state": "running"}
+
+
+@app.get("/api/meta/patch-status")
+async def api_meta_patch_status():
+    f = PROJECT_ROOT.parent / "meta-profile" / "easel-overlay" / "status.json"
+    try:
+        return json.loads(f.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return {"skipped": []}
 
 
 @app.get("/api/skills")
@@ -1374,7 +1677,7 @@ async def api_skill_detail(name: str):
     full = find_skill(name)
     if full is None:
         raise HTTPException(404, f"SKILL '{name}' 不存在")
-    desc, layer, body = _parse_skill_md(SKILLS_DIR / "builtin" / full / "SKILL.md")
+    desc, layer, body = _parse_skill_md(_meta_skill_dir(full) / "SKILL.md")
     needs_api = full in SKILL_API_REQUIREMENTS
     env = _read_env()
     return {
@@ -2622,7 +2925,16 @@ def _chat_message(req: ChatRequest) -> str:
         message = f"{message}\n\n{context}" if message else context
     if not message:
         raise HTTPException(400, "消息不能为空")
-    return chat_turn_message(message, req.persona)
+    out = chat_turn_message(message, req.persona)
+    try:   # META-PATCH: 告诉执行引擎用户自建技能在哪
+        mine = sorted(d.name for d in META_USER_SKILLS.iterdir()
+                      if d.is_dir() and _meta_user_skill_ok(d.name) and (d / 'SKILL.md').is_file())
+        if mine:
+            out += (f"\n〔内部提醒〕除内置技能外，还有用户自建技能，目录 {META_USER_SKILLS}（每个子文件夹一个 SKILL.md；"
+                    f"_停用 下的不要用）：{'、'.join(mine[:60])}")
+    except OSError:
+        pass
+    return out
 
 
 def _direct_chat_content(req: ChatRequest) -> tuple[str | list, str]:
@@ -2950,6 +3262,10 @@ async def _run_harness_chat(req: ChatRequest, sk: str, message: str, runtime: st
 
     async def ask(questions):
         if not interactive:
+            # META-PATCH：后台任务没人能点「允许」，额外权限一律拒绝，让 agent 降级继续，而不是整轮报 502
+            if questions and all(q.get("questionId") == "permission" for q in questions):
+                receive("activity", "后台任务：额外权限请求已自动拒绝")
+                return {"permission": ["拒绝"]}
             raise HarnessError("此操作需要权限确认，请在流式对话中执行并确认权限")
         return await _harness_ask(sk, questions, receive)
 
@@ -3944,6 +4260,8 @@ async def api_skill(req: SkillRequest):
     if skill_full is None:
         raise HTTPException(404, f"SKILL '{req.skill}' 不存在")
     message = f"{_persona_prefix(req.persona)}请执行 /{skill_full}，内容如下：\n\n{req.input}"
+    if not (SKILLS_DIR / 'builtin' / skill_full / 'SKILL.md').is_file():   # META-PATCH
+        message += f"\n\n（这是用户自建技能，SKILL 文件在：{META_USER_SKILLS / skill_full / 'SKILL.md'}）"
     # 统一给足超时：制作类 SKILL（生视频/多镜合成）可能跑很久，取安全上界
     timeout = TIMEOUT_PRODUCE
     loop = asyncio.get_event_loop()
@@ -4082,13 +4400,182 @@ async def api_output_delete(path: str):
         raise HTTPException(403, '系统数据受保护，不可从内容库删除')
     is_dir = full.is_dir()
     try:
-        if is_dir:
-            shutil.rmtree(full)
-        else:
-            full.unlink()
+        dest = _meta_recycle(full)   # META-PATCH: 不硬删，移入 F: 回收站
     except OSError as e:
         raise HTTPException(500, f'删除失败：{e}')
-    return {"ok": True, "deleted": path, "kind": "dir" if is_dir else "file"}
+    return {"ok": True, "deleted": path, "kind": "dir" if is_dir else "file", "recycled": str(dest)}
+
+
+# ===== META-PATCH: 内容库批量管理 =====
+META_RECYCLE_DIR = Path(os.environ.get("META_RECYCLE_DIR", r"F:\科研大师兄\自媒体工作台\_回收站"))
+META_STATUS = {"todo", "draft", "ready", "published"}   # 待写/在写/待发/已发
+META_ITEM_STATUS = OUTPUTS_DIR / "_meta" / "item-status.json"   # META-PATCH：每条内容自己的状态，旁路记录，不碰原文件
+
+
+def _meta_item_load() -> dict:
+    try:
+        return json.loads(META_ITEM_STATUS.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _meta_item_set(path: str, status: str | None = None, link: str | None = None, date: str | None = None, extra: dict | None = None) -> dict:
+    data = _meta_item_load()
+    cur = data.get(path, {})
+    if extra:
+        for k, v in extra.items():
+            if isinstance(v, dict) and isinstance(cur.get(k), dict):
+                cur[k] = {**cur[k], **v}
+            else:
+                cur[k] = v
+    if status:
+        cur["status"] = status
+    if link is not None:
+        cur["link"] = link.strip()
+    if date is not None:
+        cur["date"] = date.strip()
+    cur["updatedAt"] = time.strftime("%Y-%m-%d %H:%M")
+    data[path] = cur
+    META_ITEM_STATUS.parent.mkdir(parents=True, exist_ok=True)
+    tmp = META_ITEM_STATUS.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(META_ITEM_STATUS)
+    return cur
+
+
+class MetaItemStatusRequest(BaseModel):
+    path: str
+    status: str | None = None
+    link: str | None = None
+    date: str | None = None
+    extra: dict | None = None
+
+
+@app.get("/api/meta/item-status")
+def api_meta_item_status():
+    return _meta_item_load()
+
+
+@app.post("/api/meta/item-status")
+def api_meta_item_status_set(req: MetaItemStatusRequest):
+    p = (req.path or "").strip().replace("\\", "/")
+    if not p or ".." in p.split("/") or len(p) > 400:
+        raise HTTPException(400, "内容路径不合法")
+    if req.status and req.status not in META_STATUS:
+        raise HTTPException(400, "状态不合法")
+    return {"ok": True, "item": _meta_item_set(p, req.status, req.link, req.date, req.extra)}
+
+
+def _meta_unique(dest: Path) -> Path:
+    if not dest.exists():
+        return dest
+    i = 2
+    while True:
+        c = dest.with_name(f"{dest.stem} ({i}){dest.suffix}")
+        if not c.exists():
+            return c
+        i += 1
+
+
+def _meta_recycle(full: Path, bucket: str = "内容库") -> Path:
+    stamp = time.strftime("%Y-%m-%d_%H%M%S")
+    rel = full.relative_to(OUTPUTS_DIR.resolve())
+    dest = _meta_unique(META_RECYCLE_DIR / bucket / stamp / rel)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(full), str(dest))
+    return dest
+
+
+class OutputBatchRequest(BaseModel):
+    action: str                 # move | status | archive | delete
+    paths: list[str]
+    target: str | None = None   # move：目标项目（顶层文件夹名，可新建）
+    status: str | None = None
+
+
+@app.post("/api/outputs/batch")
+def api_outputs_batch(req: OutputBatchRequest):
+    if not req.paths:
+        raise HTTPException(400, "没有选中任何内容")
+    fulls = []
+    for rel in req.paths:
+        full = _safe_output_target(rel)
+        if _is_protected(full):
+            raise HTTPException(403, f"系统数据受保护：{rel}")
+        fulls.append((rel, full))
+    done, errors = [], []
+    if req.action == "move":
+        tgt = (req.target or "").strip().strip("/\\")
+        if not tgt or "/" in tgt or "\\" in tgt or tgt.startswith((".", "_")) or tgt in ("..",):
+            raise HTTPException(400, "目标文件夹名不合法")
+        tdir = OUTPUTS_DIR / tgt
+        tdir.mkdir(parents=True, exist_ok=True)
+        for rel, full in fulls:
+            try:
+                if full.parent == tdir.resolve():
+                    continue
+                if full == tdir.resolve() or full in tdir.resolve().parents:
+                    raise OSError("不能移动到自身内部")
+                dest = _meta_unique(tdir / full.name)
+                creation_store.move_output(full, dest)
+                done.append(rel)
+            except HTTPException as e:
+                errors.append(f"{rel}：{e.detail}，文件未移动")
+            except OSError as e:
+                errors.append(f"{rel}：{e}")
+    elif req.action == "status":
+        if req.status not in META_STATUS:
+            raise HTTPException(400, "状态不合法")
+        for rel, full in fulls:
+            _meta_item_set(rel, req.status)   # META-PATCH：任意层级都能有自己的状态
+            if not full.is_dir() or full.parent != OUTPUTS_DIR.resolve():
+                done.append(rel)
+                continue
+            mf = full / ".easel.json"
+            try:
+                data = json.loads(mf.read_text(encoding="utf-8")) if mf.is_file() else {}
+            except Exception:
+                errors.append(f"{rel}：.easel.json 读不了，未改")
+                continue
+            data.setdefault("title", full.name)
+            data["status"] = req.status
+            mf.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+            done.append(rel)
+    elif req.action in ("archive", "delete"):
+        for rel, full in fulls:
+            try:
+                if req.action == "archive":
+                    dest = _meta_unique(OUTPUTS_DIR / "_archive" / full.relative_to(OUTPUTS_DIR.resolve()))
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.move(str(full), str(dest))
+                else:
+                    _meta_recycle(full)
+                done.append(rel)
+            except OSError as e:
+                errors.append(f"{rel}：{e}")
+    else:
+        raise HTTPException(400, "未知操作")
+    return {"ok": not errors, "done": done, "errors": errors}
+
+
+@app.post("/api/outputs/export")
+def api_outputs_export(req: OutputBatchRequest):
+    import tempfile
+    from starlette.background import BackgroundTask
+    tmpdir = Path(os.environ.get("TEMP") or tempfile.gettempdir())
+    fd, zp = tempfile.mkstemp(suffix=".zip", prefix="meta-export-", dir=str(tmpdir))
+    os.close(fd)
+    with zipfile.ZipFile(zp, "w", zipfile.ZIP_DEFLATED) as z:
+        for rel in req.paths:
+            full = _safe_output_target(rel)
+            base = full.parent
+            items = [full] if full.is_file() else [p for p in full.rglob("*") if p.is_file()]
+            for f in items:
+                z.write(f, f.relative_to(base).as_posix())
+    name = time.strftime("内容库导出-%Y%m%d-%H%M%S.zip")
+    return FileResponse(zp, filename=name, media_type="application/zip",
+                        background=BackgroundTask(lambda: os.path.exists(zp) and os.remove(zp)))
+# ===== /META-PATCH =====
 
 
 @app.post("/api/upload")
@@ -4882,6 +5369,7 @@ async def api_publish_sms(platform: str, req: SmsCodeRequest):
 @app.post("/api/publish/{platform}")
 async def api_publish(platform: str, req: PublishRequest):
     """一键发布：分发到对应 publisher 脚本真发（--exec）。二次确认在前端。"""
+    raise HTTPException(403, "Meta 工作台不自动发布：请复制文案后自己发")  # META-PATCH
     cfg = LOGIN_RUNNERS.get(platform)
     if not cfg:
         raise HTTPException(404, '未知平台')
@@ -4996,6 +5484,81 @@ async def api_publish(platform: str, req: PublishRequest):
     return {'ok': ok, 'message': '发布成功' if ok else '发布失败（见 detail）', 'detail': detail}
 
 
+# === META-PATCH v1 ===
+META_PROFILE_ROOT = PROJECT_ROOT.parent / "meta-profile"
+
+
+def _meta_local_enhance_msg(name: str, instruction: str = "") -> str:
+    out_dir = PROFILE_BUILD_DIR / f"{name}-AI建议"
+    return (
+        f"请按 /skill-profile-builder 的思路，为已存在的画像「{name}」做一次只用本地资料的完善检查。\n"
+        "硬性规则，违反任何一条都算失败：\n"
+        "1. 不联网：不用网页搜索、不打开网页，不用 curl / requests / Invoke-WebRequest / 浏览器 / Playwright，"
+        "不解析 xhslink 短链，不访问小红书、抖音、B站、微博、知乎、公众号等任何平台。\n"
+        "2. 不调用任何账号读取能力：不运行 account_stats.py、skill-my-account、agent-reach，"
+        "不读取 .easel-browser-profiles、cookies 或任何登录目录。\n"
+        f"3. 不修改 profiles/{name}/ 下的任何文件（那是用户正本的副本，改了也会被自动还原）。\n"
+        f"4. 只读这些本地资料：profiles/{name}/ 下六个 md；{META_PROFILE_ROOT / '画像'}；{META_PROFILE_ROOT / 'anchors'}。"
+        "粉丝数和数据以画像里写的为准，不改数字、不编数字。\n"
+        f"5. 把结果写成一个文件：{out_dir / '建议.md'}。逐个维度写：缺什么；哪些[待补充]能从本地资料补；哪些地方互相矛盾；"
+        "建议怎么改（给出原文和建议文）。不确定的标[待确认]。\n"
+        "6. 不需要额外权限；需要权限的操作直接跳过。最后用一句话给出完成度摘要。\n"
+        + (f"\n用户在向导里填的信息（供参考）：\n{instruction}" if instruction else "")
+    )
+
+
+def _meta_guarded_enhance(name: str, msg: str) -> None:
+    """跑本地增强；结束后把画像文件还原成运行前的样子，AI 改过的版本另存到建议文件夹。"""
+    pd = PROFILES_DIR / name
+    snap = {}
+    if pd.is_dir():
+        for p in pd.glob("*.md"):
+            st = p.stat()
+            snap[p.name] = (p.read_bytes(), st.st_atime, st.st_mtime)
+    out_dir = PROFILE_BUILD_DIR / f"{name}-AI建议"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    state = "done"
+    try:
+        log = run_agent_sync(msg, TIMEOUT_PRODUCE)
+    except Exception as e:  # noqa: BLE001
+        state, log = "failed", f"AI 增强失败（画像没有被改动）：{e}"
+    changed = []
+    try:
+        if pd.is_dir():
+            for p in pd.glob("*.md"):
+                old = snap.get(p.name)
+                if old is None or p.read_bytes() != old[0]:
+                    (out_dir / f"AI改写-{p.name}").write_bytes(p.read_bytes())
+                    changed.append(p.name)
+                    if old is None:
+                        p.unlink()
+            for fname, (data, at, mt) in snap.items():
+                p = pd / fname
+                if not p.is_file() or p.read_bytes() != data:
+                    if fname not in changed:
+                        changed.append(fname)
+                    p.write_bytes(data)
+                    os.utime(p, (at, mt))
+    except Exception as e:  # noqa: BLE001
+        log += f"\n（还原画像文件时出错：{e}）"
+    if changed:
+        log += f"\n\nAI 动了 {len(changed)} 个画像文件，已还原；它的改法另存在 {out_dir}。"
+    _write_profile_status(name, state, log)
+
+
+@app.post("/api/profile/enhance/{name}")
+async def api_profile_enhance(name: str):
+    """对已存在的画像再跑一次只用本地资料的 AI 检查（不联网，不改画像文件）。"""
+    pd = PROFILES_DIR / name
+    if not pd.is_dir() or name.startswith(('.', '_')) or '/' in name or '\\' in name:
+        raise HTTPException(404, '画像不存在')
+    _write_profile_status(name, 'running', 'AI 正在用本地资料检查画像…')
+    threading.Thread(target=_meta_guarded_enhance,
+                     args=(name, _meta_local_enhance_msg(name)), daemon=True).start()
+    return {'name': name, 'async': True, 'status': 'running'}
+# === META-PATCH END ===
+
+
 class ProfileBuildRequest(BaseModel):
     name: str
     form: dict
@@ -5003,6 +5566,8 @@ class ProfileBuildRequest(BaseModel):
 
 @app.post("/api/profile/build")
 async def api_profile_build(req: ProfileBuildRequest):
+    if getattr(req, "name", "") != "做科研的Meta师兄":  # META-PATCH 只允许一份画像
+        raise HTTPException(403, "只保留「做科研的Meta师兄」这一份画像")
     """首次引导：表单 → 写基线画像（确定性，秒可用）→ **后台**跑 agent 分析社媒链接增强。
 
     改异步：立即返回（基线已写、画像即可用），避免 agent 增强(~2min)阻塞请求被 code-server
@@ -5020,17 +5585,12 @@ async def api_profile_build(req: ProfileBuildRequest):
         raise HTTPException(409, f'画像「{name}」已存在，请换一个名字')
     _write_baseline_profile(name, req.form or {})
     instruction = _form_to_instruction(name, req.form or {})
-    msg = (f"请执行 /skill-profile-builder 完善已存在的画像「{name}」。用户已通过表单提供以下信息，我已按此写好 profiles/{name}"
-           f"/ 的基线六维文件。请：①尽力抓取用户给的社媒链接分析已发内容/风格/受众（抓不到就降级，标注[待补充]，勿臆造）②据分析结果润色/补全各维度文件 ③给出一句话完成度摘要。表单信息如下：\n\n{instruction}")
+    msg = _meta_local_enhance_msg(name, instruction)  # META-PATCH：只用本地资料
 
     _write_profile_status(name, 'running', 'AI 正在分析并增强画像…')
 
     def _enhance() -> None:
-        try:
-            log = run_agent_sync(msg, TIMEOUT_PRODUCE)
-            _write_profile_status(name, 'done', log)
-        except Exception as e:  # noqa: BLE001
-            _write_profile_status(name, 'failed', f'AI 增强失败（基线画像已可用）：{e}')
+        _meta_guarded_enhance(name, msg)  # META-PATCH：画像文件受保护，AI 改动另存为建议
 
     threading.Thread(target=_enhance, daemon=True).start()
     # 基线已写、画像立即可用；增强在后台，前端轮询状态
@@ -5307,6 +5867,8 @@ class ScheduleItem(BaseModel):
     source: str = "manual"         # manual | publish-page | chat | scheduler
     event_type: str = ""           # event 专属：节日/电商/平台活动/行业
     end_date: str = ""             # event 专属：活动区间结束日
+    creation_id: str | None = None
+    creation_version: str | None = None
 
 
 @app.get("/api/schedule")
@@ -5316,6 +5878,10 @@ async def api_schedule_list():
 
 @app.post("/api/schedule")
 async def api_schedule_create(req: ScheduleItem):
+    if req.creation_id:
+        work = creation_store.read(req.creation_id)
+        if not any(v["id"] == req.creation_version for v in work["versions"]):
+            raise HTTPException(400, "排期引用的创作版本不存在")
     items = _read_schedule()
     kind = req.kind if req.kind in SCHEDULE_KINDS else "content"
     st = req.status if req.status in SCHEDULE_STATUSES else "idea"
@@ -5332,6 +5898,8 @@ async def api_schedule_create(req: ScheduleItem):
         "source": req.source if req.source in {"manual", "publish-page", "chat", "scheduler"} else "manual",
         "event_type": req.event_type,
         "end_date": req.end_date,
+        "creation_id": req.creation_id,
+        "creation_version": req.creation_version,
     }
     items.append(item)
     _write_schedule(items)
@@ -5461,6 +6029,274 @@ async def api_ideas_delete(iid: str):
     return {"ok": True, "deleted": iid}
 
 
+
+# ===== META-PATCH: 技能库自助管理 API =====
+def _meta_fm_build(name: str, description: str, layer: str, body: str) -> str:
+    d = (description or '').replace('\n', ' ').replace('"', "'").strip()
+    return f'---\nname: {name}\ndescription: "{d}"\nlayer: {layer or "general"}\n---\n\n{(body or "").strip()}\n'
+
+
+def _meta_fm_update(path: Path, description: str | None, layer: str | None) -> None:
+    text = path.read_text(encoding='utf-8')
+    lines = text.splitlines()
+    if lines and lines[0].strip() == '---':
+        end = next((i for i in range(1, len(lines)) if lines[i].strip() == '---'), None)
+    else:
+        end = None
+    if end is None:
+        lines = ['---', f'name: {path.parent.name}', '---', ''] + lines
+        end = 2
+    fm = lines[1:end]
+    out, i = [], 0
+    while i < len(fm):
+        st = fm[i]
+        key = st.split(':', 1)[0].strip() if ':' in st and not st.startswith((' ', '\t')) else None
+        if key in ('description', 'layer') and ((key == 'description' and description is not None) or (key == 'layer' and layer is not None)):
+            j = i + 1
+            while j < len(fm) and (fm[j].startswith((' ', '\t')) or fm[j].strip() == ''):
+                j += 1
+            i = j
+            continue
+        out.append(st); i += 1
+    if description is not None:
+        out.append('description: "' + description.replace('\n', ' ').replace('"', "'").strip() + '"')
+    if layer is not None:
+        out.append(f'layer: {layer}')
+    new = ['---'] + out + lines[end:]
+    path.write_text('\n'.join(new) + ('\n' if not new[-1].endswith('\n') else ''), encoding='utf-8')
+
+
+def _meta_set_name(name: str, display: str | None) -> None:
+    if display is None:
+        return
+    names = _meta_names()
+    if display.strip():
+        names[name] = display.strip()
+    else:
+        names.pop(name, None)
+    META_USER_SKILLS.mkdir(parents=True, exist_ok=True)
+    META_SKILL_NAMES.write_text(json.dumps(names, ensure_ascii=False, indent=2), encoding='utf-8')
+
+
+def _meta_new_skill_dir(name: str) -> Path:
+    if not _meta_user_skill_ok(name):
+        raise HTTPException(400, '技能英文名只能用字母、数字、- _ .，最长 64 个字符')
+    if (SKILLS_DIR / 'builtin' / name).exists() or (META_USER_SKILLS / name).exists() or (META_SKILL_OFF / name).exists():
+        raise HTTPException(409, f'已有同名技能：{name}')
+    return META_USER_SKILLS / name
+
+
+class MetaSkillCreate(BaseModel):
+    name: str
+    displayName: str | None = None
+    description: str = ''
+    layer: str = 'general'
+    body: str = ''
+
+
+@app.post("/api/meta-skills/create")
+def api_meta_skill_create(req: MetaSkillCreate):
+    d = _meta_new_skill_dir(req.name.strip())
+    if not req.body.strip():
+        raise HTTPException(400, '技能正文不能为空')
+    d.mkdir(parents=True)
+    (d / 'SKILL.md').write_text(_meta_fm_build(d.name, req.description, req.layer, req.body), encoding='utf-8')
+    _meta_set_name(d.name, req.displayName or '')
+    return {"ok": True, "name": d.name, "path": str(d)}
+
+
+@app.post("/api/meta-skills/upload")
+async def api_meta_skill_upload(file: UploadFile = File(...), name: str = Form(''), displayName: str = Form('')):
+    fname = Path(file.filename or 'skill').name
+    data = await file.read()
+    if len(data) > 50 * 1024 * 1024:
+        raise HTTPException(413, '文件超过 50MB')
+    ext = Path(fname).suffix.lower()
+    if ext == '.md':
+        text = data.decode('utf-8', errors='replace').lstrip('\ufeff')
+        m = re.search(r'^name:\s*([^\n]+)$', text.split('\n---', 1)[0], re.M) if text.startswith('---') else None
+        nm = (name or (m.group(1).strip().strip('"\'') if m else '') or Path(fname).stem).strip()
+        d = _meta_new_skill_dir(nm)
+        d.mkdir(parents=True)
+        (d / 'SKILL.md').write_text(text, encoding='utf-8')
+    elif ext == '.zip':
+        import io
+        try:
+            z = zipfile.ZipFile(io.BytesIO(data))
+        except zipfile.BadZipFile:
+            raise HTTPException(400, '压缩包打不开')
+        infos = [i for i in z.infolist() if not i.is_dir()]
+        if len(infos) > 3000:
+            raise HTTPException(400, '压缩包文件太多')
+        mds = sorted((i.filename for i in infos if i.filename.replace('\\', '/').split('/')[-1] == 'SKILL.md'), key=lambda x: x.count('/'))
+        if not mds:
+            raise HTTPException(400, '压缩包里没找到 SKILL.md')
+        prefix = mds[0].rsplit('/', 1)[0] + '/' if '/' in mds[0] else ''
+        default = prefix.rstrip('/').split('/')[-1] if prefix else Path(fname).stem
+        nm = (name or default).strip()
+        d = _meta_new_skill_dir(nm)
+        tmp = META_USER_SKILLS / f'.upload-{uuid.uuid4().hex[:6]}'
+        try:
+            for i in infos:
+                fn = i.filename.replace('\\', '/')
+                if not fn.startswith(prefix):
+                    continue
+                rel = fn[len(prefix):]
+                parts = rel.split('/')
+                if not rel or any(x in ('', '..') for x in parts) or ':' in rel or rel.startswith('/'):
+                    continue
+                if parts[0] in ('.git', '__MACOSX'):
+                    continue
+                t = tmp / rel
+                t.parent.mkdir(parents=True, exist_ok=True)
+                t.write_bytes(z.read(i))
+            tmp.rename(d)
+        finally:
+            if tmp.exists():
+                shutil.rmtree(tmp, ignore_errors=True)
+    else:
+        raise HTTPException(400, '只支持 .md 或 .zip')
+    _meta_set_name(d.name, displayName)
+    return {"ok": True, "name": d.name, "path": str(d)}
+
+
+class MetaSkillMeta(BaseModel):
+    displayName: str | None = None
+    description: str | None = None
+    layer: str | None = None
+
+
+def _meta_user_dir_any(name: str) -> tuple[Path, bool] | None:
+    if not _meta_user_skill_ok(name):
+        return None
+    if (META_USER_SKILLS / name / 'SKILL.md').is_file():
+        return META_USER_SKILLS / name, False
+    if (META_SKILL_OFF / name / 'SKILL.md').is_file():
+        return META_SKILL_OFF / name, True
+    return None
+
+
+@app.post("/api/meta-skills/{name}/meta")
+def api_meta_skill_meta(name: str, req: MetaSkillMeta):
+    hit = _meta_user_dir_any(name)
+    if hit is None:
+        if not (SKILLS_DIR / 'builtin' / name / 'SKILL.md').is_file():
+            raise HTTPException(404, '没有这个技能')
+        _meta_set_name(name, req.displayName)   # 内置技能只改中文名，不动程序文件
+        return {"ok": True, "builtin": True}
+    _meta_fm_update(hit[0] / 'SKILL.md', req.description, req.layer)
+    _meta_set_name(name, req.displayName)
+    return {"ok": True}
+
+
+class MetaSkillToggle(BaseModel):
+    enabled: bool
+
+
+@app.post("/api/meta-skills/{name}/toggle")
+def api_meta_skill_toggle(name: str, req: MetaSkillToggle):
+    hit = _meta_user_dir_any(name)
+    if hit is None:
+        raise HTTPException(400, '只有自建/导入的技能可以停用；内置技能请保持原样')
+    d, off = hit
+    if req.enabled and off:
+        shutil.move(str(d), str(META_USER_SKILLS / name))
+    elif not req.enabled and not off:
+        META_SKILL_OFF.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(d), str(META_SKILL_OFF / name))
+    return {"ok": True, "enabled": req.enabled}
+
+
+@app.delete("/api/meta-skills/{name}")
+def api_meta_skill_delete(name: str):
+    hit = _meta_user_dir_any(name)
+    if hit is None:
+        raise HTTPException(400, '只有自建/导入的技能可以删除；内置技能不删')
+    dest = _meta_unique(META_RECYCLE_DIR / '技能库' / time.strftime('%Y-%m-%d_%H%M%S') / name)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(hit[0]), str(dest))
+    return {"ok": True, "recycled": str(dest)}
+
+
+META_SM_DB = Path(os.environ.get("META_SKILLS_MANAGER_DB", str(Path.home() / ".skills-manager" / "skills-manager.db")))
+_META_TOOL_LABEL = {"codex": "Codex", "cursor": "Cursor", "grok": "Grok", "antigravity": "Antigravity",
+                    "codebuddy": "CodeBuddy", "workbuddy": "WorkBuddy", "claude": "Claude", "qoder": "Qoder"}
+
+
+def _meta_sm_rows() -> list[dict]:
+    import sqlite3, tempfile
+    if not META_SM_DB.is_file():
+        raise HTTPException(404, f'没找到 skills-manager 的数据：{META_SM_DB}')
+    tmpdir = Path(os.environ.get("TEMP") or tempfile.gettempdir())
+    fd, tp = tempfile.mkstemp(suffix='.db', prefix='sm-ro-', dir=str(tmpdir))
+    os.close(fd)
+    try:
+        shutil.copy2(META_SM_DB, tp)   # 只读：复制一份再读，不碰原库
+        c = sqlite3.connect(tp)
+        tools: dict[str, set] = {}
+        for sid, tool in c.execute("select skill_id, tool from skill_targets"):
+            tools.setdefault(sid, set()).add(tool)
+        rows = []
+        for sid, nm, desc, path, enabled, stype in c.execute(
+                "select id, name, description, central_path, enabled, source_type from skills order by name"):
+            rows.append({"id": sid, "name": nm, "description": (desc or '')[:200], "path": path or '',
+                         "enabled": bool(enabled), "sourceType": stype,
+                         "agents": sorted(_META_TOOL_LABEL.get(t, t) for t in tools.get(sid, ()))})
+        c.close()
+        return rows
+    finally:
+        try:
+            os.remove(tp)
+        except OSError:
+            pass
+
+
+@app.get("/api/meta-skills/import-sources")
+def api_meta_skill_sources():
+    rows = _meta_sm_rows()
+    builtin = {d.name for d in (SKILLS_DIR / 'builtin').iterdir() if d.is_dir()} if (SKILLS_DIR / 'builtin').is_dir() else set()
+    for r in rows:
+        nm = r["name"]
+        r["exists"] = bool(r["path"]) and (Path(r["path"]) / 'SKILL.md').is_file()
+        r["already"] = nm in builtin or _meta_user_dir_any(nm) is not None
+    return {"db": str(META_SM_DB), "items": rows}
+
+
+class MetaSkillImport(BaseModel):
+    names: list[str]
+
+
+@app.post("/api/meta-skills/import")
+def api_meta_skill_import(req: MetaSkillImport):
+    rows = {r["name"]: r for r in _meta_sm_rows()}
+    done, errors = [], []
+    for nm in req.names:
+        r = rows.get(nm)
+        try:
+            if not r or not r["path"] or not (Path(r["path"]) / 'SKILL.md').is_file():
+                raise ValueError('源文件不在')
+            d = _meta_new_skill_dir(nm)
+            shutil.copytree(r["path"], d, ignore=shutil.ignore_patterns('.git', 'node_modules', '__pycache__', '.venv'))
+            done.append(nm)
+        except HTTPException as e:
+            errors.append(f"{nm}：{e.detail}")
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"{nm}：{e}")
+    return {"ok": not errors, "done": done, "errors": errors, "dir": str(META_USER_SKILLS)}
+# ===== /META-PATCH =====
+
+from web.creation_workspace import install_creation_workspace
+
+creation_store = install_creation_workspace(
+    app, OUTPUTS_DIR, PROJECT_ROOT, _mat_load,
+    lambda work_id: {
+        "schedule": [it for it in _read_schedule() if it.get("creation_id") == work_id],
+        "publications": [{"path": path, **it} for path, it in _meta_item_load().items()
+                         if it.get("extra", {}).get("creationId") == work_id],
+    },
+)
+
+
 if __name__ == "__main__":
     import uvicorn
     from easel.runtime_env import web_environment
@@ -5474,6 +6310,5 @@ if __name__ == "__main__":
     if proxy_url:
         print(f"  {proxy_url}")
     print()
-    # 监听 0.0.0.0（非仅回环）是为了兼容 Docker/远程容器端口转发访问 Easel 的场景；
-    # local_write_guard/TrustedHostMiddleware 只挡浏览器发起的跨站请求，见其注释里的局限说明。
+    # 同一监听同时提供本机工作台与局域网限时领取；PhoneBoundary 隔离两者。
     uvicorn.run(app, host="0.0.0.0", port=port, log_level="warning")

@@ -76,7 +76,8 @@ export default function ProfilePage({ persona, onNewProfile, onDeleted }: Profil
   const [fetchingWx, setFetchingWx] = useState(false);
 
   useEffect(() => {
-    if (!persona) { setFiles([]); return; }
+    void onNewProfile; void deleting; void handleDelete;
+  if (!persona) { setFiles([]); return; }
     let ignore = false;   // 切 persona 丢弃旧请求（F2）
     setLoading(true);
     setError('');
@@ -148,12 +149,11 @@ export default function ProfilePage({ persona, onNewProfile, onDeleted }: Profil
   if (!persona) {
     return (
       <div className="profile-page">
-        <h1 className="page-title">用户画像 Profile</h1>
+        <h1 className="page-title">画像</h1>
         <div className="empty-state" style={{ height: '70%' }}>
           <div className="empty-icon">👤</div>
-          <h3>还没有选择画像</h3>
-          <p>画像沉淀你的定位、风格、受众与红线，生成内容会更贴合你的人设。</p>
-          <button className="btn btn-primary" onClick={onNewProfile}>+ 新建画像</button>
+          <h3>画像加载中</h3>
+          <p>稍等一下，马上就好。</p>
         </div>
       </div>
     );
@@ -164,16 +164,13 @@ export default function ProfilePage({ persona, onNewProfile, onDeleted }: Profil
       <div className="profile-head">
         <div>
           <h1 className="page-title">{persona}</h1>
-          <p className="page-subtitle">六个维度构成一个完整人设，可随时编辑保存。</p>
+          <p className="page-subtitle">写稿时 AI 会照这里的定位和口吻来。改完点保存就行。</p>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <button className={`btn ${editing ? 'btn-primary' : ''}`} onClick={() => setEditing((v) => !v)}>
             {editing ? '完成编辑' : '✏️ 编辑资料'}
           </button>
-          <button className="btn" style={{ color: 'var(--red)', borderColor: 'var(--red)' }}
-            disabled={deleting} onClick={handleDelete}>
-            {deleting ? '删除中…' : '🗑 删除画像'}
-          </button>
+          {/* 画像只有一份，不提供删除 */}
         </div>
       </div>
 

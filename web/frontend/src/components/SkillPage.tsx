@@ -3,7 +3,8 @@ import type { ComponentType } from 'react';
 import { fetchSkills } from '../lib/api';
 import type { SkillItem } from '../lib/api';
 import SkillDrawer from './SkillDrawer';
-import { displayName } from '../lib/skillDisplayNames';
+import { NewSkillModal, ManageSkillModal } from './MetaSkillManage';
+import { displayName, SKILL_SHORT_DESC } from '../lib/skillDisplayNames';
 import {
   IconSearch, IconCompass, IconSkills, IconSend, IconChart, IconLayers,
   IconVideo, IconImage, IconMusic, IconMic, IconText, IconLayout, IconProfile, IconOutputs,
@@ -11,6 +12,7 @@ import {
 
 interface SkillPageProps {
   persona: string;
+  onStartPrompt?: (prompt: string) => void;
 }
 
 type IconC = ComponentType<{ size?: number }>;
@@ -48,16 +50,29 @@ function iconFor(name: string, LayerIcon: IconC): IconC {
   return LayerIcon;
 }
 
+// 卡片只放中文短说明：去掉「当用户说…」这类触发词，英文为主的描述换成分组说明
+function cnDesc(d?: string): string {
+  let s = (d || '').trim();
+  if (!s) return '';
+  s = s.split(/[。.]\s*(当用户|用户说|Use when|触发|Triggers?)/)[0];
+  const cjk = (s.match(/[\u4e00-\u9fa5]/g) || []).length;
+  if (cjk < s.length * 0.3) return '';
+  return s.replace(/\bskills?\b/gi, '技能');
+}
+
 const LAYER_DESC: Record<string, string> = {
   discover: '发现层技能', plan: '策划层技能', produce: '制作层技能',
   publish: '发布层技能', attribute: '归因层技能', general: '通用技能', other: '技能',
 };
 
-export default function SkillPage({ persona }: SkillPageProps) {
+export default function SkillPage({ persona, onStartPrompt }: SkillPageProps) {
   const [skills, setSkills] = useState<SkillItem[]>([]);
   const [error, setError] = useState('');
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<string | null>(null);
+  const [newTab, setNewTab] = useState<'' | 'form' | 'upload' | 'chat' | 'import'>('');
+  const [managing, setManaging] = useState<SkillItem | null>(null);
+  const nameOf = (s: SkillItem) => s.displayName || displayName(s.name);
 
   const load = () => {
     fetchSkills().then(setSkills).catch(() => setError('加载 SKILL 列表失败'));
@@ -68,19 +83,23 @@ export default function SkillPage({ persona }: SkillPageProps) {
     const q = query.trim().toLowerCase();
     if (!q) return skills;
     return skills.filter((s) =>
-      s.name.toLowerCase().includes(q) || (s.description || '').toLowerCase().includes(q) || displayName(s.name).toLowerCase().includes(q));
+      s.name.toLowerCase().includes(q) || (s.description || '').toLowerCase().includes(q) || nameOf(s).toLowerCase().includes(q));
   }, [skills, query]);
 
   const grouped = useMemo(() => {
     const g: Record<string, SkillItem[]> = {};
     for (const s of filtered) {
-      const key = LAYER_META[s.layer] ? s.layer : 'other';
+      if (s.disabled) { (g.disabled ||= []).push(s); continue; }
+      const key = s.source === 'user' ? 'mine' : (LAYER_META[s.layer] ? s.layer : 'other');
       (g[key] ||= []).push(s);
     }
     return g;
   }, [filtered]);
 
-  const orderedLayers = [...LAYERS, OTHER].filter((l) => grouped[l.key]?.length);
+  const MINE: LayerMeta = { key: 'mine', label: '我的技能', Icon: IconProfile, color: 'var(--accent-start)' };
+  const OFF: LayerMeta = { key: 'disabled', label: '已停用', Icon: IconLayers, color: 'var(--text-tertiary)' };
+  const orderedLayers = [MINE, ...LAYERS, OTHER, OFF].filter((l) => grouped[l.key]?.length);
+  const mineCount = skills.filter((s) => s.source === 'user').length;
   const needApiCount = skills.filter((s) => s.needsApi && !s.apiConfigured).length;
 
   return (
@@ -88,8 +107,8 @@ export default function SkillPage({ persona }: SkillPageProps) {
       <div className="skills-page-head">
         <h1 className="page-title">技能库</h1>
         <p className="page-subtitle">
-          共 {skills.length} 个技能，按流水线层分区浏览。点卡片查看说明、就地运行；
-          标 <span className="badge badge-warn" style={{ padding: '1px 7px' }}>需 API</span> 的需先配置密钥
+          共 {skills.length} 个技能，我的 {mineCount} 个，按用途分组。点卡片看说明、直接用；
+          标 <span className="badge badge-warn" style={{ padding: '1px 7px' }}>需设置</span> 的要先在设置里填好
           {needApiCount > 0 && `（当前 ${needApiCount} 个待配置）`}。
         </p>
         <div className="skill-search">
@@ -101,6 +120,12 @@ export default function SkillPage({ persona }: SkillPageProps) {
             onChange={(e) => setQuery(e.target.value)}
           />
           {query && <button className="btn btn-ghost btn-sm" onClick={() => setQuery('')}>清除</button>}
+        </div>
+        <div className="meta-skill-toolbar">
+          <button className="btn btn-primary btn-sm" onClick={() => setNewTab('form')}>+ 新建技能</button>
+          <button className="btn btn-sm" onClick={() => setNewTab('upload')}>上传文件</button>
+          <button className="btn btn-sm" onClick={() => setNewTab('chat')}>对话创建</button>
+          <button className="btn btn-sm" onClick={() => setNewTab('import')}>从已有技能导入</button>
         </div>
       </div>
 
@@ -123,25 +148,26 @@ export default function SkillPage({ persona }: SkillPageProps) {
             </div>
             <div className="skill-grid">
               {grouped[layer.key].map((s) => {
-                const meta = LAYER_META[s.layer] || OTHER;
+                const meta = LAYER_META[s.layer] || (s.source === 'user' ? MINE : OTHER);
                 const Icon = iconFor(s.name, meta.Icon);
                 const alert = s.needsApi && !s.apiConfigured;
                 return (
                   <div
                     key={s.name}
-                    className="card card-hover skill-card"
+                    className={`card card-hover skill-card ${s.disabled ? 'meta-off' : ''}`}
                     style={{ ['--layer-color' as string]: meta.color }}
-                    onClick={() => setSelected(s.name)}
+                    onClick={() => (s.disabled ? setManaging(s) : setSelected(s.name))}
                   >
+                    <button className="meta-skill-gear" title="管理：改名 / 停用 / 删除" onClick={(e) => { e.stopPropagation(); setManaging(s); }}>⚙</button>
                     {alert && <div className="skill-card-alert" title="需要配置 API key">!</div>}
                     <div className="skill-card-icon" style={{ color: meta.color }}><Icon size={19} /></div>
-                    <div className="skill-card-name">{displayName(s.name)}</div>
-                    <div className="skill-card-rawname">{s.name}</div>
-                    <div className="skill-card-desc">{s.description?.trim() || LAYER_DESC[layer.key]}</div>
+                    <div className="skill-card-name">{nameOf(s)}</div>
+                    <div className="skill-card-desc">{SKILL_SHORT_DESC[s.name] || cnDesc(s.description) || LAYER_DESC[layer.key]}</div>
                     <div className="skill-card-foot">
+                      {s.source === 'user' && <span className="badge badge-mine">{s.disabled ? '已停用' : '我的'}</span>}
                       {s.needsApi && (s.apiConfigured
                         ? <span className="badge badge-ok">已配置</span>
-                        : <span className="badge badge-warn">需 API</span>)}
+                        : <span className="badge badge-warn">需设置</span>)}
                     </div>
                   </div>
                 );
@@ -151,6 +177,8 @@ export default function SkillPage({ persona }: SkillPageProps) {
         ))}
       </div>
 
+      {newTab && <NewSkillModal initialTab={newTab} onClose={() => setNewTab('')} onDone={load} onStartPrompt={onStartPrompt} />}
+      {managing && <ManageSkillModal skill={managing} onClose={() => setManaging(null)} onDone={load} />}
       {selected && (
         <SkillDrawer
           skillName={selected}

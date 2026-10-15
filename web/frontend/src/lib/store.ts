@@ -31,6 +31,10 @@ export interface StreamState {
 
 /** 发布中心草稿：持久化到 localStorage，切页/刷新都不丢。 */
 export interface PublishDraft {
+  creationId?: string;
+  creationRevision?: number;
+  media?: string[];
+  savedContent?: string;
   title: string;
   body: string;
   platforms: string[];
@@ -38,6 +42,9 @@ export interface PublishDraft {
   tags: string;   // 话题标签，逗号分隔（小红书绑话题；其它平台按需写入）
 }
 const PUBLISH_KEY = 'easel_publish_draft';
+export function publishContent(d: PublishDraft): string {
+  return JSON.stringify([d.title, d.body, d.platforms, d.overrides, d.tags, d.media || []]);
+}
 const PREVIOUS_BRAND = ['post', 'craft'].join('');
 
 function readMigratedLocalValue(key: string, suffix: string): string | null {
@@ -55,9 +62,14 @@ function readMigratedLocalValue(key: string, suffix: string): string | null {
 const PUBLISH_DEFAULT: PublishDraft = {
   title: '', body: '', platforms: ['xiaohongshu', 'douyin'], overrides: {}, tags: '',
 };
-export function loadPublishDraft(): PublishDraft {
+export function selectPublishCreation(id: string | null): void {
+  if (id) localStorage.setItem('easel_publish_creation', id);
+  else localStorage.removeItem('easel_publish_creation');
+}
+export function loadPublishDraft(creationId?: string | null): PublishDraft {
   try {
-    const raw = readMigratedLocalValue(PUBLISH_KEY, 'publish_draft');
+    const id = creationId === undefined ? localStorage.getItem('easel_publish_creation') : creationId;
+    const raw = id ? localStorage.getItem(`${PUBLISH_KEY}:${id}`) : readMigratedLocalValue(PUBLISH_KEY, 'publish_draft');
     if (!raw) return { ...PUBLISH_DEFAULT };
     return { ...PUBLISH_DEFAULT, ...(JSON.parse(raw) as PublishDraft) };
   } catch {
@@ -65,13 +77,28 @@ export function loadPublishDraft(): PublishDraft {
   }
 }
 export function savePublishDraft(d: PublishDraft): void {
-  try { localStorage.setItem(PUBLISH_KEY, JSON.stringify(d)); } catch { /* quota */ }
+  localStorage.setItem(d.creationId ? `${PUBLISH_KEY}:${d.creationId}` : PUBLISH_KEY, JSON.stringify(d));
 }
 
 const STORAGE_KEY = 'easel_sessions';
 const ACTIVE_KEY = 'easel_active_session';
 const MAX_SESSIONS = 100;
 const TITLE_MAX_CHARS = 24;
+const seenCreationSessions = new Map<string, ChatSession>();
+const creationChatKey = (id: string) => 'easel_creation_chat:' + id;
+export function loadCreationSession(id: string): ChatSession | null {
+  try {
+    const raw = localStorage.getItem(creationChatKey(id));
+    if (!raw) return null;
+    const session = JSON.parse(raw) as ChatSession;
+    if (session.id !== id || !Array.isArray(session.messages)) return null;
+    seenCreationSessions.set(id, session);
+    return session;
+  } catch { return null; }
+}
+export function removeCreationSession(id: string) {
+  localStorage.removeItem(creationChatKey(id)); seenCreationSessions.delete(id);
+}
 
 /** 上次活跃会话 id：重开网页时据此续接上次对话（而不是丢进新空会话）。 */
 export function loadActiveId(): string | null {
@@ -110,7 +137,7 @@ export function loadSessions(): ChatSession[] {
             };
           })
         : [],
-    }));
+    })).map(session => session.id.startsWith('creation-') ? loadCreationSession(session.id) || session : session);
   } catch {
     return [];
   }
@@ -129,13 +156,26 @@ function prune(sessions: ChatSession[]): ChatSession[] {
 }
 
 export function saveSessions(sessions: ChatSession[]): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(prune(sessions)));
+  const merged = sessions.map(session => {
+    if (!session.id.startsWith('creation-')) return session;
+    const previous = seenCreationSessions.get(session.id);
+    let stored: ChatSession | null = null;
+    try { stored = JSON.parse(localStorage.getItem(creationChatKey(session.id)) || 'null'); } catch { /* malformed cache */ }
+    const next = { ...session };
+    // Other tabs writing their ordinary sessions must not roll back this work's conversation.
+    if (stored && (!previous || JSON.stringify(previous.messages) === JSON.stringify(session.messages))) next.messages = stored.messages;
+    if (stored && (!previous || previous.pendingTurnId === session.pendingTurnId)) next.pendingTurnId = stored.pendingTurnId;
+    localStorage.setItem(creationChatKey(session.id), JSON.stringify(next));
+    seenCreationSessions.set(session.id, next);
+    return next;
+  });
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(prune(merged)));
 }
 
 export function createSession(persona?: string): ChatSession {
   return {
     id: generateId(),
-    title: 'New Chat',
+    title: '新对话',
     messages: [],
     persona,
     created: Date.now(),
@@ -255,7 +295,7 @@ export function generateSessionTitle(message: string, _seed = message): string {
 
 export function updateSessionTitle(session: ChatSession): void {
   const first = Array.isArray(session.messages) ? session.messages[0] : undefined;
-  if (first && session.title === 'New Chat') {
+  if (first && (session.title === 'New Chat' || session.title === '新对话')) {
     session.title = generateSessionTitle(first.content || '', session.id);
   }
 }

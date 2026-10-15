@@ -1475,3 +1475,111 @@ textarea.field { resize: vertical; min-height: 90px; }
 }
 .proto-trigger:hover { border-color: #9db3d8; }
 .proto-trigger .proto-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Meta 工作台 · 素材库 */
+.mat-toolbar { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 10px; margin-top: 14px; }
+.mat-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.mat-chip-n { opacity: 0.6; font-size: 11.5px; margin-left: 2px; }
+.mat-refresh { margin-left: 8px; vertical-align: middle; }
+.mat-refresh-msg { margin-left: 6px; font-size: 12.5px; color: var(--text-tertiary); }
+.mat-card { gap: 6px; }
+.mat-card-top { display: flex; justify-content: space-between; align-items: center; font-size: 12px; }
+.mat-platform { font-weight: 700; }
+.mat-date { color: var(--text-tertiary); }
+.mat-title { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.mat-author { font-size: 12px; color: var(--text-secondary); margin-top: -2px; }
+.mat-stats { font-size: 12px; color: var(--text-tertiary); }
+.mat-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.mat-panel { margin-bottom: 12px; }
+.mat-text { font-size: 13.5px; line-height: 1.75; white-space: pre-wrap; word-break: break-word; color: var(--text); }
+
+.mat-card { padding-top: 0 !important; overflow: hidden; }
+.mat-cover { margin: 0 -16px 4px; aspect-ratio: 1 / 1; background: var(--surface-hover, #f1f2f4); display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.mat-cover-tall { aspect-ratio: 3 / 4; }
+.mat-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.mat-cover-none { color: var(--text-tertiary); font-size: 13px; font-weight: 600; }
+.mat-gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 8px; margin-bottom: 14px; }
+.mat-thumb { padding: 0; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; aspect-ratio: 3 / 4; background: var(--surface-hover, #f1f2f4); cursor: zoom-in; }
+.mat-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.mat-zoom { position: fixed; inset: 0; z-index: 2000; background: rgba(10, 12, 16, 0.82); display: flex; align-items: center; justify-content: center; cursor: zoom-out; }
+.mat-zoom img { max-width: 92vw; max-height: 92vh; border-radius: 8px; box-shadow: 0 20px 60px rgba(0,0,0,.45); }
+.mat-cover-empty { aspect-ratio: 5 / 1; }
+.mat-gallery.single { grid-template-columns: 1fr; }
+.mat-gallery.single .mat-thumb { aspect-ratio: auto; max-height: 460px; display: flex; justify-content: center; }
+.mat-gallery.single .mat-thumb img { width: auto; max-width: 100%; max-height: 460px; object-fit: contain; }
+
+.mat-pub { font-weight: 600; color: var(--text-secondary); }
+.mat-col { color: var(--text-tertiary); }
+@media (max-width: 1280px) { .mat-col { display: none; } }
+
+/* META-PATCH 素材库「最推荐」 */
+.mat-rec { font-size: 12px; color: var(--text-secondary); margin: 2px 0 4px; line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.mat-rec b { display: inline-block; min-width: 26px; padding: 0 6px; margin-right: 4px; border-radius: 10px; background: var(--accent-soft); color: var(--accent-start, #6366f1); font-weight: 600; text-align: center; }
+.mat-rec-detail { margin-top: 8px; -webkit-line-clamp: unset; display: block; }
+.mat-rec-parts { color: var(--text-tertiary); margin-left: 4px; }
+
+/* META-PATCH: 内容库批量管理 */
+.gcard .meta-pick{position:absolute;top:8px;right:40px;z-index:3;width:22px;height:22px;border-radius:6px;border:1.5px solid rgba(255,255,255,.9);background:rgba(0,0,0,.28);color:#fff;font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center;cursor:pointer;opacity:0;transition:opacity .15s}
+.gcard:hover .meta-pick,.gcard .meta-pick.on,.gcard.meta-picked .meta-pick{opacity:1}
+.gcard .meta-pick.on{background:var(--accent-start);border-color:var(--accent-start)}
+.gcard.meta-picked{outline:2px solid var(--accent-start);outline-offset:-2px}
+.meta-batchbar{position:sticky;top:0;z-index:20;display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 14px;margin:0 0 14px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface,#fff);box-shadow:0 4px 16px rgba(0,0,0,.08)}
+.meta-batch-tip{font-size:12px;color:var(--text-tertiary)}
+.meta-batch-sub{flex-basis:100%;display:flex;gap:8px;align-items:center;font-size:13px;padding-top:4px}
+.gallery-grid .gcard{user-select:none}
+
+/* META-PATCH: 技能库自助管理 */
+.meta-skill-modal { max-height: 88vh; overflow-y: auto; }
+.meta-skill-tip { font-size: 12.5px; color: var(--text-secondary); margin: 4px 0 8px; line-height: 1.6; word-break: break-all; }
+.meta-skill-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; }
+.meta-skill-msg { margin-top: 10px; font-size: 13px; word-break: break-all; }
+.meta-import-list { max-height: 46vh; overflow-y: auto; border: 1px solid var(--border); border-radius: var(--radius); }
+.meta-import-row { display: flex; gap: 10px; align-items: flex-start; padding: 9px 12px; border-bottom: 1px solid var(--border); cursor: pointer; }
+.meta-import-row:last-child { border-bottom: 0; }
+.meta-import-row.dis { opacity: .55; cursor: default; }
+.meta-import-row input { margin-top: 3px; }
+.meta-import-name { font-weight: 600; font-size: 13.5px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.meta-import-desc { font-size: 12px; color: var(--text-secondary); margin-top: 2px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.meta-import-agents { font-size: 11.5px; color: var(--text-tertiary); margin-top: 2px; }
+.meta-skill-toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+.skill-card .meta-skill-gear { position: absolute; bottom: 8px; right: 8px; border: 0; background: transparent; color: var(--text-tertiary); cursor: pointer; font-size: 15px; padding: 2px 6px; border-radius: 6px; opacity: 0; }
+.skill-card:hover .meta-skill-gear { opacity: 1; }
+.skill-card .meta-skill-gear:hover { background: var(--surface-hover); color: var(--text-primary); }
+.skill-card.meta-off { opacity: .55; }
+.badge-mine { background: var(--accent-soft); color: var(--accent-start); }
+
+/* META-NIELSEN */
+.dash-quick-btn.dash-quick-primary{background:var(--text,#111);color:var(--bg,#fff);border-color:transparent}
+.dash-quick-btn.dash-quick-primary svg{color:inherit}
+.page-title{display:flex;align-items:center;gap:8px}
+.profile-page>.page-title{justify-content:flex-start}
+.sidebar-logo h1{font-family:inherit;font-style:normal;font-size:17px;font-weight:700;letter-spacing:.5px}
+.accounts-grid .account-card .btn-primary,.accounts-grid .account-card button:not(.btn-ghost){font-weight:600}
+.mat-cover-none{color:var(--text-muted,#888);font-size:13px}
+
+/* META-NIELSEN-2 */
+.meta-topic-card{border:1px solid var(--border);border-radius:12px;padding:14px 16px;background:var(--surface,#fff);max-width:560px}
+.meta-topic-label{font-size:11px;color:var(--text-tertiary);letter-spacing:.5px}
+.meta-topic-title{font-size:17px;font-weight:700;margin:4px 0 10px}
+.meta-topic-row{display:flex;gap:10px;font-size:13px;margin:6px 0}
+.meta-topic-row span{flex:0 0 56px;color:var(--text-tertiary)}
+.meta-topic-row p{margin:0;line-height:1.6}
+.meta-topic-card .btn{margin-top:10px}
+.meta-item-st{display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:8px 16px;border-bottom:1px solid var(--border);font-size:13px}
+.meta-item-pub{color:var(--text-tertiary);margin-left:6px}
+.meta-item-pub a{color:var(--accent-start)}
+.account-card .btn-block:not(.btn-primary){background:transparent;border:1px solid var(--border);color:var(--text)}
+.account-card.meta-acc-main{border-color:var(--accent-start)}
+
+/* META-NIELSEN-3 */
+.meta-unfilled{color:var(--text-tertiary)}
+.meta-topic-src{font-size:12px;color:var(--text-tertiary);margin:8px 0 0}
+.meta-ctx-row{display:flex;gap:8px;padding:8px 16px;border-bottom:1px solid var(--border)}
+.meta-final-note{padding:8px 16px;background:color-mix(in srgb,var(--amber,#e9a400) 12%,transparent);font-size:13px}
+.meta-review{padding:10px 16px;border-bottom:1px solid var(--border);font-size:13px}
+.meta-review-head{font-weight:600;margin-bottom:8px}
+.meta-review-metrics{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-bottom:8px}
+.meta-review-metrics label,.meta-review-q{display:flex;flex-direction:column;gap:4px;color:var(--text-secondary)}
+.meta-review-metrics input{width:100%}
+.meta-review-q textarea{min-height:46px}
+.meta-topic-mini-desc{font-size:12px;color:var(--text-secondary);margin:6px 0;line-height:1.5}

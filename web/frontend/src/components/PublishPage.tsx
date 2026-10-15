@@ -1,11 +1,13 @@
 import { useState, useRef, useEffect } from 'react';
 import {
   createSchedule, executeSkill, runAgent, streamChat,
-  fetchAccounts, publishNow, publishStatus, submitPublishSms, fetchOutputs, mediaUrl,
-} from '../lib/api';
+  fetchAccounts, publishNow, publishStatus, submitPublishSms, fetchOutputs, mediaUrl, setItemStatus, askPublishedInfo } from '../lib/api';
 import type { AccountItem, OutputFile } from '../lib/api';
-import { loadPublishDraft, savePublishDraft } from '../lib/store';
+import { loadPublishDraft, savePublishDraft, selectPublishCreation, publishContent } from '../lib/store';
+import { creationRequest, openCreation, operationId, withCreationEditor } from '../lib/creations';
+import type { Creation } from '../lib/creations';
 import { renderMarkdown } from '../lib/sanitize';
+import MobileShareButton from './MobileShareButton';
 import { IconPublish, IconCopy, IconCheck, IconCalendar, IconSkills, IconEdit, IconStop, IconTrash } from './icons';
 
 interface PublishPageProps {
@@ -42,7 +44,26 @@ function parseSections(text: string): Record<string, string> {
 type PubState = { status: 'publishing' | 'ok' | 'fail'; msg: string };
 
 export default function PublishPage({ persona }: PublishPageProps) {
-  const draft0 = loadPublishDraft();
+  const [draft0] = useState(() => loadPublishDraft());
+  const [linkedRevision, setLinkedRevision] = useState(draft0.creationRevision);
+  const [savedContent, setSavedContent] = useState(draft0.savedContent);
+  const [linkBusy, setLinkBusy] = useState(false);
+  const linkBusyRef = useRef(false);
+  const [canEditLinked, setCanEditLinked] = useState(!draft0.creationId);
+  const [lockNotice, setLockNotice] = useState('');
+  useEffect(() => {
+    if (!draft0.creationId) return;
+    let cancelled = false;
+    let release: (() => void) | undefined;
+    if (!navigator.locks) { setLockNotice('请使用本机 Chrome 或 Edge 编辑关联平台稿'); return; }
+    void withCreationEditor(draft0.creationId, async lock => {
+      if (cancelled) return;
+      if (!lock) { setLockNotice('另一标签页正在编辑这篇创作；本页仅查看，关闭那一页后重新打开即可编辑。'); return; }
+      setCanEditLinked(true);
+      await new Promise<void>(resolve => { release = resolve; });
+    }).catch((e: Error) => setLockNotice(e.message));
+    return () => { cancelled = true; release?.(); };
+  }, [draft0.creationId]);
   const [title, setTitle] = useState(draft0.title);
   const [body, setBody] = useState(draft0.body);
   const [platforms, setPlatforms] = useState<string[]>(draft0.platforms);
@@ -59,8 +80,9 @@ export default function PublishPage({ persona }: PublishPageProps) {
   // 发布相关
   const [accounts, setAccounts] = useState<AccountItem[]>([]);
   const [mediaFiles, setMediaFiles] = useState<OutputFile[]>([]);
-  const [selectedMedia, setSelectedMedia] = useState<string[]>([]);
+  const [selectedMedia, setSelectedMedia] = useState<string[]>(draft0.media || []);
   const [showPicker, setShowPicker] = useState(false);
+  const [mediaVisible, setMediaVisible] = useState(40);
   const [pub, setPub] = useState<Record<string, PubState>>({});
   const [publishing, setPublishing] = useState(false);
   // 发布时的短信验证窗口（抖音风控条件触发；没触发就不弹）
@@ -70,8 +92,35 @@ export default function PublishPage({ persona }: PublishPageProps) {
 
   // 草稿持久化：任何改动即写 localStorage，切页/刷新回来都在
   useEffect(() => {
-    savePublishDraft({ title, body, platforms, overrides, tags });
-  }, [title, body, platforms, overrides, tags]);
+    if (!canEditLinked) return;
+    try { savePublishDraft({ title, body, platforms, overrides, tags, media: selectedMedia,
+      creationId: draft0.creationId, creationRevision: linkedRevision, savedContent }); }
+    catch { setToast('浏览器存储已满，请保存平台版本或复制稿件'); }
+  }, [title, body, platforms, overrides, tags, selectedMedia, draft0.creationId, linkedRevision, savedContent, canEditLinked]);
+
+  const saveLinked = async (): Promise<Creation | null> => {
+    if (!draft0.creationId) return null;
+    const work = await creationRequest<Creation>('/' + draft0.creationId);
+    if (work.revision !== linkedRevision) throw new Error('这篇创作已有新版本。本页编辑已保留，请先返回创作对照；不要直接覆盖。');
+    const content = publishContent({ title, body, platforms, overrides, tags, media: selectedMedia });
+    const version = work.versions.at(-1)!;
+    const platformBodies = { ...version.platforms, ...Object.fromEntries(platforms.map(key => [key, overrides[key] ?? body])) };
+    if (content === savedContent && platforms.every(key => version.platforms[key] === (overrides[key] ?? body)) && JSON.stringify(version.media) === JSON.stringify(selectedMedia)) return work;
+    const saved = await creationRequest<Creation>(`/${work.id}/versions`, {
+      revision: linkedRevision, operationId: operationId(), title, body, label: '保存平台版本',
+      platforms: platformBodies, tags, media: selectedMedia,
+    });
+    setLinkedRevision(saved.revision); setSavedContent(content);
+    savePublishDraft({ title, body, platforms, overrides, tags, media: selectedMedia,
+      creationId: work.id, creationRevision: saved.revision, savedContent: content });
+    return saved;
+  };
+  const linkedAction = async (action: (work: Creation | null) => Promise<void>) => {
+    if (linkBusyRef.current || !canEditLinked) return;
+    linkBusyRef.current = true; setLinkBusy(true);
+    try { await action(await saveLinked()); } catch (e) { setToast((e as Error).message); }
+    finally { linkBusyRef.current = false; setLinkBusy(false); }
+  };
 
   useEffect(() => () => adaptCtl.current?.abort(), []);   // 离开页面中止流
 
@@ -282,12 +331,15 @@ export default function PublishPage({ persona }: PublishPageProps) {
   };
   const addToCalendar = async (key: string) => {
     if (empty) return;
+    await linkedAction(async work => {
     const d = new Date();
     await createSchedule({
       title: title.trim() || effective(key).slice(0, 20), date: d.toISOString().slice(0, 10),
       platform: PLATFORMS.find((p) => p.key === key)?.label || '', time: '', status: 'draft', note: effective(key),
+      source: 'publish-page', creation_id: work?.id, creation_version: work?.versions.at(-1)?.id,
     });
     showToast('已存为草稿并加入今天的日历');
+    });
   };
 
   const canPublish = platforms.some((k) => PUBLISHABLE.has(k));
@@ -296,8 +348,18 @@ export default function PublishPage({ persona }: PublishPageProps) {
     <div className="publish-page">
       <div className="publish-editor">
         <h1 className="page-title"><IconPublish size={21} /> 发布中心</h1>
-        <p className="page-subtitle">一次编辑 → AI 一键改写成各平台版本 → 预检 → 附媒体 → 一键真发布。</p>
+        <p className="page-subtitle">一次编辑 → 适配平台版本 → 预检与选素材 → 发送到手机，在 App 中手动发布。</p>
+        {lockNotice && <p role="alert">{lockNotice}</p>}
+        {draft0.creationId && <div className="panel" style={{ marginBottom: 16 }}>
+          <p>关联创作 · 版本 {linkedRevision} · 此页编辑单独保留</p>
+          <div className="creation-actions">
+            <button className="btn btn-primary btn-sm" disabled={linkBusy || !canEditLinked} onClick={() => linkedAction(async () => { showToast('平台版本已保存到这篇创作'); })}>{linkBusy ? '保存中…' : '保存平台版本'}</button>
+            <button className="btn btn-sm" onClick={() => openCreation(draft0.creationId!)}>返回创作</button>
+            <button className="btn btn-ghost btn-sm" onClick={() => { selectPublishCreation(null); window.dispatchEvent(new Event('meta-publish-reset')); }}>打开原独立草稿</button>
+          </div>
+        </div>}
 
+        <fieldset disabled={!canEditLinked} style={{ border: 0, minWidth: 0 }}>
         <label className="field-label">标题</label>
         <input className="field" value={title} placeholder="标题（部分平台需要）"
           onChange={(e) => setTitle(e.target.value)} />
@@ -306,7 +368,7 @@ export default function PublishPage({ persona }: PublishPageProps) {
           placeholder="写下你的内容，右侧按各平台规则实时预览；点「一键适配」让 AI 分平台改写…"
           onChange={(e) => setBody(e.target.value)} />
 
-        <label className="field-label">话题标签 <span style={{ color: 'var(--text-secondary)', fontWeight: 400, fontSize: 12 }}>（逗号分隔，如「AI,职场,干货」；小红书会用 # 联想真正绑定话题）</span></label>
+        <label className="field-label">话题标签 <span style={{ color: 'var(--text-secondary)', fontWeight: 400, fontSize: 12 }}>（逗号分隔，如「AI,职场,干货」；手机粘贴后，请在 App 中手动选择话题联想）</span></label>
         <input className="field" value={tags} placeholder="AI,职场,干货"
           onChange={(e) => setTags(e.target.value)} />
 
@@ -337,7 +399,7 @@ export default function PublishPage({ persona }: PublishPageProps) {
         {showPicker && (
           <div className="media-grid">
             {mediaFiles.length === 0 && <div className="dash-empty">内容库暂无图片/视频</div>}
-            {mediaFiles.slice(0, 40).map((f) => (
+            {mediaFiles.slice(0, mediaVisible).map((f) => (
               <div key={f.path}
                 className={`media-cell ${selectedMedia.includes(f.path) ? 'sel' : ''}`}
                 onClick={() => toggleMedia(f.path)} title={f.path}>
@@ -349,6 +411,9 @@ export default function PublishPage({ persona }: PublishPageProps) {
             ))}
           </div>
         )}
+
+        {showPicker && mediaFiles.length > mediaVisible && <button className="btn btn-sm" style={{ marginTop: 8 }}
+          onClick={() => setMediaVisible((count) => count + 40)}>再显示 40 个素材（还有 {mediaFiles.length - mediaVisible} 个）</button>}
 
         <div className="publish-actions">
           {adapting ? (
@@ -364,27 +429,38 @@ export default function PublishPage({ persona }: PublishPageProps) {
           <button className="btn btn-sm" disabled={empty} onClick={() => addToCalendar(platforms[0] || 'xiaohongshu')}>
             <IconCalendar size={14} /> 存草稿并排期
           </button>
-          <button className="btn btn-sm btn-primary" disabled={empty || publishing || checking || !canPublish}
+          <button className="btn btn-sm" disabled={empty} title="自己发完后点这里记一笔"
+            onClick={async () => {
+              const info = askPublishedInfo(); if (!info) return;
+              await linkedAction(async work => {
+                const version = work?.versions.at(-1);
+                await setItemStatus(work && version ? `发布记录/${work.id}/${version.id}` : `发布记录/${info.date}/${title || '未命名'}`,
+                  { status: 'published', ...info, ...(work && version ? { extra: { creationId: work.id, versionId: version.id, platforms } } : {}) });
+                showToast('已记下：手动标记已发布');
+              });
+            }}>标记已发布</button>
+          {false && <button className="btn btn-sm btn-primary" disabled={empty || publishing || checking || !canPublish}
             title={canPublish ? '真实发布到已登录平台' : '所选平台无一键发布（B站走终端 biliup）'}
             onClick={publishAll}>
             <IconPublish size={14} /> {publishing ? '发布中…' : '一键发布'}
-          </button>
+          </button>}
           <button className="btn btn-sm btn-ghost" disabled={empty || adapting}
             onClick={() => { setTitle(''); setBody(''); setTags(''); setOverrides({}); setCheckResult(''); setPub({}); showToast('已清空'); }}>
             <IconTrash size={13} /> 清空
           </button>
         </div>
         {adapting && <div className="adapt-hint"><span className="live-pulse" />AI 正在逐字改写各平台版本…可随时停止。</div>}
-        <p className="publish-saved-note">草稿已自动保存，切换页面/刷新回来内容都在。一键发布仅对「已登录 + 媒体齐全」的平台生效。</p>
+        <p className="publish-saved-note">草稿已自动保存，切换页面/刷新回来内容都在。工作台不替你发：复制文案、下载图片后自己发。</p>
         {checkResult && (
           <div className="panel" style={{ marginTop: 14 }}>
             <div className="panel-title"><IconCheck size={14} /> 发布前预检</div>
             <div className="skill-body-md" dangerouslySetInnerHTML={{ __html: renderMarkdown(checkResult) }} />
           </div>
         )}
+        </fieldset>
       </div>
 
-      <div className="publish-previews">
+      <div className="publish-previews" inert={!canEditLinked}>
         {platforms.length === 0 && <div className="dash-empty">选择至少一个平台查看预览</div>}
         {PLATFORMS.filter((p) => platforms.includes(p.key)).map((p) => {
           const text = effective(p.key);
@@ -399,7 +475,7 @@ export default function PublishPage({ persona }: PublishPageProps) {
               <div className="pv-head">
                 <span className="pv-plat">
                   {p.label}
-                  {overrides[p.key] != null && <span className="pv-badge">AI 版</span>}
+                  {overrides[p.key] != null && <span className="pv-badge">平台稿</span>}
                   {publishable && (logged
                     ? <span className="pv-badge pv-badge-ok">已登录</span>
                     : <span className="pv-badge">未登录</span>)}
@@ -423,7 +499,8 @@ export default function PublishPage({ persona }: PublishPageProps) {
               )}
               <div className="pv-foot">
                 <span className="pv-hint">{p.hint}{over ? ' · 已超字数' : ''}</span>
-                <div style={{ display: 'flex', gap: 6 }}>
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                  <MobileShareButton title={title} body={effective(p.key)} tags={tags} mediaPaths={selectedMedia} platform={p.key} />
                   <button className="pv-copy" onClick={() => setEditing(isEdit ? null : p.key)}>
                     <IconEdit size={13} />{isEdit ? '完成' : '编辑'}
                   </button>

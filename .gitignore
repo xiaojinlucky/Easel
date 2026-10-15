@@ -66,6 +66,13 @@ profiles/*/
 
 # 临时 / scratch（ad-hoc 运行残留）
 .scratch/
+.runtime/
+# Personal knowledge and writing examples remain local.
+knowledge/
+skills/builtin/meta-writing-core/
+skills/builtin/writing-style/
+# Local UI evidence contains personal collection and writing context.
+docs/evidence/creative-workflow-2026-10-15/
 .drama_run/
 .drama_tmp/
 .claude/

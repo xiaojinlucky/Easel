@@ -6,7 +6,29 @@ function getBasePath(): string {
 
 const BASE = getBasePath();
 
-async function request<T>(url: string, options?: RequestInit): Promise<T> {
+export interface PhoneShareInput {
+  title: string;
+  body: string;
+  tags: string[];
+  media_paths: string[];
+  platform: string;
+}
+export interface PhoneShare {
+  token: string;
+  expires_at: number;
+  share_url: string;
+  qr_data_url: string;
+  media_count: number;
+  links: { url: string; qr_data_url: string }[];
+}
+export const createPhoneShare = (input: PhoneShareInput): Promise<PhoneShare> =>
+  request('/api/phone-shares', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) });
+export const fetchPhoneShare = (token: string): Promise<PhoneShare> =>
+  request(`/api/phone-shares/${encodeURIComponent(token)}`);
+export const endPhoneShare = (token: string): Promise<{ revoked: boolean }> =>
+  request(`/api/phone-shares/${encodeURIComponent(token)}`, { method: 'DELETE', keepalive: true });
+
+export async function request<T>(url: string, options?: RequestInit): Promise<T> {
   // 全部是动态应用接口（登录态/数据等），禁止浏览器 HTTP 缓存——否则 /api/accounts 等可能被启发式
   // 缓存住旧响应（曾表现为“扫码登录后卡片仍显示未登录”）。调用方可用 options.cache 覆盖。
   const res = await fetch(`${BASE}${url}`, { cache: 'no-store', ...options });
@@ -79,6 +101,9 @@ export interface SkillItem {
   layer: string;
   needsApi: boolean;
   apiConfigured: boolean;
+  source?: 'builtin' | 'user';   // META-PATCH
+  disabled?: boolean;
+  displayName?: string;
 }
 
 export interface ApiKeySpec {
@@ -210,6 +235,8 @@ export function fetchTrends(platforms: string, limit = 12): Promise<{ trends: Tr
 
 // ---- 内容排期 ----
 export interface ScheduleItem {
+  creation_id?: string;
+  creation_version?: string;
   id: string; title: string; date: string; platform: string;
   time: string; status: string; note: string;
   kind?: string;          // content（内容/发布）| event（平台活动/节日/特殊日期）
@@ -935,3 +962,60 @@ export function fetchAvailableModels(
     body: JSON.stringify({ baseUrl, key, protocol, slot, name }),
   });
 }
+
+// META-PATCH: 内容库批量管理
+export interface OutputBatchResult { ok: boolean; done: string[]; errors: string[]; }
+export function batchOutputs(action: 'move' | 'status' | 'archive' | 'delete', paths: string[], extra: { target?: string; status?: string } = {}): Promise<OutputBatchResult> {
+  return request('/api/outputs/batch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action, paths, ...extra }) });
+}
+export async function exportOutputs(paths: string[]): Promise<void> {
+  const res = await fetch(`${BASE}/api/outputs/export`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'export', paths }) });
+  if (!res.ok) throw new Error('导出失败');
+  const blob = await res.blob();
+  const cd = res.headers.get('content-disposition') || '';
+  const m = /filename\*=utf-8''([^;]+)/i.exec(cd);
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = m ? decodeURIComponent(m[1]) : '内容库导出.zip';
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+
+// META-PATCH: 技能库自助管理
+const J = { 'Content-Type': 'application/json' };
+export const metaSkillCreate = (b: { name: string; displayName?: string; description: string; layer: string; body: string }) =>
+  request<{ ok: boolean; name: string; path: string }>('/api/meta-skills/create', { method: 'POST', headers: J, body: JSON.stringify(b) });
+export const metaSkillUpload = (file: File, name: string, displayName: string) => {
+  const fd = new FormData(); fd.append('file', file); fd.append('name', name); fd.append('displayName', displayName);
+  return request<{ ok: boolean; name: string; path: string }>('/api/meta-skills/upload', { method: 'POST', body: fd });
+};
+export const metaSkillMeta = (name: string, b: { displayName?: string; description?: string; layer?: string }) =>
+  request<{ ok: boolean }>(`/api/meta-skills/${encodeURIComponent(name)}/meta`, { method: 'POST', headers: J, body: JSON.stringify(b) });
+export const metaSkillToggle = (name: string, enabled: boolean) =>
+  request<{ ok: boolean }>(`/api/meta-skills/${encodeURIComponent(name)}/toggle`, { method: 'POST', headers: J, body: JSON.stringify({ enabled }) });
+export const metaSkillDelete = (name: string) =>
+  request<{ ok: boolean; recycled: string }>(`/api/meta-skills/${encodeURIComponent(name)}`, { method: 'DELETE' });
+export interface MetaImportItem { id: string; name: string; description: string; path: string; enabled: boolean; sourceType: string; agents: string[]; exists: boolean; already: boolean; }
+export const metaSkillSources = () => request<{ db: string; items: MetaImportItem[] }>('/api/meta-skills/import-sources');
+export const metaSkillImport = (names: string[]) =>
+  request<{ ok: boolean; done: string[]; errors: string[]; dir: string }>('/api/meta-skills/import', { method: 'POST', headers: J, body: JSON.stringify({ names }) });
+
+// META：每条内容自己的状态（待写/在写/待发/已发）+ 发布链接与日期
+export interface ItemReview { metrics?: Record<string, string>; responded?: string; newQuestions?: string; keepChange?: string }
+export interface ItemTopic { title?: string; stuck?: string; whyNow?: string; material?: string; judgment?: string; fits?: string; source?: string }
+export interface ItemStatus { status?: string; link?: string; date?: string; updatedAt?: string; topic?: ItemTopic; review?: ItemReview; lastChat?: string }
+export function fetchItemStatus(): Promise<Record<string, ItemStatus>> {
+  return request('/api/meta/item-status');
+}
+export function setItemStatus(path: string, body: { status?: string; link?: string; date?: string; extra?: Record<string, unknown> }): Promise<{ ok: boolean; item: ItemStatus }> {
+  return request('/api/meta/item-status', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path, ...body }) });
+}
+export function askPublishedInfo(): { link: string; date: string } | null {
+  const link = window.prompt('发在哪了？贴上笔记链接（没有可留空）', '');
+  if (link === null) return null;
+  const today = new Date().toISOString().slice(0, 10);
+  const date = window.prompt('哪天发的？', today);
+  if (date === null) return null;
+  return { link, date: date || today };
+}
+export function startMetaPrompt(p: string) { window.dispatchEvent(new CustomEvent('meta-start-prompt', { detail: p })); }

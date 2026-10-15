@@ -36,11 +36,12 @@ interface DashboardProps {
   agentRuntime: string;
   onNavigate: (page: Page) => void;
   onUseTopic: (title: string) => void;
+  onStartPrompt?: (prompt: string) => void;
 }
 
 const STATUS_LABEL: Record<string, string> = { idea: '选题', draft: '草稿', scheduled: '待发', published: '已发' };
 
-export default function DashboardPage({ persona, gatewayStatus, apiDirect, agentRuntime, onNavigate, onUseTopic }: DashboardProps) {
+export default function DashboardPage({ persona, gatewayStatus, apiDirect, agentRuntime, onNavigate, onUseTopic, onStartPrompt }: DashboardProps) {
   const [trends, setTrends] = useState<TrendGroup[]>([]);
   const [schedule, setSchedule] = useState<ScheduleItem[]>([]);
   const [outputs, setOutputs] = useState<OutputNode[]>([]);
@@ -63,6 +64,10 @@ export default function DashboardPage({ persona, gatewayStatus, apiDirect, agent
   // whoami 自愈：登录态以真实 profile 为准（与账号页共享 localStorage 缓存）
   const [whoamiMap, setWhoamiMap] = useState<Record<string, AccountWhoami>>(() => getWhoamiCache());
 
+  const [patchSkipped, setPatchSkipped] = useState<string[]>([]);
+  useEffect(() => {
+    fetch('./api/meta/patch-status').then((r) => r.json()).then((d) => setPatchSkipped(d.skipped || [])).catch(() => {});
+  }, []);
   useEffect(() => {
     fetchTrends('weibo,douyin', 6).then((d) => setTrends(d.trends)).catch(() => {});
     fetchSchedule().then(setSchedule).catch(() => {});
@@ -78,7 +83,7 @@ export default function DashboardPage({ persona, gatewayStatus, apiDirect, agent
       // 开页后台自愈：对非 API 式的归因平台真校验（whoami），刷新登录态；
       // B 站走 cookie、公众号走凭证/官方 API 判定，都不起浏览器。
       const API_BASED = new Set(['bilibili', 'wechat-oa']);
-      verifyStale(ps.filter((p) => !API_BASED.has(p.platform)).map((p) => p.platform), {
+      if (false) verifyStale(ps.filter((p) => !API_BASED.has(p.platform)).map((p) => p.platform), {  // 不自动查登录，去账号页手动查
         onUpdate: (platform, r) => {
           setWhoamiMap((m) => ({ ...m, [platform]: r }));
           if (r.loggedIn) setAnaSel((s) => s || platform);
@@ -140,23 +145,30 @@ export default function DashboardPage({ persona, gatewayStatus, apiDirect, agent
       <div className="dash-hero">
         <h1 className="page-title" style={{ fontSize: 26 }}>{greet} 👋</h1>
         <p className="page-subtitle">
-          {apiDirect ? (gatewayStatus === 'connected' ? '仅聊天模式已配置，可开始对话。' : '请先配置仅聊天模式的模型 API。')
-            : agentRuntime !== 'openclaw' ? (gatewayStatus === 'connected'
-            ? `${agentRuntime} CLI 已安装；原生登录及模型可用性请发送消息验证。`
-            : `请先在服务器安装并配置 ${agentRuntime} CLI。`)
-            : gatewayStatus === 'connected' ? '一切就绪。' : '⚠ 网关未连接。'}
-          {persona ? ` 当前画像「${persona}」。` : ' 通用模式——指定画像效果更好。'}
-          从热点到发布，一站式搞定今天的内容。
+          {gatewayStatus === 'connected' ? '' : '⚠ AI 还没连上，先去设置看看。'}
+          {void apiDirect}{void agentRuntime}{void persona}
+          收素材、写稿、复盘，都从这里开始。
         </p>
         <div className="dash-quick">
-          {quick.map((q) => (
-            <button key={q.page} className="dash-quick-btn" onClick={() => onNavigate(q.page)}>
+          {quick.map((q, qi) => (
+            <button key={q.page} className={`dash-quick-btn ${qi === 0 ? 'dash-quick-primary' : ''}`} onClick={() => onNavigate(q.page)}>
               <q.Icon size={16} /><span>{q.label}</span>
             </button>
           ))}
+          <button className="dash-quick-btn" title="从你的收藏里逛出一个能写的选题" onClick={() => onStartPrompt?.('用 wander-synthesis 技能做一次漫步选题：读 outputs/_sources 里日期最新的飞书收藏快照，挑 3 条素材碰撞，给我一个足够小、能直接写的选题。')}>
+            <IconIdea size={16} /><span>漫步选题</span>
+          </button>
+          <button className="dash-quick-btn" title="从评论区找大家真想问的" onClick={() => onStartPrompt?.('用 xhs-comment-insight 技能做评论区选题。先问我要分析哪条笔记（链接或标题都行）；我说不上来就从最新的飞书收藏快照里挑 3 条评论多的让我选。')}>
+            <IconChat size={16} /><span>评论区选题</span>
+          </button>
         </div>
       </div>
 
+      {patchSkipped.length > 0 && (
+        <div className="card" style={{ padding: 12, margin: '0 0 14px', borderColor: 'var(--red, #d33)', fontSize: 13 }}>
+          ⚠ 程序更新后，有 {patchSkipped.length} 处改动没能放回。请你截图发给 Grok Bot。
+        </div>
+      )}
       {/* 概览数字 */}
       <div className="dash-stats">
         {stats.map((s) => (
@@ -194,7 +206,7 @@ export default function DashboardPage({ persona, gatewayStatus, apiDirect, agent
             <span><IconIdea size={16} /> 选题库 · 待做</span>
             <button className="dash-more" onClick={() => onNavigate('ideas')}>全部 →</button>
           </div>
-          {pendingIdeas.length === 0 && <div className="dash-empty">还没攒选题，去热点雷达收藏几个吧</div>}
+          {pendingIdeas.length === 0 && <div className="dash-empty">还没有选题。点上面「漫步选题」逛一个</div>}
           {pendingIdeas.slice(0, 5).map((it) => (
             <div key={it.id} className="dash-idea" onClick={() => onUseTopic(it.title)} title="点击做成内容">
               <span className="dash-idea-title">{it.title}</span>

@@ -115,6 +115,17 @@ export const SKILL_DISPLAY_NAMES: Record<string, string> = {
   'video-to-article': '视频转图文',
   'voice-clone': '声音克隆',
   'xhs-note-creator': '小红书图文总入口',
+  // Meta 工作台 · 2026-10-14
+  'wander-synthesis': '漫步选题',
+  'xhs-comment-insight': '评论区选题',
+  'writing-style': '写作风格',
+};
+
+// 技能库卡片上的短说明（只改展示，不动给 agent 的完整描述）
+export const SKILL_SHORT_DESC: Record<string, string> = {
+  'wander-synthesis': '从收藏里逛出一个能写的选题',
+  'xhs-comment-insight': '从评论区找大家真想问的',
+  'writing-style': '按我自己的写法写，少点AI味',
 };
 
 export function displayName(raw: string): string {

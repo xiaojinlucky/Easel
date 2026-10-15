@@ -5,12 +5,12 @@ import type { ComponentType } from 'react';
 import {
   IconChat, IconSkills, IconOutputs, IconAccounts, IconProfile,
   IconNewChat, IconEdit, IconArchive, IconUnarchive, IconTrash, IconChevron,
-  IconDashboard,
+  IconDashboard, IconBookmark,
 } from './icons';
 import { IconGear } from './settingsIcons';
 import ThemeToggle from './ThemeToggle';
 
-export type Page = 'dashboard' | 'chat' | 'trends' | 'ideas' | 'calendar' | 'publish' | 'breakdown' | 'skills' | 'outputs' | 'accounts' | 'profile';
+export type Page = 'dashboard' | 'materials' | 'create' | 'chat' | 'trends' | 'ideas' | 'calendar' | 'publish' | 'breakdown' | 'skills' | 'outputs' | 'accounts' | 'profile';
 
 interface SidebarProps {
   currentPage: Page;
@@ -35,6 +35,8 @@ interface SidebarProps {
 // 主导航（精简）；热点雷达/选题库/内容日历/发布中心 收进「工作台」，不占侧栏
 const NAV: { page: Page; Icon: ComponentType<{ size?: number }>; label: string }[] = [
   { page: 'dashboard', Icon: IconDashboard, label: '工作台' },
+  { page: 'materials', Icon: IconBookmark, label: '素材库' },
+  { page: 'create', Icon: IconEdit, label: '创作' },
   { page: 'chat', Icon: IconChat, label: '对话' },
   { page: 'skills', Icon: IconSkills, label: '技能库' },
   { page: 'outputs', Icon: IconOutputs, label: '内容库' },
@@ -64,6 +66,7 @@ export default function Sidebar({
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [showArchived, setShowArchived] = useState(false);
+  void apiDirect; void agentRuntime;
 
   const startRename = (s: ChatSession) => { setRenamingId(s.id); setRenameValue(s.title); };
   const commitRename = () => {
@@ -119,7 +122,7 @@ export default function Sidebar({
       <div className="sidebar-header">
         <div className="sidebar-logo">
           <img className="sidebar-logo-icon" src="./static/easel-icon-transparent.png" alt="" />
-          <h1>Easel</h1>
+          <h1>Meta工作台</h1>
           <ThemeToggle />
         </div>
         <select
@@ -129,13 +132,11 @@ export default function Sidebar({
             if (e.target.value === '__new__') { onNewProfile(); return; }
             onPersonaChange(e.target.value);
           }}
-          title="选择用户画像（一个对话对应一个画像：切换会新建一个对话）"
+          title="当前画像"
         >
-          <option value="">通用模式</option>
           {personas.map((p) => (
             <option key={p.name} value={p.name}>{p.name}</option>
           ))}
-          <option value="__new__">+ 新建画像…</option>
         </select>
       </div>
 
@@ -175,11 +176,11 @@ export default function Sidebar({
       <div className="sidebar-status">
         <span className={`status-dot ${gatewayStatus === 'connected' ? '' : 'offline'}`} />
         <span className="sidebar-status-text">{gatewayStatus === 'connected'
-          ? (apiDirect ? '仅聊天模式已配置' : agentRuntime !== 'openclaw' ? `${agentRuntime} CLI 已安装` : '网关已连接')
+          ? 'AI 已就绪'
           : gatewayStatus === 'disconnected'
-            ? (apiDirect ? 'API 配置不完整' : agentRuntime !== 'openclaw' ? `${agentRuntime} CLI 未配置` : '网关离线')
+            ? 'AI 未连上，点设置'
             : '连接中…'}</span>
-        <button className="settings-gear" onClick={onOpenSettings} title="设置（模型 · 环境 · 更多）">
+        <button className="settings-gear" onClick={onOpenSettings} title="设置">
           <IconGear size={13} /> 设置
         </button>
       </div>

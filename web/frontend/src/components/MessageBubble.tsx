@@ -6,6 +6,43 @@ import { IconCopy, IconCheck, IconRetry } from './icons';
 import { extractArtifacts } from '../lib/artifacts';
 import ArtifactGallery from './ArtifactGallery';
 
+import { setItemStatus } from '../lib/api';
+interface TopicJson { content_direction?: string; topic?: { title?: string; connections?: unknown[] }; direction_frame?: { target_reader?: string; core_tension?: string; angle?: string; material_entry?: string; why_now?: string; my_judgment?: string; fits_account?: string } }
+function parseTopic(text: string): TopicJson | null {
+  const s = text.indexOf('{'); const e = text.lastIndexOf('}');
+  if (s < 0 || e <= s) return null;
+  try {
+    const j = JSON.parse(text.slice(s, e + 1)) as TopicJson;
+    return j?.topic?.title && j.direction_frame ? j : null;
+  } catch { return null; }
+}
+function TopicCard({ t }: { t: TopicJson }) {
+  const f = t.direction_frame || {};
+  const stuck = [f.target_reader, f.core_tension].filter(Boolean).join('：');
+  const rows: [string, string | undefined][] = [['谁卡在哪', stuck], ['为什么现在讲', f.why_now], ['我有什么材料', f.material_entry], ['我的判断', f.my_judgment || f.angle], ['是否符合账号', f.fits_account]];
+  const [added, setAdded] = useState(false);
+  const addTopic = async () => {
+    await setItemStatus(`选题/${t.topic?.title}`, { status: 'todo', extra: { topic: { title: t.topic?.title, stuck, whyNow: f.why_now || '', material: f.material_entry || '', judgment: f.my_judgment || f.angle || '', fits: f.fits_account || '', source: t.content_direction || '' } } });
+    setAdded(true);
+  };
+  const go = () => window.dispatchEvent(new CustomEvent('meta-start-prompt', { detail:
+    `就写这个选题：「${t.topic?.title}」\n谁卡在哪：${stuck}\n为什么现在讲：${f.why_now || '（没写）'}\n我有什么材料：${f.material_entry || ''}\n我的判断：${f.my_judgment || f.angle || ''}\n\n按我的画像和写作技能，先给我大纲，确认后再写正文。草稿存进内容库「选题/${t.topic?.title}」对应的项目。` }));
+  return (
+    <div className="meta-topic-card">
+      <div className="meta-topic-label">选题</div>
+      <div className="meta-topic-title">{t.topic?.title}</div>
+      {rows.map(([k, v]) => (
+        <div key={k} className="meta-topic-row"><span>{k}</span><p className={v ? '' : 'meta-unfilled'}>{v || '没写'}</p></div>
+      ))}
+      {t.content_direction && <div className="meta-topic-src">来源：{t.content_direction}</div>}
+      <div style={{ display: 'flex', gap: 8 }}>
+        <button className="btn btn-primary btn-sm" onClick={go}>接着写</button>
+        <button className="btn btn-sm" disabled={added} onClick={() => { void addTopic(); }}>{added ? '已入选题' : '入选题'}</button>
+      </div>
+    </div>
+  );
+}
+
 export interface BubbleActions {
   onCopy: () => void;
   onRetry?: () => void;    // 仅最后一轮可用（append-only：不改写历史）
@@ -119,7 +156,9 @@ export default function MessageBubble({ message, isStreaming, thinking, activity
       <div className="msg-col assistant">
         <div className="message-bubble assistant">
           {livePanel}
-          {message.content && <div dangerouslySetInnerHTML={{ __html: rendered.html }} />}
+          {message.content && (!isStreaming && parseTopic(message.content)
+            ? <TopicCard t={parseTopic(message.content)!} />
+            : <div dangerouslySetInnerHTML={{ __html: rendered.html }} />)}
           {!isStreaming && (rendered.artifacts.length > 0 || rendered.archives.length > 0) && (
             <ArtifactGallery artifacts={rendered.artifacts} archives={rendered.archives} />
           )}

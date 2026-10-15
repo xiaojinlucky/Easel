@@ -4,8 +4,9 @@
 网页端全挂，或者外部站点能驱动本机写操作。两种都得有测试钉住。
 
 契约（两条判据按请求形态二选一）：
-* 带 Origin → 必须在 `_LOCAL_ORIGINS` 里；
-* 不带 Origin → 对端必须来自回环地址。
+* 外层领取守卫要求工作台请求来自回环地址；
+* 本机请求带 Origin → 必须在 `_LOCAL_ORIGINS` 里；
+* 仅限时领取路由允许局域网读取。
 
 用不存在的路径 `/api/__guard_probe__` 做探针：中间件在路由之前执行，
 因此 403 与 404 的差别恰好等价于「守卫拦没拦」，且完全不产生副作用。
@@ -53,8 +54,7 @@ def test_write_without_origin_from_remote_peer_is_rejected():
 
     实际监听的是 0.0.0.0（兼容 Docker/远程容器端口转发，见 app.py 底部
     uvicorn.run 处注释），这条挡的就是「局域网内无 Origin 的无人值守写操作」；
-    带 Origin 的请求走上面那条判据，伪造 Origin 头即可绕过——见 local_write_guard
-    文档字符串里的局限说明。
+    外层领取守卫同时拦截伪造本机 Origin/Host 的非回环请求。
     """
     response = _client(REMOTE).post(PROBE)
     assert response.status_code == 403
@@ -81,16 +81,23 @@ def test_write_from_local_origins_is_allowed():
 
 
 # ---------------------------------------------------------------- 只读与预检
-def test_reads_are_never_blocked():
-    client = _client(REMOTE)
+def test_local_reads_are_not_blocked_by_origin():
+    client = _client(LOOPBACK)
     for origin in (None, FOREIGN_ORIGIN):
         headers = {'Origin': origin} if origin else {}
         assert client.get(PROBE, headers=headers).status_code == 404
         assert client.head(PROBE, headers=headers).status_code == 404
 
 
-def test_options_is_never_blocked():
-    assert _client(REMOTE).options(PROBE, headers={'Origin': FOREIGN_ORIGIN}).status_code != 403
+def test_local_options_is_not_blocked():
+    assert _client(LOOPBACK).options(PROBE, headers={'Origin': FOREIGN_ORIGIN}).status_code != 403
+
+
+def test_remote_cannot_read_workbench_or_spoof_local_origin():
+    client = _client(REMOTE)
+    for method in ('get', 'head', 'options', 'post', 'delete'):
+        response = getattr(client, method)(PROBE, headers={'Origin': LOCAL_ORIGIN})
+        assert response.status_code == 403, method
 
 
 # ---------------------------------------------------------------- 剪藏通道

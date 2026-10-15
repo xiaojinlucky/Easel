@@ -28,6 +28,8 @@ const SUGGESTIONS = [
   { icon: '✍️', title: '写小红书文案', prompt: '帮我写一条小红书种草文案，主题先问我' },
   { icon: '🎴', title: '做金句卡片', prompt: '把一句走心的话做成一张适合发朋友圈的金句卡片' },
   { icon: '🎬', title: '口播脚本', prompt: '帮我写一条 60 秒的口播短视频脚本，主题先问我' },
+  { icon: '🚶', title: '漫步选题', desc: '从你的收藏里逛出一个能写的选题', prompt: '用 wander-synthesis 技能做一次漫步选题：读 outputs/_sources 里日期最新的飞书收藏快照，挑 3 条素材碰撞，给我一个足够小、能直接写的选题。' },
+  { icon: '💬', title: '评论区选题', desc: '从评论区找大家真想问的', prompt: '用 xhs-comment-insight 技能做评论区选题。先问我要分析哪条笔记（链接或标题都行）；我说不上来就从最新的飞书收藏快照里挑 3 条评论多的让我选。' },
 ];
 
 function greeting(): string {
@@ -186,7 +188,7 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onStop, o
           </div>
           <h1 className="chat-hero-title">{greeting()}</h1>
           <p className="chat-hero-sub">{apiDirect ? 'API 直连：写文案、策划选题、分析附件。本机工具和自动发布未启用。'
-            : '从选题到发布，一站式帮你把想法做成能发的内容。'}</p>
+            : '说一句想写什么，或者点下面的卡片开始。'}</p>
           {inputBox(true)}
           <div className="suggestions">
             {SUGGESTIONS.filter((s) => !apiDirect || ['写小红书文案', '口播脚本'].includes(s.title)).map((s) => (
@@ -195,7 +197,7 @@ export default function ChatPage({ apiDirect, session, stream, onSend, onStop, o
                 <span className="suggestion-icon">{s.icon}</span>
                 <span className="suggestion-body">
                   <span className="suggestion-title">{s.title}</span>
-                  <span className="suggestion-text">{s.prompt}</span>
+                  <span className="suggestion-text">{(s as { desc?: string }).desc || s.prompt}</span>
                 </span>
               </button>
             ))}

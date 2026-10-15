@@ -392,10 +392,10 @@ export default function AccountsPage() {
     <div className="accounts-page">
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
         <div>
-          <h1 className="page-title">账号登录 Accounts</h1>
+          <h1 className="page-title">账号</h1>
           <p className="page-subtitle">
-            用手机 App 扫码登录，登录态本地持久化，之后发布免登。<br />
-            ⚠️ 平台可能对机房/代理 IP 判风险导致二维码弹不出，需干净/家宽 IP，或在正常网络登录后拷贝登录态目录。
+            用手机扫码登录一次，之后不用再登。<br />
+            小红书主号只看后台数据，抓别人主页用小号。
           </p>
         </div>
         <button className="btn btn-sm" onClick={load}>⟳ 刷新</button>
@@ -412,7 +412,7 @@ export default function AccountsPage() {
           const info = w && w !== 'loading' ? w : null;
           const logged = effLoggedIn(a);
           return (
-            <div key={a.platform} className="card account-card" style={{ opacity: a.supported ? 1 : 0.6 }}>
+            <div key={a.platform} className={`card account-card ${a.platform === 'xiaohongshu' ? 'meta-acc-main' : ''}`} style={{ opacity: a.supported ? 1 : 0.6 }}>
               <div className="account-card-head">
                 <span className="account-card-name">{a.name}</span>
                 {badge(a)}
@@ -425,7 +425,7 @@ export default function AccountsPage() {
                 </div>
               )}
               {!logged && (
-                <div className="account-card-note">{a.note ? a.note : `后端：${a.name}`}</div>
+                <div className="account-card-note">{a.note ? a.note : (a.platform === 'xiaohongshu' ? '主号 · 只看后台数据' : '还没登录')}</div>
               )}
 
               <div style={{ display: 'flex', gap: 8, marginTop: 'auto' }}>
@@ -445,7 +445,7 @@ export default function AccountsPage() {
                 ) : (
                   // 公众号与其它平台统一：都走扫码登录（公众号扫的是后台会话，用于发布+数据）
                   <button
-                    className={`btn btn-block ${a.supported ? 'btn-primary' : ''}`}
+                    className={`btn btn-block ${a.supported && a.platform === 'xiaohongshu' ? 'btn-primary' : ''}`}
                     disabled={!a.supported || busy === a.platform || busy === a.platform + ':mp'}
                     onClick={() => (a.backend === 'wechat-oa' ? handleMpLogin(a) : handleLogin(a))}>
                     {(busy === a.platform || busy === a.platform + ':mp') ? '启动中…' : '登录'}
