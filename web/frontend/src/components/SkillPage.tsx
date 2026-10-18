@@ -60,6 +60,8 @@ function cnDesc(d?: string): string {
   return s.replace(/\bskills?\b/gi, '技能');
 }
 
+const RETIRED_SKILLS = new Set(['wander-synthesis', 'xhs-comment-insight']);
+
 const LAYER_DESC: Record<string, string> = {
   discover: '发现层技能', plan: '策划层技能', produce: '制作层技能',
   publish: '发布层技能', attribute: '归因层技能', general: '通用技能', other: '技能',
@@ -79,12 +81,13 @@ export default function SkillPage({ persona, onStartPrompt }: SkillPageProps) {
   };
   useEffect(load, []);
 
+  const listed = useMemo(() => skills.filter((s) => !RETIRED_SKILLS.has(s.name)), [skills]);
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return skills;
-    return skills.filter((s) =>
+    if (!q) return listed;
+    return listed.filter((s) =>
       s.name.toLowerCase().includes(q) || (s.description || '').toLowerCase().includes(q) || nameOf(s).toLowerCase().includes(q));
-  }, [skills, query]);
+  }, [listed, query]);
 
   const grouped = useMemo(() => {
     const g: Record<string, SkillItem[]> = {};
@@ -99,15 +102,15 @@ export default function SkillPage({ persona, onStartPrompt }: SkillPageProps) {
   const MINE: LayerMeta = { key: 'mine', label: '我的技能', Icon: IconProfile, color: 'var(--accent-start)' };
   const OFF: LayerMeta = { key: 'disabled', label: '已停用', Icon: IconLayers, color: 'var(--text-tertiary)' };
   const orderedLayers = [MINE, ...LAYERS, OTHER, OFF].filter((l) => grouped[l.key]?.length);
-  const mineCount = skills.filter((s) => s.source === 'user').length;
-  const needApiCount = skills.filter((s) => s.needsApi && !s.apiConfigured).length;
+  const mineCount = listed.filter((s) => s.source === 'user').length;
+  const needApiCount = listed.filter((s) => s.needsApi && !s.apiConfigured).length;
 
   return (
     <div className="skills-page">
       <div className="skills-page-head">
         <h1 className="page-title">技能库</h1>
         <p className="page-subtitle">
-          共 {skills.length} 个技能，我的 {mineCount} 个，按用途分组。点卡片看说明、直接用；
+          共 {listed.length} 个技能，我的 {mineCount} 个，按用途分组。点卡片看说明，运行前会再确认一次；
           标 <span className="badge badge-warn" style={{ padding: '1px 7px' }}>需设置</span> 的要先在设置里填好
           {needApiCount > 0 && `（当前 ${needApiCount} 个待配置）`}。
         </p>

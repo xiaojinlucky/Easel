@@ -65,6 +65,7 @@ export default function SkillDrawer({ skillName, persona, onClose, onConfigured 
 
   const handleRun = async () => {
     if (!input.trim()) return;
+    if (!window.confirm(`运行「${displayName(skillName)}」？\n会按你填写的内容执行一次，不会发布。`)) return;
     const seq = ++reqSeq.current;
     setRunning(true);
     setRunErr('');

@@ -358,7 +358,7 @@ export default function AccountsPage() {
   }, [stopPoll, runWhoami, load]);
 
   const handleLogout = useCallback(async (a: AccountItem) => {
-    if (!window.confirm(`确定退出「${a.name}」的登录？登录态将被清除，下次发布需重新扫码。`)) return;
+    if (!window.confirm(`确定退出「${a.name}」？这只清掉工作台以前单独存的一份登录。桌面 Cloak 里的登录还在，不要用 Chrome 再扫一次。`)) return;
     setLogoutBusy(a.platform);
     try {
       await logoutAccount(a.platform);
@@ -394,8 +394,8 @@ export default function AccountsPage() {
         <div>
           <h1 className="page-title">账号</h1>
           <p className="page-subtitle">
-            用手机扫码登录一次，之后不用再登。<br />
-            小红书主号只看后台数据，抓别人主页用小号。
+            登录留在桌面 Cloak 浏览器里。先打开它，再点刷新。<br />
+            不要用 Chrome 再扫一次。小红书主号只看后台数据。
           </p>
         </div>
         <button className="btn btn-sm" onClick={load}>⟳ 刷新</button>

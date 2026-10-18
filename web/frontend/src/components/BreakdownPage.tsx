@@ -15,6 +15,7 @@ export default function BreakdownPage({ persona }: BreakdownPageProps) {
 
   const run = async () => {
     if (!input.trim()) return;
+    if (!window.confirm('开始拆解这段内容？会跑一次，不会发布。')) return;
     setLoading(true); setResult('');
     const prompt =
       `你是爆款内容拆解专家。拆解下面这条内容，用中文分点输出：\n` +

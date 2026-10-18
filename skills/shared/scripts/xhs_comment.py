@@ -273,17 +273,14 @@ def _parse_targets(json_str: str | None, nickname: str | None, content: str | No
 # --------------------------------------------------------------------------- #
 # 浏览器
 # --------------------------------------------------------------------------- #
-def _launch(p, headed: bool, base: str | None, proxy: str | None):
-    profile = _profile_dir(base)
-    profile.mkdir(parents=True, exist_ok=True)
+def _launch(p, headed: bool, base: str | None, proxy: str | None, *, allow_launch: bool = True):
+    from cloak_account import open_account_context
     args = list(LAUNCH_ARGS)
-    kwargs = dict(headless=not headed, locale="zh-CN", args=args)
-    if proxy:
-        kwargs["proxy"] = {"server": proxy}
-    else:
-        # 显式直连：Chromium 级屏蔽系统/环境代理（开 VPN 也能用）——同抖音链兜底
+    if not proxy:
         args.append("--no-proxy-server")
-    return p.chromium.launch_persistent_context(str(profile), **kwargs)
+    return open_account_context(
+        p, profile_base=base, profile_name=PROFILE_NAME, headed=headed,
+        extra_args=args, proxy=proxy, allow_launch=allow_launch)
 
 
 def _open_note(page, note_id: str, token: str):
@@ -463,8 +460,7 @@ def cmd_check(_a) -> int:
             ok = bool(path and Path(path).exists())
     except Exception as e:
         print(f"❌ playwright/内核不可用：{e}"); ok = False
-    pd = _profile_dir(None)
-    print(f"登录态目录：{pd}（{'存在' if pd.is_dir() else '不存在，先用 xhs_publish.py login 登录'}）")
+    print("账号登录在桌面 Cloak 浏览器里。不要用 Chrome 再扫一次。")
     return 0 if ok else 3
 
 
@@ -1029,7 +1025,7 @@ def main() -> int:
     sub = ap.add_subparsers(dest="cmd")
 
     def add_common(p):
-        p.add_argument("--profile-base", help="登录态根目录（默认 ~/.easel-browser-profiles）")
+        p.add_argument("--profile-base", help="单独的登录目录，只给测试用。不填就用桌面 Cloak")
         p.add_argument("--proxy", help="外网代理（默认取 env）")
         p.add_argument("--no-proxy", action="store_true", help="禁用代理（小红书建议直连）")
         p.add_argument("--headed", action="store_true", help="有头模式（首次校验/排错）")

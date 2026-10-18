@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""zhihu_answer.py — 用已登录的 ZhihuProfile 对知乎问题发布回答。
+"""zhihu_answer.py — 用桌面 Cloak 里已登录的知乎账号发布回答。
 
 用法（CWD=项目根）：
   # 预览（dry-run，不真正发布）：
@@ -19,7 +19,7 @@
       --content-file outputs/zhihu_answers/story1.md \
       --exec --headed
 
-依赖：playwright + chromium（与 web_publisher 共用 ZhihuProfile）
+依赖：playwright。登录在桌面 Cloak，不另开 Chrome。
 """
 
 from __future__ import annotations
@@ -33,7 +33,6 @@ import content_guard  # noqa: E402  出站内容安全闸门
 # ⚠️ 本脚本会被 sync.sh 拍平复制到 workspace/shared/scripts/，那里 parents[3] 会算错根，
 # 相对 content-file 会解析到错误目录——故 env 兜底不可省（与 manifest.py 同款）。
 PROJECT_ROOT = Path(os.environ.get("EASEL_ROOT") or Path(__file__).resolve().parents[3])
-PROFILE_DIR = Path.home() / ".easel-browser-profiles" / "ZhihuProfile"
 
 LAUNCH_ARGS = [
     "--disable-blink-features=AutomationControlled",
@@ -221,12 +220,10 @@ def publish_answer(question_url: str, content: str, headed: bool = False, dry_ru
     result = {"success": False, "url": "", "error": ""}
 
     with sync_playwright() as p:
-        ctx = p.chromium.launch_persistent_context(
-            str(PROFILE_DIR),
-            headless=not headed,
-            args=LAUNCH_ARGS,
-            viewport={"width": 1280, "height": 900},
-        )
+        from cloak_account import open_account_context
+        ctx = open_account_context(
+            p, profile_base=None, profile_name="ZhihuProfile", headed=headed,
+            extra_args=LAUNCH_ARGS, viewport={"width": 1280, "height": 900})
         page = ctx.new_page()
 
         # 1. 打开问题页

@@ -341,7 +341,7 @@ export default function SettingsPanel({ onClose, banner = '' }: Props) {
     const st = row.baseUrl && row.baseUrl !== '—' ? selftest?.byBase[row.baseUrl] : undefined;
     if (st) return st.ok ? { text: `✓ ${st.ms}ms`, cls: 'good' } : { text: `✗ ${(st.detail || '失败').slice(0, 42)}`, cls: 'bad' };
     if (row.result.includes('已就绪') || row.result.includes('已配置')) return { text: row.result, cls: 'good' };
-    if (row.result.includes('缺') || row.result.includes('未装')) return { text: row.result, cls: 'warn-text' };
+    if (row.result.includes('缺') || row.result.includes('未装') || row.result.includes('未登录') || row.result.includes('未安装')) return { text: row.result, cls: 'warn-text' };
     return { text: row.result, cls: '' };
   };
 
@@ -578,7 +578,7 @@ export default function SettingsPanel({ onClose, banner = '' }: Props) {
                       : '')}
                 </span>
               )}
-              {ed ? (
+              {ed && r.keyEditable !== false ? (
                 r.key2Label ? (
                   <span className="key-stack">
                     <input
@@ -622,7 +622,7 @@ export default function SettingsPanel({ onClose, banner = '' }: Props) {
               <span className={`stt ${rt.cls}`}>{rt.text}</span>
               {isCustom && ops?.onRemove ? (
                 <button className="row-del" onClick={() => ops.onRemove?.(i)} title="删除该供应商">✕</button>
-              ) : ops?.media && r.slot ? (
+              ) : ops?.media && r.slot && (r.modelEditable !== false || r.baseEditable !== false) ? (
                 <button className="adv-btn" onClick={() => ops?.onRow?.(i, { adv: !r.adv })}>
                   {r.adv ? '收起' : '高级'}
                 </button>
@@ -807,12 +807,12 @@ export default function SettingsPanel({ onClose, banner = '' }: Props) {
                 {chan === 'image' && (
                   <section className="st-panel active">
                     <div className="panel-top">
-                      <span className={`pill ${mediaOk('image') ? 'ok' : 'off'}`}><span className="dot" />{mediaOk('image') ? '已配置' : '未配置'}</span>
-                      <span className="desc">只填 Key 即用（地址/模型内建，点「高级」可覆盖）</span>
+                      <span className={`pill ${(mediaRows.image || []).some((r) => r.role === '主' && (r.result === '已配置' || r.result === '已就绪')) ? 'ok' : 'off'}`}><span className="dot" />{(mediaRows.image || []).some((r) => r.role === '主' && (r.result === '已配置' || r.result === '已就绪')) ? '默认通道可用' : '默认通道未就绪'}</span>
+                      <span className="desc">默认用 Codex 订阅出图。另一行是自备接口，点「主」后再保存才会改用它。</span>
                       <span className="spacer" />
                     </div>
-                    {renderBoard(mediaRows.image || [], { onRow: (i, p) => updateMediaRow('image', i, p), media: true })}
-                    <div className="foot-note">按 Base URL 自动选同步 / 异步（apimart）模式；模型名留空用服务端默认。</div>
+                    {renderBoard(mediaRows.image || [], { onRow: (i, p) => updateMediaRow('image', i, p), onPrimary: (i) => setMediaPrimary('image', i), media: true })}
+                    <div className="foot-note">Codex 这一行不填 Key，沿用本机 codex login。自备接口仍按 Base URL 选择同步或 apimart 异步。</div>
                   </section>
                 )}
 

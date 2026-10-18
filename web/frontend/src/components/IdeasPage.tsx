@@ -39,8 +39,12 @@ export default function IdeasPage({ onUseTopic }: IdeasPageProps) {
     setForm(null); setEditId(null); load();
   };
   const advance = async (it: Idea) => { await updateIdea(it.id, { ...it, status: NEXT[it.status] }); load(); };
-  const remove = async (it: Idea) => { await deleteIdea(it.id); load(); };
+  const remove = async (it: Idea) => {
+    if (!window.confirm(`删除选题「${it.title}」？`)) return;
+    await deleteIdea(it.id); load();
+  };
   const schedule = async (it: Idea) => {
+    if (!window.confirm(`把「${it.title}」排到今天？`)) return;
     const d = new Date();
     await createSchedule({ title: it.title, date: d.toISOString().slice(0, 10), platform: '', time: '', status: 'idea', note: it.note });
     showToast('已加入日历（今天）');
@@ -75,7 +79,10 @@ export default function IdeasPage({ onUseTopic }: IdeasPageProps) {
                   {it.source && <span className="badge" style={{ marginTop: 6 }}>{it.source}</span>}
                   {it.note && <div className="idea-note">{it.note}</div>}
                   <div className="idea-foot">
-                    <button className="idea-act" onClick={() => onUseTopic(it.title, it.id)}><IconChat size={13} /> 做内容</button>
+                    <button className="idea-act" onClick={() => {
+                      if (!window.confirm(`按「${it.title}」新建一篇创作？\n只建稿，不会马上写或发布。`)) return;
+                      onUseTopic(it.title, it.id);
+                    }}><IconChat size={13} /> 做内容</button>
                     <button className="idea-act" onClick={() => schedule(it)}><IconCalendar size={13} /> 排期</button>
                     <button className="idea-act next" onClick={() => advance(it)} title="推进状态">
                       {COLUMNS.find((c) => c.key === NEXT[it.status])?.label} <IconChevron size={12} />

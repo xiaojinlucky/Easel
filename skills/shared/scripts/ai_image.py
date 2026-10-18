@@ -33,6 +33,8 @@ import binascii
 import http.client
 import json
 import os
+import shutil
+import subprocess
 import sys
 import time
 import urllib.error
@@ -535,12 +537,153 @@ def _save_async_images(task_data: dict[str, Any], output: str, fmt: str) -> list
     return paths
 
 
+# ── Codex 订阅（默认）────────────────────────────────────
+
+_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
+_CODEX_IMAGE_TYPES = {"imagegeneration", "image_generation", "image_gen"}
+
+
+def active_image_provider() -> str:
+    """未写 IMG_PROVIDER 时默认走 Codex 订阅，不要求另配生图 Key。"""
+    value, _ = resolve_config("IMG_PROVIDER")
+    value = (value or "codex").strip().lower()
+    return value or "codex"
+
+
+def find_codex() -> str:
+    found = shutil.which("codex") or shutil.which("codex.cmd")
+    if found and found.lower().endswith(".ps1"):
+        cmd = str(Path(found).with_suffix(".cmd"))
+        if Path(cmd).is_file():
+            return cmd
+    if not found:
+        fail("未找到 codex。请先安装 Codex CLI 并用 ChatGPT 账号登录。")
+    return found
+
+
+def codex_image_paths_from_events(lines: list[str]) -> tuple[list[str], str]:
+    """从 `codex exec --json` 的 JSONL 里取出图片路径和模型最后一句说明。"""
+    paths: list[str] = []
+    notes: list[str] = []
+    for raw in lines:
+        line = raw.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        item = event.get("item") if isinstance(event, dict) else None
+        if not isinstance(item, dict):
+            continue
+        kind = str(item.get("type") or "").lower().replace("-", "_")
+        if kind in _CODEX_IMAGE_TYPES:
+            for key in ("savedPath", "saved_path", "path", "result"):
+                value = item.get(key)
+                if isinstance(value, str) and Path(value).suffix.lower() in _IMAGE_SUFFIXES:
+                    paths.append(value)
+        elif kind == "agent_message" and item.get("text"):
+            notes.append(str(item["text"]).strip())
+    return paths, "\n".join(note for note in notes if note)
+
+
+def _newer_images(roots: list[Path], started: float) -> list[Path]:
+    found: list[Path] = []
+    for root in roots:
+        if not root.is_dir():
+            continue
+        for path in root.rglob("*"):
+            if not path.is_file() or path.suffix.lower() not in _IMAGE_SUFFIXES:
+                continue
+            try:
+                mtime = path.stat().st_mtime
+            except OSError:
+                continue
+            if mtime >= started - 1:
+                found.append(path)
+    found.sort(key=lambda path: path.stat().st_mtime)
+    return found
+
+
+def _codex_prompt(prompt: str, count: int, edit: bool) -> str:
+    # Windows 把参数里的换行截断，Codex 会只看见「提示词：」后面是空的。
+    action = "编辑所附图片" if edit else "生成新图片"
+    flat = " ".join((prompt or "").split())
+    return (
+        f"使用内置 image_generation 工具{action}。"
+        "不要写代码，不要改仓库，不要调用其他工具。"
+        f"只要 {count} 张。画面内容：{flat}"
+    )
+
+
+def run_codex_image(prompt: str, output: str, count: int, fmt: str,
+                    images: list[str] | None = None, timeout: int = 240) -> list[Path]:
+    """让已登录的 Codex CLI 用订阅里的生图工具出图，再拷到 output。"""
+    if count < 1:
+        fail("生成数量至少为 1。")
+    codex = find_codex()
+    targets = _out_paths(output, count, fmt)
+    work = targets[0].parent
+    work.mkdir(parents=True, exist_ok=True)
+    home = Path(os.environ.get("CODEX_HOME") or (Path.home() / ".codex"))
+    started = time.time()
+    command = [
+        codex, "exec", "--json", "--ephemeral", "--skip-git-repo-check",
+        "-s", "workspace-write", "-C", str(work),
+    ]
+    for image in images or []:
+        command.extend(["-i", str(Path(image).resolve())])
+    command.append(_codex_prompt(prompt, count, bool(images)))
+    print("[codex] 使用 Codex 订阅生图…", file=sys.stderr)
+    try:
+        proc = subprocess.run(
+            command, cwd=str(work), stdin=subprocess.DEVNULL,
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=timeout)
+    except subprocess.TimeoutExpired:
+        fail(f"Codex 生图超过 {timeout}s，没有返回图片。")
+        return []
+    except OSError as exc:
+        fail(f"无法启动 Codex：{exc}")
+        return []
+    stdout = proc.stdout or ""
+    parsed, note = codex_image_paths_from_events(stdout.splitlines())
+    harvested = _newer_images([work, home / "generated_images"], started)
+    ordered: list[Path] = []
+    seen: set[str] = set()
+    for item in [*parsed, *[str(path) for path in harvested]]:
+        path = Path(item)
+        key = str(path.resolve()) if path.exists() else str(path)
+        if key in seen or key in {str(target.resolve()) for target in targets if target.exists()}:
+            continue
+        if path.is_file():
+            seen.add(key)
+            ordered.append(path)
+    if not ordered:
+        detail = note or (proc.stderr or "").strip()[-400:]
+        fail("Codex 没有产出图片。" + (f" {detail}" if detail else ""))
+        return []
+    saved: list[Path] = []
+    for index, source in enumerate(ordered[:count]):
+        target = targets[index]
+        if source.resolve() != target.resolve():
+            shutil.copy2(source, target)
+        saved.append(target)
+    if len(saved) < count:
+        print(f"[codex] 要 {count} 张，实际得到 {len(saved)} 张。", file=sys.stderr)
+    return saved
+
+
 # ── 子命令：text2img ──────────────────────────────────────
 
 def cmd_text2img(args: argparse.Namespace) -> None:
     prompt = (args.prompt or "").strip()
     if not prompt:
         fail("prompt 不能为空。")
+    if active_image_provider() == "codex":
+        _print_results(run_codex_image(
+            prompt, args.output, args.n, args.format, timeout=args.timeout))
+        return
     base_url, model, api_key, _ = load_and_require()
     mode = detect_mode(base_url, args.mode)
     print(f"[text2img] 模式={mode} base_url={base_url} model={model}", file=sys.stderr)
@@ -573,6 +716,11 @@ def cmd_img2img(args: argparse.Namespace) -> None:
     prompt = (args.prompt or "").strip()
     if not prompt:
         fail("prompt 不能为空。")
+    if active_image_provider() == "codex":
+        _print_results(run_codex_image(
+            prompt, args.output, args.n, args.format,
+            images=[args.image], timeout=args.timeout))
+        return
     base_url, model, api_key, _ = load_and_require()
     mode = detect_mode(base_url, args.mode)
     print(f"[img2img] 模式={mode} base_url={base_url} model={model} image={args.image}",
@@ -671,6 +819,12 @@ def _encode_multipart(fields: dict[str, str],
 # ── 子命令：variations ────────────────────────────────────
 
 def cmd_variations(args: argparse.Namespace) -> None:
+    if active_image_provider() == "codex":
+        prompt = (args.prompt or "").strip() or "保持主体，给出可见的构图变体，不要加文字。"
+        _print_results(run_codex_image(
+            prompt, args.output, args.n, args.format,
+            images=[args.image], timeout=args.timeout))
+        return
     base_url, model, api_key, _ = load_and_require()
     mode = detect_mode(base_url, args.mode)
     print(f"[variations] 模式={mode} base_url={base_url} model={model} image={args.image}",
@@ -732,6 +886,21 @@ def cmd_variations(args: argparse.Namespace) -> None:
 # ── 子命令：check（离线，不发请求）──────────────────────────
 
 def cmd_check(args: argparse.Namespace) -> None:
+    provider = active_image_provider()
+    if provider == "codex":
+        print("=== ai-image 配置检查（Codex 订阅，不读生图 Key）===")
+        exe = find_codex()
+        proc = subprocess.run(
+            [exe, "login", "status"], capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=20, stdin=subprocess.DEVNULL)
+        text = f"{proc.stdout or ''}\n{proc.stderr or ''}"
+        print(f"  codex = {exe}")
+        if "Logged in" in text:
+            print("  [就绪] 已用 ChatGPT 登录。text2img / img2img / variations 默认走这里。")
+            print("  要改回自备接口，在 .env 设置 IMG_PROVIDER=openai，并填写 IMG_BASE_URL / IMG_MODEL / IMG_API_KEY。")
+            return
+        print("  [未就绪] Codex 未登录。请在终端执行 codex login。")
+        raise SystemExit(2)
     base_url, base_from = resolve_config(ENV_BASE_URL)
     model, model_from = resolve_config(ENV_MODEL)
     api_key, key_from = resolve_config(ENV_API_KEY)

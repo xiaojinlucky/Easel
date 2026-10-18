@@ -175,10 +175,13 @@ export default function CreationPage({ id, onSelect, onCreate, onLoaded, renderC
             </section>}
           </>}
           {tab === 'cards' && <>
-            <div className="creation-draft-tools"><p>沿用现有 Meta 文字卡片样式。正文改动后需重新排版。</p><button className="btn btn-sm" disabled={busy || !canEdit || !body.trim()} onClick={() => run(async () => {
+            <div className="creation-draft-tools"><p>沿用现有 Meta 文字卡片样式。正文改动后需重新排版。</p><button className="btn btn-sm" disabled={busy || !canEdit || !body.trim()} onClick={() => {
+              if (!window.confirm('按当前稿件生成文字卡片？会开始排版。')) return;
+              run(async () => {
               const data = dirty ? await save() : work;
               accept(await creationRequest<Creation>(`/${id}/cards`, { revision: data.revision, operationId: operationId() })); setCardIndex(null);
-            })}>按当前稿件生成卡片</button></div>
+            });
+            }}>按当前稿件生成卡片</button></div>
             {current?.cards.some(c => c.bodyHash !== current.bodyHash) && <p className="creation-notice">正文已有修改，以下卡片仍保留上次排版。</p>}
             <div className="creation-cards">{current?.cards.map((card, i) => <button className={`creation-card ${cardIndex === i ? 'active' : ''}`} key={card.path} onClick={() => { setCardIndex(i); setCardText(card.text); }}>
               <img src={mediaUrl(card.path)} alt={`文字卡片第 ${i + 1} 张`} loading="lazy"/><span>第 {i + 1} 张{card.edited ? ' · 单独改过' : ''}</span></button>)}</div>

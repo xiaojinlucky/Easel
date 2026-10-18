@@ -593,6 +593,11 @@ def main() -> int:
                         help="机读输出（与全局 --json 等效）")
 
     a = ap.parse_args()
+    # Meta 工作台：依赖在 G 盘，启动脚本用环境变量指定解释器和 Remotion 工程目录
+    if not a.python and os.environ.get("EASEL_TOOL_PYTHON"):
+        a.python = os.environ["EASEL_TOOL_PYTHON"]
+    if hasattr(a, "dir") and not a.dir and os.environ.get("EASEL_REMOTION_DIR"):
+        a.dir = os.environ["EASEL_REMOTION_DIR"]
     if not getattr(a, "func", None):
         ap.print_help()
         return 1

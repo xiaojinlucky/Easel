@@ -85,7 +85,7 @@ def test_expired_douyin_does_not_return_stale_metrics(tmp_path, monkeypatch):
     monkeypatch.setattr(account_stats, "_poll_stable", lambda *args: ["粉丝", "123"])
     monkeypatch.setattr(account_stats, "_scrape_notes",
                         lambda *args: pytest.fail("must not scrape notes behind login wall"))
-    result = account_stats._scrape("douyin", False, None, None)
+    result = account_stats._scrape("douyin", False, str(tmp_path), None)
     assert result["logged_in"] is False
     assert result["followers"] is None
     assert result["metrics"] == result["notes"] == []

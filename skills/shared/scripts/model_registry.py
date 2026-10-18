@@ -24,20 +24,31 @@ def _key(env: str, label: str, *, required: bool = True, secret: bool = True,
 MODEL_GROUPS: dict[str, dict[str, Any]] = {
     "image": {
         "label": "AI 生图",
-        "settings": [],
-        "providers": [{
-            "id": "openai",
-            "name": "OpenAI 兼容 / apimart / 小红书 MaaS",
-            "keys": [
-                _key("IMG_API_KEY", "API Key", aliases=("OPENAI_API_KEY", "API_KEY")),
-                _key("IMG_BASE_URL", "API 根地址", secret=False,
-                     aliases=("OPENAI_BASE_URL", "OPENAI_API_BASE", "BASE_URL")),
-                _key("IMG_MODEL", "模型", required=False, secret=False),
-                _key("IMG_API_KEY_HEADER", "鉴权头名", required=False, secret=False),
-                _key("IMG_API_VERSION", "api-version", required=False, secret=False),
-                _key("IMG_NO_PROXY", "内网直连（填 1）", required=False, secret=False),
-            ],
-        }],
+        "settings": [
+            _key("IMG_PROVIDER", "默认生图来源", required=False, secret=False,
+                 choices=("codex", "openai")),
+        ],
+        "providers": [
+            {
+                "id": "codex",
+                "name": "Codex 订阅",
+                "sub": "ChatGPT 登录",
+                "keys": [],
+            },
+            {
+                "id": "openai",
+                "name": "OpenAI 兼容 / apimart / 小红书 MaaS",
+                "keys": [
+                    _key("IMG_API_KEY", "API Key", aliases=("OPENAI_API_KEY", "API_KEY")),
+                    _key("IMG_BASE_URL", "API 根地址", secret=False,
+                         aliases=("OPENAI_BASE_URL", "OPENAI_API_BASE", "BASE_URL")),
+                    _key("IMG_MODEL", "模型", required=False, secret=False),
+                    _key("IMG_API_KEY_HEADER", "鉴权头名", required=False, secret=False),
+                    _key("IMG_API_VERSION", "api-version", required=False, secret=False),
+                    _key("IMG_NO_PROXY", "内网直连（填 1）", required=False, secret=False),
+                ],
+            },
+        ],
     },
     "video": {
         "label": "AI 视频生成",

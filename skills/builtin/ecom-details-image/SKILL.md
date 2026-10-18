@@ -18,7 +18,7 @@ layer: produce
 
 > **审美方向对齐 [card-design](../card-design/SKILL.md)**：详情页信息图 / 营销图的视觉方向遵守同一套去 AI 廉价感原则——禁蓝紫科技渐变、禁 emoji 当图标、字大字细、留白克制、填满不空。把这些写进 Prompt 的正向/否定约束里（本 SKILL 出 t2i Prompt，非 HTML 渲染，故是"审美方向"层面对齐，不走 render_card）。
 
-不要暴露、索要、写入、提交或回显真实 API key。使用者必须通过自己的环境变量配置 API。
+不要暴露、索要、写入、提交或回显真实 API key。直接出图默认走 Codex 订阅，不要为了出图向用户要 Key。
 
 ## References（按需加载，不要一次性全读）
 
@@ -40,7 +40,7 @@ layer: produce
 6. 按 `references/image-gen-rules.md` 写出可执行图片 Prompt（保持简洁，逐条对照铁律）；多图任务必须把同一段 Campaign Style Lock 原样放进每张 Prompt。
 7. 商品图/详情页/营销图：按 `references/pdp-sequences.md` 先做转化驱动力诊断，再排序列。
 8. 用户要求电商详情页 / PDP / 主图堆栈 / 整套商品图时，默认输出 **5 张主图 + 7-9 张详情页图片** 的图片包（详情页每屏必须是电商信息图格式，见 `references/pdp-sequences.md`）。
-9. 用户要求直接出图 → 调用 `scripts/generate_image.py`；用户提供参考产品图时传入 `--image`。
+9. 用户要求直接出图 → 调用共享脚本 `skills/shared/scripts/ai_image.py`（默认 Codex 订阅）。用户提供参考产品图时用 `img2img --image`。只有 `.env` 已是 `IMG_PROVIDER=openai` 时才改用 `scripts/generate_image.py`。
 10. 返回 Prompt、生成文件路径和关键假设。
 
 ## 最小输入
@@ -73,7 +73,7 @@ python3 skills/builtin/ecom-details-image/scripts/generate_image.py --env-file .
 
 1. 先输出最终 Prompt，再调脚本。短 Prompt 用 `--prompt`，长 Prompt 用 `--prompt-file`。
 2. 根据平台选 `--size`，没要求时默认 `1:1`。
-3. 缺少 `IMG_API_KEY` 等配置时**不要调用脚本**，只输出完整 Prompt 包 + 配置命令示例，说明需要在 `.env` 里配置什么，交给用户自行运行。
+3. 默认先跑 `ai_image.py check`。Codex 未登录时让用户执行 `codex login`，不要改口去要 API key。只有 `IMG_PROVIDER=openai` 且缺 Key 时，才停下来说明缺哪一项。
 4. 如果 API/模型不支持某尺寸，改用最接近的支持尺寸并说明。
 
 ## QA 检查（输出前逐条确认）

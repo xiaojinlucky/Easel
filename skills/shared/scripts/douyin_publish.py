@@ -149,18 +149,15 @@ def _proxy(explicit: str | None, disable: bool) -> str | None:
         or os.environ.get("EASEL_PROXY")
 
 
-def _launch(p, headed: bool, base: str | None, proxy: str | None):
-    profile = _profile_dir(base)
-    profile.mkdir(parents=True, exist_ok=True)
+def _launch(p, headed: bool, base: str | None, proxy: str | None, *, allow_launch: bool = True):
+    from cloak_account import open_account_context
     args = list(LAUNCH_ARGS)
     if not proxy:
         # 显式直连：忽略环境里可能存在的 http_proxy/https_proxy
-        #（国内平台发布/登录必须直连；web 侧 _proxy_env 可能注入代理变量，这里兜底）
         args.append("--no-proxy-server")
-    kwargs = dict(headless=not headed, locale="zh-CN", args=args)
-    if proxy:
-        kwargs["proxy"] = {"server": proxy}
-    return p.chromium.launch_persistent_context(str(profile), **kwargs)
+    return open_account_context(
+        p, profile_base=base, profile_name=PROFILE_NAME, headed=headed,
+        extra_args=args, proxy=proxy, allow_launch=allow_launch)
 
 
 def _wait_ready(page, timeout_ms: int = 15000) -> None:
@@ -946,7 +943,7 @@ def cmd_check(_a) -> int:
                 print("❌ 未安装浏览器内核（playwright install chromium）"); ok = False
     except Exception as e:
         print(f"❌ playwright/内核不可用：{e}"); ok = False
-    print(f"登录态目录：{_profile_dir(None)}")
+    print("账号登录在桌面 Cloak 浏览器里。不要用 Chrome 再扫一次。")
     return 0 if ok else 3
 
 
@@ -977,10 +974,16 @@ def _run_login(a) -> int:
     login_state.write_status(sf, "starting")
     if a.headed:
         login_state.write_status(sf, "window_login",
-                               "请在弹出的浏览器窗口里用抖音 App 扫码，不要关掉那个窗口。")
+                               "请在 Cloak 浏览器里用抖音 App 扫码，不要关掉那个窗口，也不要改用 Chrome。")
 
     with sync_playwright() as p:
-        ctx = _launch(p, headed=a.headed, base=a.profile_base, proxy=_proxy(a.proxy, a.no_proxy))
+        try:
+            ctx = _launch(p, headed=a.headed, base=a.profile_base, proxy=_proxy(a.proxy, a.no_proxy))
+        except Exception as e:
+            text = str(e) if e.__class__.__name__ == "CloakAccountError" else (
+                "浏览器没能打开。请先打开桌面 CloakBrowser，不要改用 Chrome 扫码。")
+            login_state.write_status(sf, "error", text)
+            _die(text, 1)
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
         try:
             try:
@@ -1345,7 +1348,8 @@ def cmd_whoami(a) -> int:
     result = {"loggedIn": False, "name": "", "avatar": ""}
     try:
         with sync_playwright() as p:
-            ctx = _launch(p, headed=False, base=a.profile_base, proxy=_proxy(a.proxy, a.no_proxy))
+            ctx = _launch(p, headed=False, base=a.profile_base, proxy=_proxy(a.proxy, a.no_proxy),
+                          allow_launch=False)
             page = ctx.pages[0] if ctx.pages else ctx.new_page()
             try:
                 page.goto(HOME_URL, wait_until="commit", timeout=10000)
@@ -1471,7 +1475,7 @@ def main() -> int:
     sub = ap.add_subparsers(dest="cmd")
 
     def add_common(p):
-        p.add_argument("--profile-base", help="登录态根目录（默认 ~/.easel-browser-profiles）")
+        p.add_argument("--profile-base", help="单独的登录目录，只给测试用。不填就用桌面 Cloak")
         p.add_argument("--proxy", help="外网代理（默认取 env）")
         p.add_argument("--no-proxy", action="store_true", help="禁用代理")
 

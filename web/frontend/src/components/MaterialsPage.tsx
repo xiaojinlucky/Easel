@@ -4,7 +4,7 @@ import { request } from '../lib/api';
 import '../styles/creation.css';
 import { IconSearch, IconBookmark, IconRefresh } from './icons';
 
-// Meta 工作台 · 素材库：只读展示最新一份飞书收藏快照
+// Meta 工作台 · 素材库：展示最新一份飞书收藏快照。确认删除会把飞书同一行标成不再同步。
 interface MatItem {
   id: string; title: string; platform: string; author: string;
   collectedAt: string; publishedAt: string;
@@ -62,6 +62,9 @@ export default function MaterialsPage({ onStartPrompt, onCreate }: { onStartProm
   });
   const [loading, setLoading] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [manage, setManage] = useState(false);
+  const [drops, setDrops] = useState<{ id: string; title: string }[]>([]);
+  const [dismissing, setDismissing] = useState(false);
   const requestRef = useRef<AbortController | null>(null);
 
   const load = useCallback(async () => {
@@ -121,6 +124,10 @@ export default function MaterialsPage({ onStartPrompt, onCreate }: { onStartProm
   };
   const create = async (chosen = picks) => {
     if (creating || !chosen.length) return;
+    const ask = chosen.length === 1
+      ? `用「${chosen[0].title}」新建一篇创作？\n只建稿，不会马上写或发布。`
+      : `用这 ${chosen.length} 条素材新建一篇创作？\n只建稿，不会马上写或发布。`;
+    if (!window.confirm(ask)) return;
     setCreating(true); setError('');
     try {
       await onCreate({ title: chosen[0].title, sourceIds: chosen.map(p => p.id) });
@@ -136,15 +143,41 @@ export default function MaterialsPage({ onStartPrompt, onCreate }: { onStartProm
 
   const refresh = () => request('/api/materials/refresh', { method: 'POST' }).then(() => load()).catch((e: Error) => setError(e.message));
 
+  const toggleDrop = (it: { id: string; title: string }) => {
+    if (dismissing) return;
+    if (drops.some(d => d.id === it.id)) { setDrops(prev => prev.filter(d => d.id !== it.id)); return; }
+    if (drops.length >= 100) { setError('一次最多删除 100 条'); return; }
+    setDrops(prev => [...prev, { id: it.id, title: it.title }]);
+    setError('');
+  };
+  const dismiss = async (chosen: { id: string; title: string }[]) => {
+    if (dismissing || creating || !chosen.length) return;
+    const names = chosen.slice(0, 8).map(c => c.title).join('\n');
+    const more = chosen.length > 8 ? `\n…等 ${chosen.length} 条` : '';
+    const ok = window.confirm(
+      `确定删除这 ${chosen.length} 条？\n${names}${more}\n\n工作台里会先看不到它们。飞书收藏库里同一条会记成「不再同步」，行还留着，之后从手机收藏同步时不会再加回来。手机 App 里原来的收藏不会被取消。`,
+    );
+    if (!ok) return;
+    setDismissing(true); setError('');
+    try {
+      await request('/api/materials/dismiss', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: chosen.map(c => c.id) }),
+      });
+      const gone = new Set(chosen.map(c => c.id));
+      setDrops(prev => prev.filter(d => !gone.has(d.id)));
+      setPicks(prev => prev.filter(p => !gone.has(p.id)));
+      if (selected && gone.has(selected)) setSelected(null);
+      await load();
+    } catch (e) { setError((e as Error).message); }
+    finally { setDismissing(false); }
+  };
+
   const actWrite = (it: MatItem) => onStartPrompt(
     `用 meta-writing-core 和 writing-style 技能，把下面这条收藏素材写成一篇小红书草稿（只出草稿，不发布）。完整正文、转写和要点按素材编号去最新的飞书收藏快照里取。\n\n${brief(it)}`);
-  const actTopic = (it: MatItem) => onStartPrompt(
-    `用 wander-synthesis 技能做一次漫步选题，以下面这条素材为母版，再从最新的飞书收藏快照里挑 2 条来碰撞，给我一个足够小、能直接写的选题。\n\n${brief(it)}`);
-  const actComments = (it: MatItem) => onStartPrompt(
-    `用 xhs-comment-insight 技能，分析下面这条小红书笔记的评论区，找出大家真正想问的，给我能写的选题。\n\n${brief(it)}`);
 
   const shown = list.slice(0, limit);
-  const actFind = () => onStartPrompt(`用 wander-synthesis 技能，从下面这些收藏素材里找选题（当前筛选的前 12 条），按我的画像给 1 个最值得写的，输出选题 JSON。\n\n${list.slice(0, 12).map((it, i) => `${i + 1}. ${brief(it)}`).join('\n\n')}`);
 
   return (
     <div className="skills-page">
@@ -158,18 +191,30 @@ export default function MaterialsPage({ onStartPrompt, onCreate }: { onStartProm
             </button>
           )}
           {data?.refreshMsg && !data.refreshing && <span className="mat-refresh-msg">{data.refreshMsg}</span>}
-          <button className="btn btn-sm mat-refresh" onClick={actFind} disabled={!list.length}>从这些素材找选题</button>
+          {data?.canRefresh && (
+            <button className="btn btn-sm mat-refresh" disabled={dismissing} onClick={() => { setManage(on => !on); setDrops([]); }}>
+              {manage ? '退出整理' : '整理'}
+            </button>
+          )}
         </p>
         <div className="skill-search">
           <span className="skill-search-ic"><IconSearch size={16} /></span>
           <input className="field" placeholder="搜全文：正文、转写、图片文字、评论…" maxLength={200} value={query} onChange={(e) => setQuery(e.target.value)} />
           {query && <button className="btn btn-ghost btn-sm" onClick={() => setQuery('')}>清除</button>}
         </div>
-        <div className="mat-basket"><span>{loading ? '正在检索…' : `${list.length} 条匹配`} · 已选 {picks.length}/5</span>
-          {picks.map(p => <button className="chip" key={p.id} title={p.title} disabled={creating} onClick={() => pick(p)}>{p.title.slice(0, 14)} ×</button>)}
-          <button className="btn btn-primary btn-sm" disabled={!picks.length || creating} onClick={() => create()}>{creating ? '正在创建…' : '用选中素材创作'}</button>
-          {!!picks.length && <button className="btn btn-ghost btn-sm" disabled={creating} onClick={() => setPicks([])}>清空选择</button>}
-        </div>
+        {manage ? (
+          <div className="mat-basket"><span>{`${drops.length} 条待删除`}</span>
+            {drops.map(p => <button className="chip" key={p.id} title={p.title} disabled={dismissing} onClick={() => toggleDrop(p)}>{p.title.slice(0, 14)} ×</button>)}
+            <button className="btn btn-danger btn-sm" disabled={!drops.length || dismissing} onClick={() => dismiss(drops)}>{dismissing ? '正在删除…' : '删除所选'}</button>
+            {!!drops.length && <button className="btn btn-ghost btn-sm" disabled={dismissing} onClick={() => setDrops([])}>清空</button>}
+          </div>
+        ) : (
+          <div className="mat-basket"><span>{loading ? '正在检索…' : `${list.length} 条匹配`} · 已选 {picks.length}/5</span>
+            {picks.map(p => <button className="chip" key={p.id} title={p.title} disabled={creating || dismissing} onClick={() => pick(p)}>{p.title.slice(0, 14)} ×</button>)}
+            <button className="btn btn-primary btn-sm" disabled={!picks.length || creating || dismissing} onClick={() => create()}>{creating ? '正在创建…' : '用选中素材创作'}</button>
+            {!!picks.length && <button className="btn btn-ghost btn-sm" disabled={creating || dismissing} onClick={() => setPicks([])}>清空选择</button>}
+          </div>
+        )}
         <div className="mat-toolbar">
           <div className="mat-chips">
             {[['全部', data?.count ?? 0] as [string, number], ...platforms].map(([p, n]) => (
@@ -200,9 +245,13 @@ export default function MaterialsPage({ onStartPrompt, onCreate }: { onStartProm
           {shown.map((it) => {
             const color = PLATFORM_COLOR[it.platform] || 'var(--text-tertiary)';
             return (
-              <div key={it.id} className={`card card-hover skill-card mat-card ${picks.some(p => p.id === it.id) ? 'mat-picked' : ''}`}
+              <div key={it.id} className={`card card-hover skill-card mat-card ${(manage ? drops : picks).some(p => p.id === it.id) ? 'mat-picked' : ''}`}
                 style={{ ['--layer-color' as string]: color }} onClick={() => setSelected(it.id)}>
-                <label className="mat-pick" onClick={e => e.stopPropagation()}><input type="checkbox" aria-label={`引用 ${it.title}`} disabled={creating} checked={picks.some(p => p.id === it.id)} onChange={() => pick(it)} /> 引用</label>
+                {manage ? (
+                  <label className="mat-pick" onClick={e => e.stopPropagation()}><input type="checkbox" aria-label={`选择删除 ${it.title}`} disabled={dismissing} checked={drops.some(p => p.id === it.id)} onChange={() => toggleDrop(it)} /> 删除</label>
+                ) : (
+                  <label className="mat-pick" onClick={e => e.stopPropagation()}><input type="checkbox" aria-label={`引用 ${it.title}`} disabled={creating || dismissing} checked={picks.some(p => p.id === it.id)} onChange={() => pick(it)} /> 引用</label>
+                )}
                 <div className={`mat-cover ${!it.cover ? 'mat-cover-empty' : isXhs(it.platform) ? 'mat-cover-tall' : ''}`}>
                   {it.cover
                     ? <img src={it.cover} loading="lazy" decoding="async" alt="" onError={(e) => { const el = e.currentTarget as HTMLImageElement; el.style.display = 'none'; if (!el.parentElement?.querySelector('.mat-cover-none')) el.insertAdjacentHTML('afterend', '<span class="mat-cover-none">图片暂缺</span>'); }} />
@@ -259,9 +308,8 @@ export default function MaterialsPage({ onStartPrompt, onCreate }: { onStartProm
                   <button className="btn btn-primary btn-sm" disabled={creating} onClick={() => create([detail])}>开始创作</button>
                   <button className="btn btn-sm" onClick={() => pick(detail)}>{picks.some(p => p.id === detail.id) ? '移除引用' : '加入引用'}</button>
                   <button className="btn btn-primary btn-sm" onClick={() => actWrite(detail)}>拿去写</button>
-                  <button className="btn btn-sm" onClick={() => actTopic(detail)}>做选题</button>
-                  {isXhs(detail.platform) && <button className="btn btn-sm" onClick={() => actComments(detail)}>看评论区</button>}
                   {detail.link && <a className="btn btn-ghost btn-sm" href={detail.link} target="_blank" rel="noreferrer">看原帖 ↗</a>}
+                  {data?.canRefresh && <button className="btn btn-danger btn-sm" disabled={dismissing || creating} onClick={() => dismiss([detail])}>删除这条</button>}
                 </div>
               )}
             </div>

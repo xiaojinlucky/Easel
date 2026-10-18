@@ -47,11 +47,16 @@ export default function EnvBoard({ tools, python, loading, error, jobs, anyRunni
 
   const runAll = () => {
     const ids = tools.filter((t) => t.state !== 'ok' && installable(t)).map((t) => t.id);
-    if (ids.length) void onInstallMany(ids);
+    if (!ids.length) return;
+    if (!window.confirm(`安装还没就绪的 ${ids.length} 项？\n会改这台电脑上的工具，装完再校验。`)) return;
+    void onInstallMany(ids);
   };
   const runGroup = (gid: string) => {
     const ids = groupTools(gid).filter((t) => t.state !== 'ok' && installable(t)).map((t) => t.id);
-    if (ids.length) void onInstallMany(ids);
+    if (!ids.length) return;
+    const title = GROUPS.find((g) => g.id === gid)?.title || '这一组';
+    if (!window.confirm(`安装「${title}」里还没就绪的 ${ids.length} 项？`)) return;
+    void onInstallMany(ids);
   };
 
   const view = (t: EnvTool): { state: 'ok' | 'missing' | 'busy' | 'fail' | 'nodir'; badge: string; cls: string } => {
@@ -143,11 +148,11 @@ export default function EnvBoard({ tools, python, loading, error, jobs, anyRunni
                           {v.state === 'nodir' ? (
                             <button className="btn btn-sm" disabled title="需要 --dir 工程目录（随独立版内置）">需目录</button>
                           ) : v.state === 'fail' ? (
-                            <button className="btn btn-sm btn-fill" onClick={() => void onInstall(t.id)} disabled={anyRunning}>重试</button>
+                            <button className="btn btn-sm btn-fill" onClick={() => { if (!window.confirm(`重试安装「${t.name}」？`)) return; void onInstall(t.id); }} disabled={anyRunning}>重试</button>
                           ) : (
                             <button
                               className={`btn btn-sm ${v.state === 'ok' ? '' : 'btn-fill'}`}
-                              onClick={() => void onInstall(t.id)}
+                              onClick={() => { if (!window.confirm(`${v.state === 'ok' ? '重装' : '安装'}「${t.name}」？`)) return; void onInstall(t.id); }}
                               disabled={anyRunning}
                             >
                               {v.state === 'ok' ? '重装' : '安装'}

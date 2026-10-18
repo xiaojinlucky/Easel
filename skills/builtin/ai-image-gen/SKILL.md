@@ -1,12 +1,12 @@
 ---
 name: ai-image-gen
-description: "通用 AI 生图：文生图 / 图生图 / 图像变体。当用户说 AI 生图、AI 画图、文生图、图生图、生成图片、生成配图、图像生成、AI 出图、AI 作图、换图、改图、图像编辑、给我画一张、生成一张图 时使用。支持 OpenAI 兼容 API 与 apimart 异步 API，用户自备 API key。"
+description: "通用 AI 生图：文生图 / 图生图 / 图像变体。当用户说 AI 生图、AI 画图、文生图、图生图、生成图片、生成配图、图像生成、AI 出图、AI 作图、换图、改图、图像编辑、给我画一张、生成一张图 时使用。默认使用本机已登录的 Codex 订阅生图，不另要 API key。只有 .env 里 IMG_PROVIDER=openai 时才走 OpenAI 兼容或 apimart。"
 layer: produce
 ---
 
 # ai-image-gen Skill
 
-> 通用 AI 文生图 / 图生图 / 图像变体。用户自备图像生成 API key（OpenAI 兼容 或 apimart 异步），产物写入 `outputs/`。
+> 通用 AI 文生图 / 图生图 / 图像变体。默认调用本机 Codex 订阅里的生图能力，产物写入 `outputs/`。不向用户索要生图 API key。
 
 调用共享脚本 `skills/shared/scripts/ai_image.py`（纯标准库，无第三方依赖）。
 本 SKILL 不索要、不回显、不写入、不提交任何真实 API key —— key 只存在于用户自己的 `.env`。
@@ -20,9 +20,11 @@ layer: produce
 
 ## 配置（执行前必读）
 
-> **配置检查路径铁律**：先 `cd` 到运行时说明给出的 Easel 项目根，确认当前目录有 `.env` 和 `skills/shared/scripts/ai_image.py`，再运行下列命令。不得在任何执行引擎的 workspace 或共享脚本副本中检查，也不得用 `env` / `printenv` 代替读取项目 `.env`；否则会把已配置的 `IMG_BASE_URL`/Key 误判为缺失。
+> **配置检查路径铁律**：先 `cd` 到运行时说明给出的 Easel 项目根，确认当前目录有 `skills/shared/scripts/ai_image.py`，再运行下列命令。不得在执行引擎的 workspace 或共享脚本副本里检查。
 
-需在项目根目录 `.env` 中设置三项（脚本从当前目录向上自动查找 `.env`）：
+默认不需要生图 Key。`IMG_PROVIDER` 未设置时就是 `codex`：脚本调用本机 `codex exec`，用已经 `codex login` 的 ChatGPT 订阅出图。
+
+只有用户在设置里把自备接口设成「主」之后，`.env` 才会是 `IMG_PROVIDER=openai`。这时才需要下面三项：
 
 | 变量 | 说明 | 兼容别名 |
 |---|---|---|
@@ -30,12 +32,10 @@ layer: produce
 | `IMG_MODEL` | 图片模型名 | `OPENAI_IMAGE_MODEL` / `IMAGE_MODEL` / `OPENAI_MODEL` |
 | `IMG_API_KEY` | API key | `OPENAI_API_KEY` / `API_KEY` |
 
-支持两类服务，脚本按 `base_url` 自动检测（也可 `--mode sync|async` 强制）：
+自备接口按 `base_url` 自动检测（也可 `--mode sync|async` 强制）：
 
 - **OpenAI 兼容（同步）**：`base_url` 不含 apimart。走 `/images/generations`、`/images/edits`、`/images/variations`。
-  示例：`IMG_BASE_URL=https://api.openai.com/v1`，`IMG_MODEL=gpt-image-1`。
 - **apimart（异步轮询）**：`base_url` 含 `apimart`。提交任务 → 轮询 `/tasks/<id>` → 下载。
-  示例：`IMG_BASE_URL=https://api.apimart.ai/v1`。
 
 ## 执行步骤
 
@@ -45,7 +45,7 @@ layer: produce
 python skills/shared/scripts/ai_image.py check
 ```
 
-打印三项配置状态（key 脱敏显示）、命中的别名、自动检测的模式。缺项时给出 `.env` 填写示例并以退出码 2 结束。**配置未就绪就不要往下走**，直接把缺什么、怎么配告诉用户。
+Codex 模式只检查本机是否已登录。自备接口模式才检查三项配置；缺项时以退出码 2 结束，并说明缺什么。**未就绪就不要往下走。**
 
 ### 2. 文生图 text2img
 

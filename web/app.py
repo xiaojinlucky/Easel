@@ -1429,11 +1429,15 @@ async def api_persona_delete(name: str):
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# Meta 工作台 · 素材库（只读飞书收藏快照 outputs/_sources/feishu-收藏资产库-*.ndjson）
+# Meta 工作台 · 素材库（飞书收藏快照 outputs/_sources/feishu-收藏资产库-*.ndjson）
+# 确认删除只把同一行写成「不再同步」，不物理删行。
 # ═══════════════════════════════════════════════════════════════════════
 MATERIALS_DIR = OUTPUTS_DIR / "_sources"
 _MAT_CACHE: dict = {"path": None, "mtime": 0.0, "items": [], "full": {}}
 _MAT_REFRESH: dict = {"running": False, "msg": ""}
+_MAT_LOCK = threading.Lock()
+_MAT_DISMISSED: set[str] = set()
+_DISMISS_STATUS = "不再同步"
 COVERS_DIR = Path(os.environ.get("META_COVERS_DIR", r"G:\MetaWorkbench-deps\covers"))
 
 
@@ -1477,10 +1481,82 @@ def _mat_date(v) -> str:
     return f"{m.group(1)}-{int(m.group(2)):02d}-{int(m.group(3)):02d}" if m else ""
 
 
+def _mat_fav_status(r: dict) -> str:
+    v = r.get("收藏状态")
+    if isinstance(v, list):
+        return _mat_str(v[0]) if v else ""
+    return _mat_str(v)
+
+
+def _mat_today() -> str:
+    return time.strftime("%Y-%m-%d", time.gmtime(time.time() + 8 * 3600))
+
+
 def _mat_link(v) -> str:
     s = _mat_str(v)
     m = re.search(r"https?://[^\s\)\]]+", s)
     return m.group(0) if m else ""
+
+
+def _mat_stamp_dismissed(path: Path) -> None:
+    """本次进程里已确认删除的行，写进即将替换的快照，避免旧导出把它们盖回来。"""
+    if not _MAT_DISMISSED or not path.is_file():
+        return
+    today = _mat_today()
+    lines: list[str] = []
+    changed = False
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            lines.append(line)
+            continue
+        if _mat_str(row.get("record_id")) in _MAT_DISMISSED:
+            row["收藏状态"] = [_DISMISS_STATUS]
+            row["取消发现日期"] = today
+            changed = True
+            line = json.dumps(row, ensure_ascii=False)
+        lines.append(line)
+    if changed:
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _mat_patch_dismissed(path: Path, ids: list[str], today: str) -> bool:
+    if not path.is_file():
+        return False
+    wanted = set(ids)
+    found: set[str] = set()
+    lines: list[str] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            lines.append(line)
+            continue
+        rid = _mat_str(row.get("record_id"))
+        if rid in wanted:
+            row["收藏状态"] = [_DISMISS_STATUS]
+            row["取消发现日期"] = today
+            found.add(rid)
+            line = json.dumps(row, ensure_ascii=False)
+        lines.append(line)
+    tmp = path.with_suffix(".ndjson.dismiss")
+    tmp.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+    os.replace(tmp, path)
+    return found == wanted
+
+
+def _mat_lark(exe: str, args: list[str], env: dict) -> subprocess.CompletedProcess:
+    cmd = [exe, *args]
+    if exe.lower().endswith((".cmd", ".bat")):
+        cmd = [os.environ.get("COMSPEC", "cmd.exe"), "/c", *cmd]
+    return subprocess.run(
+        cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=180, env=env,
+    )
 
 
 def _mat_latest() -> Path | None:
@@ -1509,6 +1585,8 @@ def _mat_load() -> dict:
             except json.JSONDecodeError:
                 continue
             rid = _mat_str(r.get("record_id")) or hashlib.sha256(json.dumps(r, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()[:20]
+            if _mat_fav_status(r) == _DISMISS_STATUS or rid in _MAT_DISMISSED:
+                continue
             title = _mat_str(r.get("标题")) or _mat_str(r.get("一句话摘要"))[:40] or "（无标题）"
             item = {
                 "id": rid,
@@ -1636,7 +1714,9 @@ async def api_materials_refresh():
             p = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
                                errors="replace", timeout=600, env=env)
             if tmp.exists() and tmp.stat().st_size > 0:
-                os.replace(tmp, target)
+                with _MAT_LOCK:
+                    _mat_stamp_dismissed(tmp)
+                    os.replace(tmp, target)
                 _MAT_REFRESH["msg"] = "已更新"
                 try:  # META-PATCH：顺手缓存封面
                     _MAT_REFRESH["msg"] = "已更新，正在补图片…"
@@ -1655,6 +1735,80 @@ async def api_materials_refresh():
 
     threading.Thread(target=_run, daemon=True).start()
     return {"state": "running"}
+
+
+class MaterialDismissRequest(BaseModel):
+    ids: list[str] = Field(default_factory=list)
+
+
+def _mat_dismiss(ids: list[str]) -> dict:
+    """把选中行在飞书标成不再同步，再改本地快照。不调用 record-delete。"""
+    exe = shutil.which("lark-cli")
+    if not exe:
+        raise HTTPException(400, "这台电脑没装飞书导出工具")
+    local_env = _read_env()
+    base_token = os.environ.get("META_FEISHU_BASE_TOKEN", "").strip() or local_env.get("META_FEISHU_BASE_TOKEN", "").strip()
+    table_id = os.environ.get("META_FEISHU_TABLE_ID", "").strip() or local_env.get("META_FEISHU_TABLE_ID", "").strip()
+    if not _is_set(base_token) or not _is_set(table_id):
+        raise HTTPException(400, "尚未配置飞书收藏库，请先完成本机配置")
+    today = _mat_today()
+    payload = {"update_records": {i: {"收藏状态": [_DISMISS_STATUS], "取消发现日期": today} for i in ids}}
+    tmp = Path(os.environ.get("TEMP") or os.environ.get("TMP") or ".") / f"easel-dismiss-{os.getpid()}.json"
+    env = {k: v for k, v in os.environ.items() if k not in ("HERMES_HOME", "OPENCLAW_HOME", "LARK_CHANNEL")}
+    with _MAT_LOCK:
+        if _MAT_REFRESH["running"]:
+            raise HTTPException(409, "正在更新素材库，请等更新完再删")
+        try:
+            tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+            try:
+                proc = _mat_lark(exe, [
+                    "base", "+record-batch-update", "--as", "user",
+                    "--base-token", base_token, "--table-id", table_id,
+                    "--json", "@" + str(tmp), "--jq", ".ok",
+                ], env)
+            except subprocess.TimeoutExpired:
+                raise HTTPException(502, "飞书没有在时间内记下删除，素材还在。")
+        finally:
+            tmp.unlink(missing_ok=True)
+        ok = proc.returncode == 0 and "true" in (proc.stdout or "")
+        if not ok:
+            tail = _scrub_secrets((proc.stderr or "") + (proc.stdout or ""))[-300:]
+            tail = tail.replace(base_token, "***").replace(table_id, "***").strip()
+            msg = "飞书没有记下删除，素材还在。"
+            if tail:
+                msg += f"（{tail}）"
+            raise HTTPException(502, msg)
+        _MAT_DISMISSED.update(ids)
+        path = _mat_latest()
+        patched = bool(path and _mat_patch_dismissed(path, ids, today))
+        _MAT_CACHE.update({"path": None, "mtime": 0.0, "items": [], "full": {}})
+    if not patched:
+        raise HTTPException(500, "飞书已经记成不再同步。本地列表没改完，请点更新。")
+    return {"ok": True, "count": len(ids)}
+
+
+@app.post("/api/materials/dismiss")
+async def api_materials_dismiss(body: MaterialDismissRequest):
+    """确认删除：飞书收藏状态写成不再同步，工作台列表不再显示。"""
+    ids: list[str] = []
+    seen: set[str] = set()
+    for raw in body.ids:
+        item_id = (raw or "").strip()
+        if item_id and item_id not in seen:
+            seen.add(item_id)
+            ids.append(item_id)
+    if not ids:
+        raise HTTPException(400, "还没有选中要删除的素材")
+    if len(ids) > 100:
+        raise HTTPException(400, "一次最多删除 100 条")
+    if any(not re.fullmatch(r"rec[A-Za-z0-9]+", item_id) for item_id in ids):
+        raise HTTPException(400, "有素材没有飞书记录编号，不能同步删除")
+    if _MAT_REFRESH["running"]:
+        raise HTTPException(409, "正在更新素材库，请等更新完再删")
+    loaded = await asyncio.to_thread(_mat_load)
+    if any(item_id not in loaded["full"] for item_id in ids):
+        raise HTTPException(404, "有素材已经不在库里，请刷新后再删")
+    return await asyncio.to_thread(_mat_dismiss, ids)
 
 
 @app.get("/api/meta/patch-status")
@@ -1841,6 +1995,34 @@ def _mask_key(v: str) -> str:
     return f"«{v[:5]}…{v[-4:]}»" if len(v) > 14 else "«已配置»"
 
 
+_CODEX_LOGIN_CACHE: dict = {"ts": 0.0, "ok": False, "detail": "未检测"}
+
+
+def _codex_image_status() -> tuple[bool, str]:
+    """生图默认通道：看本机 Codex 是否已用 ChatGPT 登录，不读 Key。"""
+    now = time.time()
+    if now - _CODEX_LOGIN_CACHE["ts"] < 30:
+        return bool(_CODEX_LOGIN_CACHE["ok"]), str(_CODEX_LOGIN_CACHE["detail"])
+    exe = shutil.which("codex")
+    if exe and exe.lower().endswith(".ps1"):
+        cmd = str(Path(exe).with_suffix(".cmd"))
+        exe = cmd if Path(cmd).is_file() else exe
+    if not exe:
+        result = (False, "未安装")
+    else:
+        try:
+            proc = subprocess.run(
+                [exe, "login", "status"], capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=20,
+                stdin=subprocess.DEVNULL)
+            text = f"{proc.stdout or ''}\n{proc.stderr or ''}"
+            result = (True, "已就绪") if "Logged in" in text else (False, "未登录")
+        except (OSError, subprocess.TimeoutExpired):
+            result = (False, "未登录")
+    _CODEX_LOGIN_CACHE.update({"ts": now, "ok": result[0], "detail": result[1]})
+    return result
+
+
 def _model_channels(runtime: str | None = None) -> dict:
     env = _read_env()
     primary = ""
@@ -1966,10 +2148,15 @@ def _model_channels(runtime: str | None = None) -> dict:
     channels: dict = {"chat": {"rows": chat_rows}, "transcribe": {"rows": trans_rows}}
     try:
         import model_registry as _mr  # skills/shared/scripts 已在 sys.path 上
-        _setting_env = {"video": "VIDEO_PROVIDER", "music": "MUSIC_PROVIDER", "voice": "VOICE_PROVIDER"}
+        _setting_env = {
+            "image": "IMG_PROVIDER", "video": "VIDEO_PROVIDER",
+            "music": "MUSIC_PROVIDER", "voice": "VOICE_PROVIDER",
+        }
         for _gid, _ch in (("image", "image"), ("video", "video"), ("music", "music"), ("voice", "speech")):
             _spec = _mr.MODEL_GROUPS[_gid]
             _chosen = (env.get(_setting_env.get(_gid, ""), "") or "").strip()
+            if _gid == "image" and not _chosen:
+                _chosen = "codex"
             _rows = []
             for _p in _spec["providers"]:
                 _req = [k for k in _p["keys"] if k["required"]]
@@ -1981,6 +2168,11 @@ def _model_channels(runtime: str | None = None) -> dict:
                 _k2 = _edit_keys[1] if len(_edit_keys) > 1 else None
                 _ok = all(_is_set(env.get(k["env"])) or any(_is_set(env.get(a)) for a in k.get("aliases", []))
                           for k in _req)
+                _result = "已配置" if _ok else "未配置"
+                _key_editable = _k1 is not None
+                if _p["id"] == "codex":
+                    _result = _codex_image_status()[1]
+                    _key_editable = False
                 _masked = ""
                 if _k1:
                     _raw = env.get(_k1["env"], "")
@@ -1991,11 +2183,13 @@ def _model_channels(runtime: str | None = None) -> dict:
                                 break
                     _masked = _mask_key(_raw)
                 _rows.append({
-                    "slot": _p["id"], "order": 0, "name": _p["name"], "sub": _gid,
+                    "slot": _p["id"], "order": 0, "name": _p["name"],
+                    "sub": _p.get("sub") or _gid,
                     "type": _p["id"], "model": (env.get(_mk["env"]) or "").strip() if _mk else "",
                     "baseUrl": (env.get(_bk["env"]) or "").strip() if _bk else "",
-                    "keyMasked": _masked, "role": "主" if (_gid == "image" or _chosen == _p["id"]) else "备",
-                    "result": "已配置" if _ok else "未配置",
+                    "keyMasked": _masked, "role": "主" if _chosen == _p["id"] else "备",
+                    "result": _result,
+                    "keyEditable": _key_editable,
                     "key2Label": _k2["label"] if _k2 else "",
                     "key2Masked": _mask_key(env.get(_k2["env"], "")) if _k2 and _k2["secret"] else "",
                     "modelEditable": _mk is not None,
@@ -2337,7 +2531,10 @@ async def api_settings_models_save(req: ModelSaveRequest):
         _gid0 = {"speech": "voice", "image": "image", "video": "video", "music": "music"}[ch0]
         _spec0 = _mr2.MODEL_GROUPS[_gid0]
         _by_id = {p["id"]: p for p in _spec0["providers"]}
-        _setting0 = {"video": "VIDEO_PROVIDER", "music": "MUSIC_PROVIDER", "voice": "VOICE_PROVIDER"}.get(_gid0)
+        _setting0 = {
+            "image": "IMG_PROVIDER", "video": "VIDEO_PROVIDER",
+            "music": "MUSIC_PROVIDER", "voice": "VOICE_PROVIDER",
+        }.get(_gid0)
         _mupd: dict[str, str] = {}
         _primary0 = ""
         _env0 = _read_env()

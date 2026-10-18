@@ -93,6 +93,8 @@ export default function DashboardPage({ persona, gatewayStatus, apiDirect, agent
   }, []);
 
   const runAna = (platform: string) => {
+    const name = anaPlats.find((p) => p.platform === platform)?.name || '这个平台';
+    if (!window.confirm(`读取「${name}」的创作者数据？\n用桌面 Cloak 里已经登录的账号，不会另开 Chrome。`)) return;
     setAnaSel(platform);
     if (anaPending.current.has(platform)) return;
     anaPending.current.add(platform);
@@ -146,7 +148,7 @@ export default function DashboardPage({ persona, gatewayStatus, apiDirect, agent
         <h1 className="page-title" style={{ fontSize: 26 }}>{greet} 👋</h1>
         <p className="page-subtitle">
           {gatewayStatus === 'connected' ? '' : '⚠ AI 还没连上，先去设置看看。'}
-          {void apiDirect}{void agentRuntime}{void persona}
+          {void apiDirect}{void agentRuntime}{void persona}{void onStartPrompt}
           收素材、写稿、复盘，都从这里开始。
         </p>
         <div className="dash-quick">
@@ -155,18 +157,12 @@ export default function DashboardPage({ persona, gatewayStatus, apiDirect, agent
               <q.Icon size={16} /><span>{q.label}</span>
             </button>
           ))}
-          <button className="dash-quick-btn" title="从你的收藏里逛出一个能写的选题" onClick={() => onStartPrompt?.('用 wander-synthesis 技能做一次漫步选题：读 outputs/_sources 里日期最新的飞书收藏快照，挑 3 条素材碰撞，给我一个足够小、能直接写的选题。')}>
-            <IconIdea size={16} /><span>漫步选题</span>
-          </button>
-          <button className="dash-quick-btn" title="从评论区找大家真想问的" onClick={() => onStartPrompt?.('用 xhs-comment-insight 技能做评论区选题。先问我要分析哪条笔记（链接或标题都行）；我说不上来就从最新的飞书收藏快照里挑 3 条评论多的让我选。')}>
-            <IconChat size={16} /><span>评论区选题</span>
-          </button>
         </div>
       </div>
 
       {patchSkipped.length > 0 && (
         <div className="card" style={{ padding: 12, margin: '0 0 14px', borderColor: 'var(--red, #d33)', fontSize: 13 }}>
-          ⚠ 程序更新后，有 {patchSkipped.length} 处改动没能放回。请你截图发给 Grok Bot。
+          有 {patchSkipped.length} 个文件比上次保存的补丁新，启动时没有用旧稿覆盖。刷新即可。
         </div>
       )}
       {/* 概览数字 */}
@@ -206,7 +202,7 @@ export default function DashboardPage({ persona, gatewayStatus, apiDirect, agent
             <span><IconIdea size={16} /> 选题库 · 待做</span>
             <button className="dash-more" onClick={() => onNavigate('ideas')}>全部 →</button>
           </div>
-          {pendingIdeas.length === 0 && <div className="dash-empty">还没有选题。点上面「漫步选题」逛一个</div>}
+          {pendingIdeas.length === 0 && <div className="dash-empty">还没有待做选题。</div>}
           {pendingIdeas.slice(0, 5).map((it) => (
             <div key={it.id} className="dash-idea" onClick={() => onUseTopic(it.title)} title="点击做成内容">
               <span className="dash-idea-title">{it.title}</span>

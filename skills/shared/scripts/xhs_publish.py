@@ -143,19 +143,9 @@ def _profile_dir(base: str | None) -> Path:
 
 
 def _cloak_executable() -> Path | None:
-    """本机已装的 CloakBrowser 内核。只用 ~/.cloakbrowser，不用调研 profile / 9344 / 9345。
-
-    无头 Playwright Chromium 会被小红书 300012；同一出口下 Cloak 无头已实测能出码。
-    """
-    override = (os.environ.get("EASEL_CLOAK_BROWSER") or "").strip()
-    if override:
-        p = Path(override).expanduser()
-        return p if p.is_file() else None
-    root = Path.home() / ".cloakbrowser"
-    if not root.is_dir():
-        return None
-    choices = sorted(root.glob("chromium-*/chrome.exe"), key=lambda p: p.stat().st_mtime, reverse=True)
-    return choices[0] if choices else None
+    """桌面 Cloak 的内核。登录目录不在这里决定，见 cloak_account.canonical_profile。"""
+    from cloak_account import executable
+    return executable()
 
 
 class _ProfileLock:
@@ -214,35 +204,18 @@ class _ProfileLock:
 
 
 def _clear_stale_chrome_locks(profile: Path) -> None:
+    try:
+        from cloak_account import canonical_profile
+        if profile.resolve() == canonical_profile().resolve():
+            return
+    except Exception:
+        pass
     for name in ("SingletonLock", "SingletonCookie", "SingletonSocket"):
         p = profile / name
         try:
             p.unlink()
         except OSError:
             pass
-
-
-def _browser_channel() -> str | None:
-    """Cloak 找不到时，有头登录才退回本机 Chrome/Edge。"""
-    if os.name != "nt":
-        return None
-    pf = Path(os.environ.get("PROGRAMFILES", r"C:\Program Files"))
-    pf86 = Path(os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)"))
-    local = Path(os.environ.get("LOCALAPPDATA", ""))
-    chrome = (
-        pf / "Google" / "Chrome" / "Application" / "chrome.exe",
-        pf86 / "Google" / "Chrome" / "Application" / "chrome.exe",
-        local / "Google" / "Chrome" / "Application" / "chrome.exe",
-    )
-    if any(p.is_file() for p in chrome):
-        return "chrome"
-    edge = (
-        pf / "Microsoft" / "Edge" / "Application" / "msedge.exe",
-        pf86 / "Microsoft" / "Edge" / "Application" / "msedge.exe",
-    )
-    if any(p.is_file() for p in edge):
-        return "msedge"
-    return None
 
 
 def _login_error(page) -> str:
@@ -997,7 +970,17 @@ def _fill_and_submit(page, title, content, tags):
 # --------------------------------------------------------------------------- #
 # 命令
 # --------------------------------------------------------------------------- #
-def _launch(p, headed: bool, base: str | None, proxy: str | None, *, login_assets: bool = True):
+def _launch(p, headed: bool, base: str | None, proxy: str | None, *, login_assets: bool = True,
+            allow_launch: bool = True):
+    if not base:
+        from cloak_account import open_account_context
+        args = list(LAUNCH_ARGS) + ["--no-proxy-server"]
+        ctx = open_account_context(
+            p, profile_base=None, profile_name=PROFILE_NAME, headed=headed,
+            extra_args=args, proxy=proxy, allow_launch=allow_launch)
+        if login_assets:
+            login_transport.install(ctx, "xiaohongshu")
+        return ctx
     profile = _profile_dir(base)
     profile.mkdir(parents=True, exist_ok=True)
     args = list(LAUNCH_ARGS)
@@ -1012,10 +995,6 @@ def _launch(p, headed: bool, base: str | None, proxy: str | None, *, login_asset
     cloak = _cloak_executable()
     if cloak:
         kwargs["executable_path"] = str(cloak)
-    elif headed:
-        channel = _browser_channel()
-        if channel:
-            kwargs["channel"] = channel
     last: Exception | None = None
     for attempt in range(2):
         try:
@@ -1050,8 +1029,12 @@ def cmd_check(_a) -> int:
     if cloak:
         print(f"✅ CloakBrowser 内核：{cloak}")
     else:
-        print("⚠️ 未找到 CloakBrowser（~/.cloakbrowser）；小红书登录可能被 300012")
-    print(f"登录态目录：{_profile_dir(None)}")
+        print("⚠️ 未找到 CloakBrowser。不会改用 Chrome 扫码")
+    try:
+        from cloak_account import canonical_profile
+        print(f"登录目录：{canonical_profile()}（桌面 Cloak，不另开 Chrome）")
+    except Exception as error:
+        print(f"登录目录：{error}")
     return 0 if ok else 3
 
 
@@ -1110,8 +1093,10 @@ def cmd_login(a) -> int:
             try:
                 ctx = _launch(p, headed=a.headed, base=a.profile_base, proxy=_proxy(a.proxy, a.no_proxy))
             except Exception as e:
-                login_state.write_status(sf, "error", "浏览器没能打开。请关闭弹窗，等 10 秒再点登录，不要连点。")
-                _die(f"启动浏览器失败：{e}", 1)
+                text = str(e) if e.__class__.__name__ == "CloakAccountError" else (
+                    "浏览器没能打开。请先打开桌面 CloakBrowser，不要改用 Chrome 扫码。")
+                login_state.write_status(sf, "error", text)
+                _die(text, 1)
             page = ctx.pages[0] if ctx.pages else ctx.new_page()
             try:
                 if _creator_account(ctx) is not None:
@@ -1121,7 +1106,7 @@ def cmd_login(a) -> int:
                 if a.headed:
                     login_state.write_status(
                         sf, "window_login",
-                        "请在弹出的 CloakBrowser 窗口里扫码，不要关掉那个窗口。")
+                        "请在 Cloak 浏览器里扫码，不要关掉那个窗口。")
                 explore_failed = False
                 try:
                     page.goto(EXPLORE_URL, wait_until="commit", timeout=30000)
@@ -1159,12 +1144,12 @@ def cmd_login(a) -> int:
                         raise
                     login_state.write_status(
                         sf, "window_login",
-                        f"{error}。请在弹出的 CloakBrowser 窗口里完成登录（扫码或短信），不要关掉那个窗口。")
+                        f"{error}。请在 Cloak 浏览器里完成登录（扫码或短信），不要关掉那个窗口。")
                 if qr:
                     if a.headed:
                         login_state.write_status(
                             sf, "window_login",
-                            "请在弹出的 CloakBrowser 窗口里扫码，不要关掉那个窗口。也可以扫下面这张图。",
+                            "请在 Cloak 浏览器里扫码，不要关掉那个窗口。也可以扫下面这张图。",
                             qr=str(qr_out))
                     else:
                         login_state.write_status(sf, "qr_ready", "二维码已就绪，请扫码", qr=str(qr_out))
@@ -1382,7 +1367,8 @@ def cmd_whoami(a) -> int:
         return 0
     try:
         with sync_playwright() as p:
-            ctx = _launch(p, headed=False, base=a.profile_base, proxy=_proxy(a.proxy, a.no_proxy))
+            ctx = _launch(p, headed=False, base=a.profile_base, proxy=_proxy(a.proxy, a.no_proxy),
+                          allow_launch=False)
             page = ctx.pages[0] if ctx.pages else ctx.new_page()
             try:
                 account = _authenticated_account(ctx)
@@ -1477,7 +1463,7 @@ def main() -> int:
     sub = ap.add_subparsers(dest="cmd")
 
     def add_common(p):
-        p.add_argument("--profile-base", help="登录态根目录（默认 ~/.easel-browser-profiles）")
+        p.add_argument("--profile-base", help="单独的登录目录，只给测试用。不填就用桌面 Cloak")
         p.add_argument("--proxy", help="外网代理（默认取 env，小红书是外网需代理）")
         p.add_argument("--no-proxy", action="store_true", help="禁用代理")
 

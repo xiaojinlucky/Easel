@@ -560,6 +560,7 @@ export default function App() {
 
   // 热点「一键做成内容」：新开会话，把选题作为指令发出去，跳到对话页。
   const handleUseTopic = useCallback((title: string) => {
+    if (!window.confirm(`按「${title}」新开一个对话并开始写？\n不会发布。`)) return;
     const prompt = `围绕当前热点「${title}」：先判断它适不适合我的账号赛道；若合适，给 2-3 个差异化的二创角度，并把你最推荐的那条写成可直接发布的文案初稿。`;
     const ns = createSession(selectedPersona || undefined);
     setSessions((prev) => { const u = [ns, ...prev]; saveSessions(u); return u; });
@@ -568,8 +569,10 @@ export default function App() {
     sendUserAndStream(ns.id, prompt);
   }, [selectedPersona, sendUserAndStream]);
 
-  // Meta 工作台：首页一键入口（漫步选题 / 评论区选题）——新开会话发出固定指令
+  // 从素材、内容库或消息卡片带一句指令进来：先让用户看见将要发出的内容。
   const handleStartPrompt = useCallback((prompt: string) => {
+    const preview = prompt.replace(/\s+/g, ' ').trim().slice(0, 80);
+    if (!window.confirm(`新开一个对话并马上开始？\n\n${preview}${prompt.trim().length > 80 ? '…' : ''}\n\n不会发布。`)) return;
     const ns = createSession(selectedPersona || undefined);
     setSessions((prev) => { const u = [ns, ...prev]; saveSessions(u); return u; });
     setActiveSessionId(ns.id);

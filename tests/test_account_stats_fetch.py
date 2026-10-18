@@ -286,7 +286,7 @@ def test_other_platform_login_wall_returns_before_waiting_for_metrics(platform, 
     poll, notes = Mock(), Mock()
     monkeypatch.setattr(account_stats, "_poll_stable", poll)
     monkeypatch.setattr(account_stats, "_scrape_notes", notes)
-    assert account_stats._scrape(platform, False, None, None)["logged_in"] is False
+    assert account_stats._scrape(platform, False, str(tmp_path), None)["logged_in"] is False
     poll.assert_not_called()
     notes.assert_not_called()
     context.close.assert_called_once()
@@ -313,7 +313,7 @@ def test_douyin_does_not_reject_session_before_spa_login_anchor_renders(tmp_path
     monkeypatch.setattr(account_stats, "_poll_stable", lambda *args: polled.append(True) or ["粉丝", "12"])
     monkeypatch.setattr(account_stats, "_platform_logged_in", lambda *args: bool(polled))
     monkeypatch.setattr(account_stats, "_scrape_notes", lambda *args: [])
-    stats = account_stats._scrape("douyin", False, None, None)
+    stats = account_stats._scrape("douyin", False, str(tmp_path), None)
     assert stats["logged_in"] is True
     assert stats["followers"] == 12
 
@@ -385,7 +385,7 @@ def test_failed_xhs_fetch_closes_context_and_releases_lock(tmp_path, monkeypatch
     monkeypatch.setattr(account_stats, "_scrape_xhs", Mock(side_effect=RuntimeError("no data")))
     with pytest.raises(RuntimeError, match="no data"):
         account_stats._scrape("xiaohongshu", False, None, None)
-    assert launch.call_args.kwargs == {"login_assets": False}
+    assert launch.call_args.kwargs == {"login_assets": False, "allow_launch": False}
     context.close.assert_called_once()
     lock.release.assert_called_once()
 

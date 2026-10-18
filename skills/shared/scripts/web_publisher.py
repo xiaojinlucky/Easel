@@ -330,6 +330,14 @@ def _profile_dir(platform: str, base: str | None) -> Path:
     return root / PLATFORMS[platform]["profile"]
 
 
+def _open_context(p, platform: str, base: str | None, headed: bool, *, allow_launch: bool = True):
+    """默认接到桌面 Cloak。只有显式 profile_base 才用独立目录（测试）。"""
+    from cloak_account import open_account_context
+    return open_account_context(
+        p, profile_base=base, profile_name=PLATFORMS[platform]["profile"], headed=headed,
+        extra_args=LAUNCH_ARGS + ["--no-proxy-server"], allow_launch=allow_launch)
+
+
 def cmd_platforms(_a) -> int:
     print(f"支持 {len(PLATFORMS)} 个网页发布平台：\n")
     for k, c in PLATFORMS.items():
@@ -373,7 +381,7 @@ def cmd_check(_a) -> int:
                 print("❌ 未安装浏览器内核（playwright install chromium）"); ok = False
     except Exception as e:
         print(f"❌ 无法检查内核：{e}（playwright install chromium）"); ok = False
-    print("登录态目录：~/.easel-browser-profiles/<平台>Profile")
+    print("账号登录在桌面 Cloak 浏览器里。不要用 Chrome 再扫一次。")
     return 0 if ok else 3
 
 
@@ -586,20 +594,21 @@ def _run_browser(a, headed: bool, do_publish: bool) -> int:
         from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
     except Exception as e:
         _die(f"需要 playwright：{e}（pip install playwright && playwright install chromium）", 3)
-    profile = _profile_dir(a.platform, a.profile_base)
-    profile.mkdir(parents=True, exist_ok=True)
+    isolated = bool(a.profile_base)
+    profile = _profile_dir(a.platform, a.profile_base) if isolated else None
+    if profile is not None:
+        profile.mkdir(parents=True, exist_ok=True)
     cfg = PLATFORMS[a.platform]
     ctx = {"media": a.media or "", "title": a.title or "", "desc": a.desc or "",
            "tags": a.tags or "", "cover": a.cover or ""}
     with sync_playwright() as p:
-        browser = p.chromium.launch_persistent_context(
-            str(profile), headless=not headed, args=LAUNCH_ARGS + ["--no-proxy-server"],
-            viewport={"width": 1440, "height": 900})
+        browser = _open_context(p, a.platform, a.profile_base, headed)
         page = browser.pages[0] if browser.pages else browser.new_page()
         if not do_publish:
             page.goto(cfg["login_url"])
-            print(f"已打开 {cfg['name']} 登录页，请在浏览器完成登录（扫码等），登录态保存在 {profile}。",
-                  file=sys.stderr)
+            where = (f"这次只写在单独目录 {profile}。" if profile is not None
+                     else "请在桌面 Cloak 浏览器里完成登录，不要用 Chrome 再扫一次。")
+            print(f"已打开 {cfg['name']} 登录页。{where}", file=sys.stderr)
             print("登录完成后按 Enter 关闭 ...", file=sys.stderr)
             try:
                 input()
@@ -1328,8 +1337,8 @@ def cmd_login_qr(a) -> int:
     cfg = PLATFORMS.get(a.platform)
     if not cfg:
         _die(f"未知平台：{a.platform}（支持：{', '.join(PLATFORMS)}）")
-    profile = _profile_dir(a.platform, a.profile_base)
-    profile.mkdir(parents=True, exist_ok=True)
+    if a.profile_base:
+        _profile_dir(a.platform, a.profile_base).mkdir(parents=True, exist_ok=True)
     root = Path(__file__).resolve().parents[3] / "outputs" / "_login"
     qr_out = Path(a.qr_out).expanduser() if a.qr_out else root / f"{a.platform}.png"
     sf = a.status_file or str(root / f"{a.platform}.json")
@@ -1344,9 +1353,7 @@ def cmd_login_qr(a) -> int:
 
         try:
             signal.signal(signal.SIGTERM, stop_login)
-            browser = p.chromium.launch_persistent_context(
-                str(profile), headless=True, locale="zh-CN",
-                args=LAUNCH_ARGS + ["--no-proxy-server"])
+            browser = _open_context(p, a.platform, a.profile_base, False)
             page = browser.pages[0] if browser.pages else browser.new_page()
             _block_heavy(browser, a.platform)
             _observe_channels_account(browser, cfg)
@@ -1544,11 +1551,7 @@ def cmd_whoami(a) -> int:
     result = {"loggedIn": False, "name": "", "avatar": ""}
     try:
         with sync_playwright() as p:
-            profile = _profile_dir(a.platform, a.profile_base)
-            profile.mkdir(parents=True, exist_ok=True)
-            browser = p.chromium.launch_persistent_context(
-                str(profile), headless=True, locale="zh-CN",
-                args=LAUNCH_ARGS + ["--no-proxy-server"])
+            browser = _open_context(p, a.platform, a.profile_base, False, allow_launch=False)
             page = browser.pages[0] if browser.pages else browser.new_page()
             try:
                 _block_heavy(browser, a.platform, login_assets=False)
@@ -1725,7 +1728,7 @@ def main() -> int:
         p.add_argument("--desc", help="正文/简介")
         p.add_argument("--tags", help="话题标签（如 '#AI #教程'）")
         p.add_argument("--cover", help="封面")
-        p.add_argument("--profile-base", help="登录态根目录（默认 ~/.easel-browser-profiles）")
+        p.add_argument("--profile-base", help="单独的登录目录，只给测试用。不填就用桌面 Cloak")
 
     sub.add_parser("platforms", help="列出平台").set_defaults(func=cmd_platforms)
     sub.add_parser("check", help="检查 playwright/内核").set_defaults(func=cmd_check)

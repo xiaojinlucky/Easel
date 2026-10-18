@@ -114,6 +114,7 @@ export default function CalendarPage() {
   };
   const remove = async () => {
     if (!editing) return;
+    if (!window.confirm(`删除排期「${editing.title}」？`)) return;
     setSaving(true);
     try { await deleteSchedule(editing.id); close(); load(); } finally { setSaving(false); }
   };

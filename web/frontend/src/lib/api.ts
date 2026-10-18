@@ -838,6 +838,7 @@ export interface ModelRow {
   key2Masked?: string;
   modelEditable?: boolean;
   baseEditable?: boolean;
+  keyEditable?: boolean;
   baseOptional?: boolean;
   adv?: boolean;
   deletable?: boolean;

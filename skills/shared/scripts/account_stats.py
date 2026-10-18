@@ -623,12 +623,12 @@ def _scrape(platform: str, headed: bool, base: str | None, proxy: str | None) ->
             if platform == "xiaohongshu":
                 # 与发布/登录共用 Cloak + 同一套启动参数；禁图版 Chromium 会把创作中心打回登录页。
                 _clear_stale_chrome_locks(profile)
-                ctx = _xhs_launch(p, headed, base, proxy, login_assets=False)
+                ctx = _xhs_launch(p, headed, base, proxy, login_assets=False, allow_launch=False)
             else:
-                kwargs = dict(headless=not headed, locale="zh-CN", args=LAUNCH_ARGS)
-                if proxy:
-                    kwargs["proxy"] = {"server": proxy}
-                ctx = p.chromium.launch_persistent_context(str(profile), **kwargs)
+                from cloak_account import open_account_context
+                ctx = open_account_context(
+                    p, profile_base=base, profile_name=cfg["profile"], headed=headed,
+                    extra_args=list(LAUNCH_ARGS), proxy=proxy, allow_launch=False)
             page = ctx.pages[0] if ctx.pages else ctx.new_page()
             try:
                 if platform == "xiaohongshu":
@@ -1210,7 +1210,7 @@ def main() -> int:
     sub.add_parser("check", help="检查 playwright/内核").set_defaults(func=cmd_check)
     pf = sub.add_parser("fetch", help="抓某平台账号数据 → JSON")
     pf.add_argument("--platform", required=True, help=f"平台：{', '.join(PLATFORMS)}")
-    pf.add_argument("--profile-base", help="登录态根目录（默认 ~/.easel-browser-profiles）")
+    pf.add_argument("--profile-base", help="单独的登录目录，只给测试用。不填就用桌面 Cloak")
     pf.add_argument("--proxy", help="外网代理（默认按平台：xhs 直连、其它走 env）")
     pf.add_argument("--no-proxy", action="store_true", help="强制直连")
     pf.add_argument("--headed", action="store_true", help="有头模式（首次校准）")

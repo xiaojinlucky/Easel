@@ -1,17 +1,16 @@
 #!/usr/bin/env python3
-"""zhihu_comments_fetch.py — 用已登录的知乎 Profile 抓文章评论。
+"""zhihu_comments_fetch.py — 用桌面 Cloak 里已登录的知乎账号抓文章评论。
 
 用法：
   python skills/shared/scripts/zhihu_comments_fetch.py <article_id>
 
-依赖：playwright + chromium（与 web_publisher 共用 ZhihuProfile）。
+依赖：playwright。登录在桌面 Cloak，不另开 Chrome。
 """
 from __future__ import annotations
 import argparse, json, sys, time
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-PROFILE_DIR = Path.home() / ".easel-browser-profiles" / "ZhihuProfile"
 
 def fetch_comments(article_url: str, limit: int = 100):
     """通过访问文章页并拦截评论 API 响应来获取评论。"""
@@ -39,11 +38,10 @@ def fetch_comments(article_url: str, limit: int = 100):
                 print(f"[WARN] 解析响应失败: {e}", file=sys.stderr)
 
     with sync_playwright() as p:
-        browser = p.chromium.launch_persistent_context(
-            str(PROFILE_DIR),
-            headless=True,
-            args=["--no-sandbox", "--disable-blink-features=AutomationControlled"],
-        )
+        from cloak_account import open_account_context
+        browser = open_account_context(
+            p, profile_base=None, profile_name="ZhihuProfile", headed=False,
+            extra_args=["--no-sandbox", "--disable-blink-features=AutomationControlled"])
         page = browser.new_page()
         page.on("response", on_response)
 

@@ -52,6 +52,7 @@ def env(tmp_path, monkeypatch):
     """隔离配置 + 输出目录 + 假网络。返回 (calls, input_png)。"""
     calls = Calls()
     monkeypatch.setattr(ai_image, "http_post", calls)
+    monkeypatch.setenv("IMG_PROVIDER", "openai")
     monkeypatch.setenv("IMG_BASE_URL", AGNES_BASE)
     monkeypatch.setenv("IMG_MODEL", "agnes-image-2.1-flash")
     monkeypatch.setenv("IMG_API_KEY", "sk-test")

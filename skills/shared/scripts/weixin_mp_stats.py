@@ -146,7 +146,15 @@ def _proxy(explicit, disable):
     return None
 
 
-def _launch(p, headed, base, proxy):
+def _launch(p, headed, base, proxy, allow_launch=True):
+    if not base:
+        from cloak_account import open_account_context
+        args = list(LAUNCH_ARGS)
+        if not proxy:
+            args.append("--no-proxy-server")
+        return open_account_context(
+            p, profile_base=None, profile_name=PROFILE_NAME, headed=headed,
+            extra_args=args, proxy=proxy, allow_launch=allow_launch)
     prof = _profile_dir(base)
     prof.mkdir(parents=True, exist_ok=True)
     lock = _lock_profile(prof)
@@ -253,8 +261,11 @@ def cmd_login(a):
         return _run_login(a)
     except Exception as exc:
         # 异常类型对用户可见；不把可能包含会话令牌的浏览器异常全文写进状态。
-        login_state.write_status(a.status_file, "error",
-                                 f"公众号登录失败（{type(exc).__name__}），请检查浏览器、网络及会话占用")
+        if exc.__class__.__name__ == "CloakAccountError":
+            login_state.write_status(a.status_file, "error", str(exc))
+        else:
+            login_state.write_status(a.status_file, "error",
+                                     f"公众号登录失败（{type(exc).__name__}），请检查浏览器、网络及会话占用")
         print(f"login failed: {type(exc).__name__}", file=sys.stderr, flush=True)
         return 1
     finally:
@@ -350,7 +361,7 @@ def cmd_stats(a):
             pass
 
     with sync_playwright() as p:
-        ctx = _launch(p, a.headed, a.profile_base, _proxy(a.proxy, a.no_proxy))
+        ctx = _launch(p, a.headed, a.profile_base, _proxy(a.proxy, a.no_proxy), allow_launch=False)
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
         page.on("response", on_resp)
         try:
@@ -789,7 +800,7 @@ def cmd_whoami(a):
     out = {"loggedIn": False, "name": "", "avatar": ""}
     try:
         with sync_playwright() as p:
-            ctx = _launch(p, a.headed, a.profile_base, _proxy(a.proxy, a.no_proxy))
+            ctx = _launch(p, a.headed, a.profile_base, _proxy(a.proxy, a.no_proxy), allow_launch=False)
             page = ctx.pages[0] if ctx.pages else ctx.new_page()
             try:
                 page.goto(MP_HOME, wait_until="commit", timeout=10000)
